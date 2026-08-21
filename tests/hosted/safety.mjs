@@ -49,16 +49,25 @@ export async function assessProject(admin) {
   }
 
   // Transactional history is the strongest signal of a live project.
+  //
+  // Counted with a body-returning request. head:true would answer 204 with
+  // count=null for a table that does not exist, which would read as
+  // "0 rows, safe to proceed" - the same false negative that made the old
+  // preflight report a schema it had never seen.
   for (const table of ["van_sales", "invoices", "payments", "credit_transactions"]) {
-    const { count, error } = await admin
+    const { data, count, error } = await admin
       .from(table)
-      .select("id", { count: "exact", head: true });
+      .select("id", { count: "exact" })
+      .limit(1);
     if (error) {
       findings.push({ table, error: error.message });
+      // An unreadable table is not evidence of an empty one.
+      unknownRows += 1;
       continue;
     }
-    findings.push({ table, total: count ?? 0, transactional: true });
-    if ((count ?? 0) > 0) unknownRows += count ?? 0;
+    const total = count ?? (data ?? []).length;
+    findings.push({ table, total, transactional: true });
+    if (total > 0) unknownRows += total;
   }
 
   return { findings, unknownRows, safe: unknownRows === 0 };

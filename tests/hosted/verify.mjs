@@ -14,6 +14,10 @@
 import { createClient } from "@supabase/supabase-js";
 import { loadEnv, reportEnvPresence, describeProject, isPlaceholder } from "./env.mjs";
 import { assessProject, printAssessment, TEST_PREFIX } from "./safety.mjs";
+import {
+  EXPECTED_TABLES, EXPECTED_VIEWS, EXPECTED_FUNCTIONS, READONLY_PROBE_FUNCTIONS,
+  relationExists, functionExists, selfTest,
+} from "./schema.mjs";
 
 const PREFLIGHT_ONLY = process.argv.includes("--preflight-only");
 const KEEP = process.argv.includes("--keep");
@@ -63,36 +67,71 @@ const anonClient = () =>
   createClient(url, anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
 
 // ---------------------------------------------------------------- preflight
-section("Step 2 - schema reachable through PostgREST");
+section("Step 5 - probe self-test (regression guard)");
 {
-  const { error } = await admin.from("organizations").select("id").limit(1);
-  ok("service role can reach organizations", !error, error ? `-> ${error.message}` : "");
-
-  const expected = [
-    "profiles", "products", "customers", "warehouses", "inventory",
-    "stock_movements", "vans", "van_loads", "van_sales", "van_returns",
-    "van_reconciliations", "credit_transactions", "manager_category_scopes",
-  ];
-  let found = 0;
-  for (const t of expected) {
-    const { error: e } = await admin.from(t).select("*", { count: "exact", head: true });
-    if (!e) found++;
-    else console.log(`    missing or unreadable: ${t} -> ${e.message}`);
+  // Proves the probe cannot report a nonexistent relation as present.
+  // The previous preflight used head:true, which PostgREST answers with a
+  // bodiless 204, so every table looked present.
+  const st = await selfTest(admin);
+  for (const leak of st.leaks) {
+    console.log(`    probe reported a nonexistent relation as present: ${leak.name}`);
   }
-  ok("all expected tables exposed", found === expected.length, `(${found}/${expected.length})`);
-
-  const views = [
-    "stock_summary", "customer_balances", "invoice_ageing", "customer_statement",
-    "customer_credit_position", "van_stock_summary", "van_load_summary",
-    "reconciliation_variances",
-  ];
-  let vfound = 0;
-  for (const v of views) {
-    const { error: e } = await admin.from(v).select("*", { count: "exact", head: true });
-    if (!e) vfound++;
-    else console.log(`    missing or unreadable view: ${v} -> ${e.message}`);
+  const sound = ok("probe rejects nonexistent tables", st.leaks.length === 0);
+  ok("probe rejects nonexistent functions", st.functionProbeSound);
+  if (!sound || !st.functionProbeSound) {
+    console.error(
+      "\nThe schema probe is unsound. Refusing to report on the hosted " +
+        "schema: a green result would be meaningless.",
+    );
+    process.exit(3);
   }
-  ok("all reporting views exposed", vfound === views.length, `(${vfound}/${views.length})`);
+}
+
+section("Step 2 - actual hosted schema");
+let schemaComplete = false;
+{
+  const missingTables = [];
+  const degraded = [];
+  for (const t of EXPECTED_TABLES) {
+    const r = await relationExists(admin, t);
+    if (!r.exists) missingTables.push(t);
+    else if (r.degraded) degraded.push(`${t} (${r.reason})`);
+  }
+  ok(`tables present (${EXPECTED_TABLES.length - missingTables.length}/${EXPECTED_TABLES.length})`,
+     missingTables.length === 0,
+     missingTables.length ? `missing: ${missingTables.slice(0, 6).join(", ")}${missingTables.length > 6 ? ", ..." : ""}` : "");
+  if (degraded.length) console.log(`    reachable but degraded: ${degraded.join("; ")}`);
+
+  const missingViews = [];
+  for (const v of EXPECTED_VIEWS) {
+    const r = await relationExists(admin, v);
+    if (!r.exists) missingViews.push(v);
+  }
+  ok(`views present (${EXPECTED_VIEWS.length - missingViews.length}/${EXPECTED_VIEWS.length})`,
+     missingViews.length === 0,
+     missingViews.length ? `missing: ${missingViews.join(", ")}` : "");
+
+  const missingFns = [];
+  for (const f of READONLY_PROBE_FUNCTIONS) {
+    const r = await functionExists(admin, f);
+    if (!r.exists) missingFns.push(f);
+  }
+  ok(`callable functions present (${READONLY_PROBE_FUNCTIONS.length - missingFns.length}/${READONLY_PROBE_FUNCTIONS.length})`,
+     missingFns.length === 0,
+     missingFns.length ? `missing: ${missingFns.join(", ")}` : "");
+
+  schemaComplete = missingTables.length === 0 && missingViews.length === 0 && missingFns.length === 0;
+
+  if (!schemaComplete) {
+    console.error(
+      `\nThe hosted project does not contain the expected schema.\n` +
+        `Apply the migrations before running any further check:\n` +
+        `  npx supabase db push --db-url "$SUPABASE_DB_URL"\n` +
+        `(${EXPECTED_FUNCTIONS.length} functions are expected in total; ` +
+        `${READONLY_PROBE_FUNCTIONS.length} of them are probed here.)`,
+    );
+    process.exit(4);
+  }
 }
 
 section("Step 8 - production data safety gate");
