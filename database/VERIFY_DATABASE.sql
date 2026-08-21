@@ -1,14 +1,8 @@
--- Wholesale Distribution Management System
--- Post-installation verification. READ ONLY: inspects the catalog only,
--- creates nothing, changes nothing, deletes nothing.
---
--- Supabase -> SQL Editor -> New query -> Select All -> paste -> Run.
--- Read the "status" column: every row should say OK or INFO.
---
--- Use Ctrl+A / Cmd+A inside the file to select it. Dragging a selection
--- can clip the leading "-- " from the first line, which turns a comment
--- into SQL and produces: operator too long at or near "===".
--- There are deliberately no decorative rules in this file.
+
+
+
+
+
 
 with counts as (
   select
@@ -251,3 +245,29 @@ report as (
 select ord as "#", check_name as "check", expected, actual, status, detail
 from report
 order by ord;
+
+
+-- Wholesale Distribution Management System
+-- Post-installation verification. READ ONLY: this script inspects the
+-- catalog only. It creates nothing, changes nothing and deletes nothing,
+-- and is safe to run as often as you like.
+--
+-- HOW TO RUN
+--   Supabase -> SQL Editor -> New query -> paste -> Run.
+--   Read the "status" column: every row should say OK or INFO.
+--
+-- HOW TO COPY THIS FILE
+--   Open the file itself and press Ctrl+A / Cmd+A, then copy.
+--   Do not copy it out of a chat window or drag-select it: both can clip
+--   the first character or two, which turns a comment into SQL and
+--   produces errors such as
+--     syntax error at or near "-"
+--     operator too long at or near "==="
+--   The first two lines of this file are deliberately blank so that a
+--   clipped selection loses nothing.
+--
+-- WHAT EACH ROW MEANS
+--   OK     the check passed
+--   INFO   informational only, no action needed
+--   CHECK  a count differs from the reference schema, worth a look
+--   FAIL   something is wrong, do not build on this database
