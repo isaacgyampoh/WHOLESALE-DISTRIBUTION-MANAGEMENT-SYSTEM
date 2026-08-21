@@ -41,7 +41,7 @@ export function CardHeader({
           keeps them visually aligned while the padding gives them a
           touch-sized hit area. */}
       {action && (
-        <div className="-m-2 shrink-0 [&_a]:inline-flex [&_a]:min-h-11 [&_a]:items-center [&_a]:px-2 lg:[&_a]:min-h-0 lg:[&_a]:py-0">
+        <div className="-m-2 shrink-0 [&_a]:inline-flex [&_a]:min-h-11 [&_a]:items-center [&_a]:px-2 pointer-fine:[&_a]:min-h-0">
           {action}
         </div>
       )}

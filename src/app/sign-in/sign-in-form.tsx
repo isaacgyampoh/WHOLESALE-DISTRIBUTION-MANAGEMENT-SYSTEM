@@ -3,11 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
-import { authMethods } from "@/lib/auth/providers";
 import { Button } from "@/components/ui/button";
 import { Input, Field } from "@/components/ui/field";
 import { Alert } from "@/components/ui/states";
 import { cn } from "@/lib/utils/cn";
+import type { AuthMethods } from "@/lib/auth/providers";
 import { Eye, EyeOff } from "lucide-react";
 
 type Method = "email" | "phone";
@@ -15,11 +15,21 @@ type Method = "email" | "phone";
 /** Same wording for every failure, so accounts cannot be enumerated. */
 const CREDENTIALS_REJECTED = "That sign-in was not recognised. Check the details and try again.";
 
-export function SignInForm({ nextPath }: { nextPath?: string }) {
+export function SignInForm({
+  nextPath,
+  methods,
+}: {
+  nextPath?: string;
+  methods: AuthMethods;
+}) {
   const router = useRouter();
-  const methods = authMethods();
 
-  const [method, setMethod] = useState<Method>("email");
+  // Lead with whichever method this deployment actually offers. Where
+  // phone is configured it is the one drivers use, and they are the
+  // people signing in most often.
+  const [method, setMethod] = useState<Method>(
+    methods.phone && !methods.password ? "phone" : "email",
+  );
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
@@ -82,7 +92,7 @@ export function SignInForm({ nextPath }: { nextPath?: string }) {
     <div className="space-y-5">
       {error && <Alert tone="danger">{error}</Alert>}
 
-      {methods.phone && (
+      {methods.phone && methods.password && (
         <div
           role="tablist"
           aria-label="Sign-in method"

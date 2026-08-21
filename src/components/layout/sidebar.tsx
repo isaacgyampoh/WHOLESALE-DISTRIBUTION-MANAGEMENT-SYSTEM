@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils/cn";
 import { NavIcon } from "./nav-icon";
 import type { NavSection } from "@/lib/navigation";
+import { BRAND } from "@/lib/brand";
 
 /**
  * Desktop navigation. Solid surface with a clear right edge rather than
@@ -36,7 +37,7 @@ export function Sidebar({ sections }: { sections: NavSection[] }) {
                       href={item.href}
                       aria-current={active ? "page" : undefined}
                       className={cn(
-                        "flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm transition-colors",
+                        "flex min-h-11 items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors pointer-fine:min-h-0 pointer-fine:py-1.5",
                         active
                           ? "bg-brand-50 font-medium text-brand-800 dark:bg-brand-950 dark:text-brand-200"
                           : "text-[var(--text-secondary)] hover:bg-[var(--surface-sunken)] hover:text-[var(--text-primary)]",
@@ -62,12 +63,12 @@ export function Sidebar({ sections }: { sections: NavSection[] }) {
 export function BrandMark() {
   return (
     <div className="flex h-14 items-center gap-2.5 border-b border-[var(--border-subtle)] px-4">
-      <div className="grid size-7 place-items-center rounded-md bg-brand-700 text-xs font-bold text-white">
-        W
+      <div className="grid size-7 shrink-0 place-items-center rounded-md bg-brand-700 text-[0.625rem] font-bold tracking-tight text-white">
+        {BRAND.initials}
       </div>
       <div className="min-w-0 leading-tight">
-        <p className="truncate text-sm font-semibold text-[var(--text-primary)]">Distribution</p>
-        <p className="truncate text-[0.6875rem] text-[var(--text-muted)]">Wholesale operations</p>
+        <p className="truncate text-sm font-semibold text-[var(--text-primary)]">{BRAND.name}</p>
+        <p className="truncate text-[0.6875rem] text-[var(--text-muted)]">{BRAND.tagline}</p>
       </div>
     </div>
   );

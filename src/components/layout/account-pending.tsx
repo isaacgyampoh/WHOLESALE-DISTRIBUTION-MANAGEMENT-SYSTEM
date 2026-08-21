@@ -1,6 +1,7 @@
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Alert } from "@/components/ui/states";
 import { Button } from "@/components/ui/button";
+import { BrandMark } from "./brand-mark";
 
 /**
  * A valid sign-in with no active profile.
@@ -13,7 +14,9 @@ import { Button } from "@/components/ui/button";
 export function AccountPending({ email }: { email: string | null }) {
   return (
     <div className="grid min-h-dvh place-items-center px-6 py-12">
-      <Card className="w-full max-w-md">
+      <div className="w-full max-w-md">
+        <BrandMark className="mb-6" />
+      <Card>
         <CardHeader
           title="Your account is not active yet"
           description={email ? `Signed in as ${email}` : undefined}
@@ -34,6 +37,7 @@ export function AccountPending({ email }: { email: string | null }) {
           </form>
         </CardBody>
       </Card>
+      </div>
     </div>
   );
 }

@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { SignInForm } from "./sign-in-form";
 import { Alert } from "@/components/ui/states";
+import { getAuthMethods } from "@/lib/auth/providers";
+import { BrandMark } from "@/components/layout/brand-mark";
 
 export const metadata: Metadata = { title: "Sign in" };
 
@@ -15,18 +17,14 @@ export default async function SignInPage({
   searchParams: Promise<{ next?: string; error?: string }>;
 }) {
   const { next, error } = await searchParams;
+  const methods = await getAuthMethods();
   const callbackError = error ? CALLBACK_ERRORS[error] : undefined;
 
   return (
     <div className="grid min-h-dvh lg:grid-cols-2">
       <div className="flex items-center justify-center px-6 py-12">
         <div className="w-full max-w-sm">
-          <div className="mb-8 flex items-center gap-2.5">
-            <div className="grid size-8 place-items-center rounded-md bg-brand-700 text-sm font-bold text-white">
-              W
-            </div>
-            <span className="font-semibold text-[var(--text-primary)]">Distribution</span>
-          </div>
+          <BrandMark className="mb-8" />
           <h1 className="text-2xl font-semibold tracking-tight text-[var(--text-primary)]">
             Sign in
           </h1>
@@ -38,7 +36,7 @@ export default async function SignInPage({
               <Alert tone="danger">{callbackError}</Alert>
             </div>
           )}
-          <SignInForm nextPath={next} />
+          <SignInForm nextPath={next} methods={methods} />
         </div>
       </div>
 

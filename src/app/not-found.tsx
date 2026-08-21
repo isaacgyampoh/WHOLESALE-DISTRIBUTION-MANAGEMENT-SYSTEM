@@ -1,9 +1,11 @@
 import Link from "next/link";
+import { BrandMark } from "@/components/layout/brand-mark";
 
 export default function NotFound() {
   return (
     <div className="grid min-h-dvh place-items-center px-6">
-      <div className="text-center">
+      <div className="flex flex-col items-center text-center">
+        <BrandMark className="mb-8" />
         <p className="text-xs font-semibold tracking-wider text-[var(--text-muted)] uppercase">
           404
         </p>

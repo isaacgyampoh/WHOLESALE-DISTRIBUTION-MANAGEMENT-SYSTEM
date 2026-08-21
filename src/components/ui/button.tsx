@@ -17,8 +17,9 @@ const VARIANTS: Record<Variant, string> = {
 };
 
 const SIZES: Record<Size, string> = {
-  sm: "h-8 px-3 text-xs gap-1.5",
-  md: "h-9.5 px-4 text-sm gap-2",
+  // Finger-sized on touch, compact where there is a real pointer.
+  sm: "h-9 px-3 text-xs gap-1.5 pointer-fine:h-8",
+  md: "h-11 px-4 text-sm gap-2 pointer-fine:h-9.5",
   lg: "h-11 px-5 text-sm gap-2",
   // Driver PWA: thumb-sized targets, used one-handed in a van.
   touch: "h-14 px-6 text-base gap-2.5 w-full",

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import { BRAND } from "@/lib/brand";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -10,10 +11,10 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: {
-    default: "Distribution",
-    template: "%s · Distribution",
+    default: BRAND.name,
+    template: `%s · ${BRAND.name}`,
   },
-  description: "Wholesale distribution and inventory management",
+  description: `${BRAND.name} - wholesale distribution and inventory management`,
 };
 
 export const viewport: Viewport = {
