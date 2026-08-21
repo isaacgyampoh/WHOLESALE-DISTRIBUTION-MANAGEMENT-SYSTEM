@@ -1,0 +1,53 @@
+import type { Metadata } from "next";
+import { SignInForm } from "./sign-in-form";
+
+export const metadata: Metadata = { title: "Sign in" };
+
+export default async function SignInPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ next?: string }>;
+}) {
+  const { next } = await searchParams;
+
+  return (
+    <div className="grid min-h-dvh lg:grid-cols-2">
+      <div className="flex items-center justify-center px-6 py-12">
+        <div className="w-full max-w-sm">
+          <div className="mb-8 flex items-center gap-2.5">
+            <div className="grid size-8 place-items-center rounded-md bg-brand-700 text-sm font-bold text-white">
+              W
+            </div>
+            <span className="font-semibold text-[var(--text-primary)]">Distribution</span>
+          </div>
+          <h1 className="text-2xl font-semibold tracking-tight text-[var(--text-primary)]">
+            Sign in
+          </h1>
+          <p className="mt-1.5 mb-8 text-sm text-[var(--text-secondary)]">
+            Use the account issued by your administrator.
+          </p>
+          <SignInForm nextPath={next} />
+        </div>
+      </div>
+
+      {/* Context panel: states what the system is for, without stock art. */}
+      <div className="hidden flex-col justify-between bg-ink-900 p-12 lg:flex">
+        <div />
+        <div className="max-w-md">
+          <p className="text-lg leading-relaxed font-medium text-ink-100">
+            Every unit of stock and every cedi is traceable to the person,
+            van and transaction that moved it.
+          </p>
+          <p className="mt-4 text-sm leading-relaxed text-ink-400">
+            Warehouse to van, van to customer, cash and credit back to the
+            books, reconciled at the end of every round.
+          </p>
+        </div>
+        <p className="text-xs text-ink-500">
+          Access is scoped by role. Records you are not responsible for are
+          not shown.
+        </p>
+      </div>
+    </div>
+  );
+}
