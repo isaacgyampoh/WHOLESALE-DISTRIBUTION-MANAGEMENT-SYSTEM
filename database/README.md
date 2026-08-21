@@ -8,6 +8,7 @@ CLI tools.
 |---|---|
 | `WHOLESALE_DISTRIBUTION_DATABASE.sql` | The installer. Paste this into Supabase. |
 | `VERIFY_DATABASE.sql` | A read-only check. Paste it afterwards to confirm the install worked. |
+| `FIX_ANON_GRANTS.sql` | Repair script. Only needed if verification row 16 fails. |
 | `build.mjs` | Regenerates the installer from `supabase/migrations`. You do not need to run this. |
 
 ---
@@ -68,6 +69,39 @@ or `INFO`. For example:
 ```
 
 If any row says `FAIL`, stop and send the table over.
+
+### If row 16 fails
+
+Row 16, "anon cannot read any table or view", is the decisive security
+check. It fails on Supabase projects created before Supabase stopped
+granting new tables to the `anon` role automatically: the project's own
+default privileges hand every new table to `anon` as it is created.
+
+Fix it by running `database/FIX_ANON_GRANTS.sql` the same way you ran the
+installer. It removes those privileges, stops future objects inheriting
+them, and leaves signed-in users untouched. It changes no business data
+and is safe to run twice.
+
+Then run `VERIFY_DATABASE.sql` again: row 16 should read `0` / `OK` and
+row 18 should read `0`.
+
+### If row 7 reports a different function count
+
+An extra function usually means the project already contained something
+before the installer ran. To see which:
+
+```sql
+select p.proname
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and not exists (select 1 from pg_depend d
+                  where d.objid = p.oid and d.deptype = 'e')
+order by p.proname;
+```
+
+Anything in that list beyond the 33 this system installs came from
+elsewhere and is worth identifying before you rely on the database.
 
 ## Step 7 — Configure authentication
 
