@@ -12,11 +12,14 @@ Tracks the phases in the master development prompt. Updated as work lands.
 | Phase 1 — Inspection & architecture | Done | See "Assessment" below |
 | Phase 2 — Next.js foundation | Done | `npm run verify` passes |
 | Phase 3 — Design system (core) | Partial | Tokens, primitives, shell built |
+| Phase 4 — Hosted gate (part 1) | Partial | GitHub pushed; hosted project pending |
 
 ## Verified database state
 
-29 tables · 8 views · 67 RLS policies · 64 triggers · 5 enums · RLS on all 29 tables.
-118 assertions across 6 suites, 0 failures (`npm run db:test`).
+29 tables · 8 views · 5 enums · RLS on all 29 tables.
+**137 assertions across 7 suites, 0 failures** (`npm run db:test`).
+Migration 0015 adds Data API grants and closes an anonymous
+authorization bypass; policy and trigger counts change accordingly.
 
 ## Not started
 
@@ -29,10 +32,11 @@ offline sync, security hardening, production deployment.
 
 | Risk | Impact | Status |
 |---|---|---|
-| Nothing pushed to GitHub; remote has zero branches | Supabase GitHub integration has never seen a migration | **Needs owner action** |
+| Nothing pushed to GitHub; remote has zero branches | — | RESOLVED: `main` pushed, 9 commits, 15 migrations on remote |
 | Migrations never run against hosted Supabase | Platform behaviour (PostgREST, Auth, storage) unproven | Blocked on project credentials |
-| No `supabase/config.toml` | CLI/GitHub integration not initialised in-repo | Pending decision |
-| Auth flow untested end to end | Sign-in verified to render, not to authenticate | Blocked on hosted project |
+| No `supabase/config.toml` | — | RESOLVED: added, parses, `db push` idempotent |
+| Auth flow untested end to end | Sign-in renders; no credential has been exchanged | Blocked on `.env.local` |
+| Hosted gate suite never executed | 60+ assertions written, none run | Blocked on `.env.local` |
 
 ## Technical debt
 

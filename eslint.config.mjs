@@ -15,6 +15,7 @@ const eslintConfig = defineConfig([
     // Node/CommonJS database test harness; it is not part of the Next app
     // and is linted by its own conventions.
     "tests/db/**",
+    "tests/hosted/**",
   ]),
 ]);
 

@@ -12,7 +12,9 @@
     "db:start": "npm --prefix tests/db run pg:start",
     "db:stop": "npm --prefix tests/db run pg:stop",
     "db:test": "npm --prefix tests/db test",
-    "db:inspect": "npm --prefix tests/db run inspect"
+    "db:inspect": "npm --prefix tests/db run inspect",
+    "hosted:preflight": "npm --prefix tests/hosted run preflight",
+    "hosted:test": "npm --prefix tests/hosted test"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",

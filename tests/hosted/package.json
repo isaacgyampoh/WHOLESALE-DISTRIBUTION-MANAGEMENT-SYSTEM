@@ -1,0 +1,13 @@
+{
+  "name": "wdms-hosted-tests",
+  "private": true,
+  "type": "module",
+  "description": "Verifies the hosted Supabase platform path: Auth, PostgREST, RLS, privileged functions and one end-to-end business workflow.",
+  "scripts": {
+    "preflight": "node verify.mjs --preflight-only",
+    "test": "node verify.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.112.3"
+  }
+}
