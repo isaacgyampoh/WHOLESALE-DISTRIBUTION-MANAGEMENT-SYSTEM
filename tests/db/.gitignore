@@ -1,0 +1,4 @@
+node_modules/
+.pgdata/
+.pg.log
+package-lock.json

@@ -1,0 +1,16 @@
+{
+  "name": "wdms-db-tests",
+  "private": true,
+  "description": "Executes the Supabase migrations against a real PostgreSQL instance and asserts the business rules hold.",
+  "scripts": {
+    "pg:start": "node pgctl.js start",
+    "pg:stop": "node pgctl.js stop",
+    "migrate": "node migrate.js",
+    "inspect": "node inspect.js",
+    "test": "node run.js"
+  },
+  "dependencies": {
+    "@embedded-postgres/darwin-arm64": "17.10.0-beta.17",
+    "pg": "^8.13.0"
+  }
+}
