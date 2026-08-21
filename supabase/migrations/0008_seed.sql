@@ -16,7 +16,7 @@ on conflict do nothing;
 
 insert into public.suppliers (code, name, contact_name, email, phone, payment_terms_days, lead_time_days) values
   ('SUP-001', 'Volta Beverages Ltd', 'Kofi Mensah',  'sales@voltabev.example',  '+233201110001', 30, 5),
-  ('SUP-002', 'Ashanti Foods Ltd',   'Ama Boateng',  'orders@ashfoods.example', 45, 10)
+  ('SUP-002', 'Ashanti Foods Ltd',   'Ama Boateng',  'orders@ashfoods.example', '+233201110002', 45, 10)
 on conflict (code) do nothing;
 
 insert into public.customers (code, name, contact_name, email, phone, city, credit_limit, payment_terms_days, price_tier) values
