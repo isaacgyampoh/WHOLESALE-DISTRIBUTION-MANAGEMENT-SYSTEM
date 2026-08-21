@@ -101,8 +101,20 @@ async function diagnose(page, label, vp) {
   return { label: `${label} @ ${vp.name}`, problems };
 }
 
+// A run that crashes leaves its users behind, and the next run then
+// reports duplicates that are not real. Clear any strays first.
+{
+  const { data } = await admin.from("profiles").select("id, email");
+  const stale = (data ?? []).filter((p) => String(p.email ?? "").startsWith("htest-"));
+  for (const person of stale) await admin.auth.admin.deleteUser(person.id);
+  if (stale.length) console.log(`cleared ${stale.length} stray test account(s) from a previous run`);
+}
+
 const findings = [];
 const browser = await chromium.launch();
+// Some pages query the hosted project several times; the default 30s can
+// be tight when a query is failing and retrying upstream.
+const NAV_TIMEOUT = 60_000;
 
 async function shot(page, name, vp) {
   await page.waitForLoadState("load");
@@ -121,6 +133,7 @@ try {
 
     const anon = await browser.newContext(opts);
     const p = await anon.newPage();
+    p.setDefaultNavigationTimeout(NAV_TIMEOUT);
     await p.goto(`${BASE}/sign-in`, { waitUntil: "domcontentloaded" });
     await shot(p, "signin", vp); findings.push(await diagnose(p, "sign-in", vp));
 
@@ -141,26 +154,51 @@ try {
       const c = await browser.newContext(opts);
       await c.addCookies(ck[who]);
       const pg = await c.newPage();
+      pg.setDefaultNavigationTimeout(NAV_TIMEOUT);
       await pg.goto(`${BASE}/`, { waitUntil: "domcontentloaded" });
       await shot(pg, label, vp); findings.push(await diagnose(pg, label, vp));
 
       if (who === "admin") {
         await pg.goto(`${BASE}/users`, { waitUntil: "domcontentloaded" });
         await shot(pg, "staff", vp); findings.push(await diagnose(pg, "staff", vp));
-        // The PIN dialog.
+
+        const create = pg.locator('button:has-text("Create staff")').first();
+        if (await create.count() && await create.isVisible()) {
+          await create.click(); await pg.waitForTimeout(350);
+          await shot(pg, "staff-create", vp);
+          findings.push(await diagnose(pg, "staff create dialog", vp));
+          await pg.keyboard.press("Escape"); await pg.waitForTimeout(200);
+        }
+
         const reset = pg.locator('button:has-text("Set PIN"), button:has-text("Reset PIN")').first();
         if (await reset.count() && await reset.isVisible()) {
-          await reset.click(); await pg.waitForTimeout(300);
+          await reset.click(); await pg.waitForTimeout(350);
           await shot(pg, "staff-pin-dialog", vp);
           findings.push(await diagnose(pg, "staff pin dialog", vp));
-          await pg.keyboard.press("Escape");
+          await pg.keyboard.press("Escape"); await pg.waitForTimeout(200);
         }
-        await pg.goto(`${BASE}/account`, { waitUntil: "domcontentloaded" });
-        await shot(pg, "account", vp); findings.push(await diagnose(pg, "account", vp));
+
+        // First staff member's detail page, if there is one.
+        const first = pg.locator('a[href^="/users/"]').first();
+        if (await first.count()) {
+          const href = await first.getAttribute("href");
+          if (href && href !== "/users") {
+            await pg.goto(`${BASE}${href}`, { waitUntil: "domcontentloaded" });
+            await shot(pg, "staff-detail", vp);
+            findings.push(await diagnose(pg, "staff detail", vp));
+          }
+        }
+
+        for (const [path, name] of [["/permissions", "permissions"], ["/audit", "audit"], ["/account", "account"]]) {
+          await pg.goto(`${BASE}${path}`, { waitUntil: "domcontentloaded" });
+          await shot(pg, name, vp); findings.push(await diagnose(pg, name, vp));
+        }
       }
       if (who === "driver") {
-        await pg.goto(`${BASE}/users`, { waitUntil: "domcontentloaded" });
-        await shot(pg, "forbidden", vp); findings.push(await diagnose(pg, "forbidden", vp));
+        for (const [path, name] of [["/users", "forbidden"], ["/audit", "forbidden-audit"]]) {
+          await pg.goto(`${BASE}${path}`, { waitUntil: "domcontentloaded" });
+          await shot(pg, name, vp); findings.push(await diagnose(pg, name, vp));
+        }
       }
       if (vp.touch && who === "admin") {
         // The bottom bar is hidden from 1024px up, where the sidebar takes

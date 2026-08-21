@@ -11,6 +11,7 @@ CLI tools.
 | `FIX_ANON_GRANTS.sql` | Repair script. Only needed if verification row 16 fails. |
 | `UPGRADE_0017_SIGNUP_GUARD.sql` | Upgrade for a database installed before migration 0017. |
 | `UPGRADE_0018_PIN_AUTH.sql` | Upgrade for a database installed before migration 0018. Adds PIN sign-in. |
+| `UPGRADE_0019_AUDIT_LOG.sql` | Upgrade for a database installed before migration 0019. Adds the audit trail. |
 | `build.mjs` | Regenerates the installer from `supabase/migrations`. You do not need to run this. |
 
 ---
@@ -86,6 +87,14 @@ and is safe to run twice.
 
 Then run `VERIFY_DATABASE.sql` again: row 16 should read `0` / `OK` and
 row 18 should read `0`.
+
+### If the audit rows fail
+
+The audit trail arrived in migration 0019. If your database predates it,
+run `database/UPGRADE_0019_AUDIT_LOG.sql`. Until then the Staff pages
+work but their History panel reports that it is unavailable, and the
+Audit trail page reports the same. That is deliberate: a missing table
+is reported as a fault, never as an empty list.
 
 ### If rows 22 or 23 fail
 

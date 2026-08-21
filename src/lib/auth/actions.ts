@@ -5,7 +5,8 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient, createSupabaseAdminClient } from "@/lib/supabase/server";
 import { checkPin, assignPin, digestPin, INCORRECT_PIN } from "./pin-server";
 import { isValidPinFormat, PIN_LENGTH } from "./pin";
-import { requirePermission, requireUser } from "./session";
+import { requireUser } from "./session";
+import { recordAudit } from "@/lib/audit";
 
 /**
  * Signing in, and changing a PIN.
@@ -125,51 +126,16 @@ export async function changeOwnPinAction(
   }
 
   const result = await assignPin(user.id, next);
-  return result.ok
-    ? { status: "done", message: "Your PIN has been changed." }
-    : { status: "error", message: result.message };
-}
+  if (!result.ok) return { status: "error", message: result.message };
 
-export interface ResetPinState {
-  status: "idle" | "error" | "done";
-  message?: string;
-  /** Shown to the administrator once, so they can pass it on. */
-  assignedPin?: string;
-  staffName?: string;
-}
+  // Recorded without either PIN: that a change happened is the fact
+  // worth keeping, and the values never belong in a log.
+  await recordAudit(user, {
+    action: "user.pin_changed",
+    targetType: "profile",
+    targetId: user.id,
+    targetLabel: user.fullName,
+  });
 
-/** An administrator setting someone else's PIN. */
-export async function resetStaffPinAction(
-  _prev: ResetPinState,
-  formData: FormData,
-): Promise<ResetPinState> {
-  const actor = await requirePermission("users.manage");
-
-  const profileId = String(formData.get("profileId") ?? "");
-  const pin = String(formData.get("pin") ?? "").replace(/\D/g, "");
-  const confirm = String(formData.get("confirmPin") ?? "").replace(/\D/g, "");
-
-  if (!profileId) return { status: "error", message: "No staff member was selected." };
-  if (pin !== confirm) return { status: "error", message: "The two PINs do not match." };
-
-  const admin = createSupabaseAdminClient();
-  const { data: target } = await admin
-    .from("profiles").select("id, full_name, org_id").eq("id", profileId).maybeSingle();
-
-  // An administrator manages their own organization and no other. The
-  // organization comes from the server's view of the actor, never from
-  // the form.
-  if (!target || target.org_id !== actor.organizationId) {
-    return { status: "error", message: "That staff member could not be found." };
-  }
-
-  const result = await assignPin(profileId, pin);
-  return result.ok
-    ? {
-        status: "done",
-        message: "PIN updated.",
-        assignedPin: pin,
-        staffName: (target.full_name as string) || "Staff member",
-      }
-    : { status: "error", message: result.message };
+  return { status: "done", message: "Your PIN has been changed." };
 }

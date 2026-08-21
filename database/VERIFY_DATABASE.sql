@@ -155,7 +155,7 @@ missing_tables as (
     'stock_movements','stock_transfer_items','stock_transfers','suppliers',
     'van_assignments','van_inventory','van_load_items','van_loads',
     'van_reconciliations','van_return_items','van_returns','van_sale_items',
-    'van_sales','vans','warehouses','auth_pin_attempts'
+    'van_sales','vans','warehouses','auth_pin_attempts','audit_log'
   ]) as t
   where not exists (
     select 1 from information_schema.tables
@@ -176,8 +176,8 @@ missing_views as (
 ),
 report as (
   select  1 as ord, 'Tables' as check_name,
-          '30'::text as expected, c.tables::text as actual,
-          case when c.tables = 30 then 'OK' else 'CHECK' end as status,
+          '31'::text as expected, c.tables::text as actual,
+          case when c.tables = 31 then 'OK' else 'CHECK' end as status,
           ''::text as detail
   from counts c
   union all select  2, 'Expected tables all present', 'none missing',
@@ -196,21 +196,21 @@ report as (
           case when e.n = 12 then 'OK' else 'FAIL' end,
           (select names from enum_bad)
   from enum_match e
-  union all select  7, 'Functions', '36', c.functions::text,
-          case when c.functions = 36 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  8, 'Triggers', '66', c.triggers::text,
-          case when c.triggers = 66 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  9, 'RLS policies', '67', c.policies::text,
-          case when c.policies = 67 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  7, 'Functions', '38', c.functions::text,
+          case when c.functions = 38 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  8, 'Triggers', '68', c.triggers::text,
+          case when c.triggers = 68 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  9, 'RLS policies', '68', c.policies::text,
+          case when c.policies = 68 then 'OK' else 'CHECK' end, '' from counts c
   union all select 10, 'RLS enabled on every table',
           c.all_tables::text, c.rls_tables::text,
           case when c.rls_tables = c.all_tables then 'OK' else 'FAIL' end, '' from counts c
   union all select 11, 'Generated columns', '12', c.generated_cols::text,
           case when c.generated_cols = 12 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 12, 'Indexes', '116', c.indexes::text,
-          case when c.indexes = 116 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 13, 'Constraints', '204', c.constraints::text,
-          case when c.constraints = 204 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 12, 'Indexes', '121', c.indexes::text,
+          case when c.indexes = 121 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 13, 'Constraints', '207', c.constraints::text,
+          case when c.constraints = 207 then 'OK' else 'CHECK' end, '' from counts c
   union all select 14, 'Security functions present', '8', s.n::text,
           case when s.n = 8 then 'OK' else 'FAIL' end, '' from security_fns s
   union all select 15, 'Business functions present', '7', b.n::text,
@@ -252,7 +252,24 @@ report as (
            from information_schema.columns
            where table_schema='public' and table_name='profiles' and column_name='email'),
           'Migration 0017; phone-only sign-in fails without it'
-  union all select 24, 'Sign-in attempts hidden from the browser', '0',
+  union all select 24, 'Audit trail is append-only', 'present',
+          case when exists (select 1 from pg_trigger t join pg_class c on c.oid=t.tgrelid
+            where c.relname='audit_log' and t.tgname='audit_log_no_update')
+            then 'present' else 'MISSING' end,
+          case when exists (select 1 from pg_trigger t join pg_class c on c.oid=t.tgrelid
+            where c.relname='audit_log' and t.tgname='audit_log_no_update')
+            then 'OK' else 'FAIL' end,
+          'History an administrator can edit is not history'
+  union all select 25, 'Audit trail is read-only for users', '0',
+          (select count(*)::text from information_schema.role_table_grants
+           where table_schema='public' and table_name='audit_log'
+             and grantee='authenticated' and privilege_type in ('INSERT','UPDATE','DELETE')),
+          (select case when count(*) = 0 then 'OK' else 'FAIL' end
+           from information_schema.role_table_grants
+           where table_schema='public' and table_name='audit_log'
+             and grantee='authenticated' and privilege_type in ('INSERT','UPDATE','DELETE')),
+          'Entries are written by the server, never by a signed-in user'
+  union all select 26, 'Sign-in attempts hidden from the browser', '0',
           (select count(*)::text from information_schema.role_table_grants
            where table_schema='public' and table_name='auth_pin_attempts'
              and grantee in ('anon','authenticated')),
@@ -261,7 +278,7 @@ report as (
            where table_schema='public' and table_name='auth_pin_attempts'
              and grantee in ('anon','authenticated')),
           'The sign-in attempt log is server-side machinery'
-  union all select 25, 'No two active people share a PIN', 'present',
+  union all select 27, 'No two active people share a PIN', 'present',
           case when exists (select 1 from pg_indexes
             where schemaname='public' and indexname='profiles_active_pin_key')
             then 'present' else 'MISSING' end,
@@ -269,7 +286,7 @@ report as (
             where schemaname='public' and indexname='profiles_active_pin_key')
             then 'OK' else 'FAIL' end,
           'A PIN must identify exactly one person'
-  union all select 26, 'PINs are stored as a digest only', 'no plaintext column',
+  union all select 28, 'PINs are stored as a digest only', 'no plaintext column',
           case when exists (select 1 from information_schema.columns
             where table_schema='public' and table_name='profiles'
               and column_name in ('pin','pin_plain','pin_code'))
@@ -278,13 +295,13 @@ report as (
             where table_schema='public' and table_name='profiles'
               and column_name in ('pin','pin_plain','pin_code'))
             then 'FAIL' else 'OK' end, ''
-  union all select 27, 'Organizations', 'at least 1',
+  union all select 29, 'Organizations', 'at least 1',
           (select count(*)::text from public.organizations),
           case when (select count(*) from public.organizations) >= 1
                then 'OK' else 'FAIL' end, ''
-  union all select 28, 'Demo products (0 if seed removed)', 'any',
+  union all select 30, 'Demo products (0 if seed removed)', 'any',
           (select count(*)::text from public.products), 'INFO', ''
-  union all select 29, 'Application users (create in Authentication)', 'any',
+  union all select 31, 'Application users (create in Authentication)', 'any',
           (select count(*)::text from public.profiles), 'INFO',
           'Create your first user, then set profiles.role to admin'
 )
