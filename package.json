@@ -18,7 +18,8 @@
     "db:build-installer": "node database/build.mjs",
     "db:verify-installer": "cd tests/db && node test_installer.mjs",
     "hosted:auth": "npm --prefix tests/hosted run auth",
-    "hosted:shell": "npm --prefix tests/hosted run shell"
+    "hosted:shell": "npm --prefix tests/hosted run shell",
+    "visual": "npm --prefix tests/visual run shots"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",

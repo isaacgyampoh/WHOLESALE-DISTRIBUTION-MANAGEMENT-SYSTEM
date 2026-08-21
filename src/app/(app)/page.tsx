@@ -75,7 +75,7 @@ export default async function DashboardPage() {
       )}
 
       <section aria-label="Today" className="mb-6">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           <StatTile
             label="Cash sales today"
             value={formatMoney(metrics.todaysCashSales)}
@@ -108,7 +108,7 @@ export default async function DashboardPage() {
       </section>
 
       <section aria-label="Stock and fleet" className="mb-6">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           <StatTile
             label="Warehouse stock"
             value={formatMoney(metrics.warehouseStockValue)}

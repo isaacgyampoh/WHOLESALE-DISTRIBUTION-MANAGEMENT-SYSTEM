@@ -61,7 +61,7 @@ export function DriverDashboard({ summary }: { summary: DriverSummary }) {
         </CardBody>
       </Card>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <StatTile
           label="Stock on board"
           value={formatQuantity(summary.unitsOnVan)}

@@ -44,7 +44,7 @@ export function Header({ user }: { user: AuthenticatedUser }) {
           <button
             type="submit"
             aria-label="Sign out"
-            className="rounded-md p-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-sunken)] hover:text-[var(--text-primary)]"
+            className="grid size-11 place-items-center rounded-md text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-sunken)] hover:text-[var(--text-primary)] lg:size-9"
           >
             <LogOut className="size-4" />
           </button>

@@ -13,6 +13,8 @@ import type { UserRole } from "./domain";
  * forges a request past this map still hits the database's own rules.
  */
 export const PERMISSIONS = [
+  // Every signed-in user has a home screen.
+  "dashboard.view",
   "products.view", "products.create", "products.edit",
   "inventory.view", "inventory.transfer", "inventory.adjust",
   "vans.view", "vans.manage",
@@ -35,6 +37,7 @@ const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
   admin: ALL,
   senior_manager: ALL.filter((p) => p !== "roles.manage"),
   manager: [
+    "dashboard.view",
     "products.view", "products.create", "products.edit",
     "inventory.view", "inventory.transfer", "inventory.adjust",
     "vans.view", "vans.manage",
@@ -48,6 +51,7 @@ const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "reports.view",
   ],
   warehouse: [
+    "dashboard.view",
     "products.view",
     "inventory.view", "inventory.transfer", "inventory.adjust",
     "vans.view",
@@ -58,6 +62,7 @@ const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "reports.view",
   ],
   accountant: [
+    "dashboard.view",
     "products.view", "inventory.view", "vans.view", "loads.view",
     "customers.view",
     "sales.view",
@@ -68,6 +73,7 @@ const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "reports.view",
   ],
   sales_rep: [
+    "dashboard.view",
     "products.view",
     "inventory.view",
     "customers.view", "customers.create", "customers.edit",
@@ -77,6 +83,7 @@ const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "reports.view",
   ],
   driver: [
+    "dashboard.view",
     "products.view",
     "vans.view",
     "loads.view", "loads.confirm",

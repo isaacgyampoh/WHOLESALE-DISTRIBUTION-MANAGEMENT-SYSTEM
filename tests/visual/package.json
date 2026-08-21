@@ -1,0 +1,13 @@
+{
+  "name": "wdms-visual-qa",
+  "private": true,
+  "type": "module",
+  "description": "Renders the application in a real browser at several viewports and captures screenshots for visual review.",
+  "scripts": {
+    "shots": "node capture.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.112.3",
+    "playwright": "^1.49.0"
+  }
+}

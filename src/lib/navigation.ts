@@ -8,6 +8,14 @@ export interface NavItem {
   /** Shown when the user holds any one of these. */
   permissions: readonly Permission[];
   icon: string;
+  /**
+   * Where this belongs on the phone's bottom bar, lower first. Only four
+   * destinations fit, and taking the first four in declaration order gave
+   * drivers "Products, Categories, Vans, Van loads" - none of which is a
+   * task a driver performs. Items without a priority never reach the bar
+   * and live under "More".
+   */
+  mobilePriority?: number;
 }
 
 export interface NavSection {
@@ -23,20 +31,33 @@ export interface NavSection {
 export const NAV_SECTIONS: readonly NavSection[] = [
   {
     label: "Overview",
-    items: [{ label: "Dashboard", href: "/", permissions: ["reports.view"], icon: "LayoutDashboard" }],
+    items: [
+      {
+        label: "Dashboard", href: "/", permissions: ["dashboard.view"],
+        icon: "LayoutDashboard", mobilePriority: 0,
+      },
+    ],
   },
   {
     label: "Catalogue",
     items: [
-      { label: "Products", href: "/products", permissions: ["products.view"], icon: "Package" },
-      { label: "Categories", href: "/categories", permissions: ["products.view"], icon: "Tags" },
+      {
+        label: "Products", href: "/products", permissions: ["products.view"],
+        icon: "Package", mobilePriority: 4,
+      },
+      // Category maintenance is a management screen, not something a
+      // driver or a sales rep has any use for.
+      { label: "Categories", href: "/categories", permissions: ["products.edit"], icon: "Tags" },
     ],
   },
   {
     label: "Warehouse",
     items: [
       { label: "Warehouses", href: "/warehouses", permissions: ["inventory.view"], icon: "Warehouse" },
-      { label: "Stock", href: "/inventory", permissions: ["inventory.view"], icon: "Boxes" },
+      {
+        label: "Stock", href: "/inventory", permissions: ["inventory.view"],
+        icon: "Boxes", mobilePriority: 3,
+      },
       { label: "Movements", href: "/movements", permissions: ["inventory.view"], icon: "ArrowLeftRight" },
       { label: "Purchasing", href: "/purchasing", permissions: ["inventory.transfer"], icon: "Truck" },
     ],
@@ -45,7 +66,10 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     label: "Distribution",
     items: [
       { label: "Vans", href: "/vans", permissions: ["vans.view"], icon: "Van" },
-      { label: "Van loads", href: "/loads", permissions: ["loads.view"], icon: "ClipboardList" },
+      {
+        label: "Van loads", href: "/loads", permissions: ["loads.view"],
+        icon: "ClipboardList", mobilePriority: 5,
+      },
       { label: "Returns", href: "/returns", permissions: ["returns.view"], icon: "Undo2" },
       { label: "Reconciliation", href: "/reconciliation", permissions: ["reconciliation.view"], icon: "Scale" },
     ],
@@ -53,10 +77,19 @@ export const NAV_SECTIONS: readonly NavSection[] = [
   {
     label: "Commercial",
     items: [
-      { label: "Customers", href: "/customers", permissions: ["customers.view"], icon: "Store" },
-      { label: "Sales", href: "/sales", permissions: ["sales.view"], icon: "Receipt" },
+      {
+        label: "Customers", href: "/customers", permissions: ["customers.view"],
+        icon: "Store", mobilePriority: 2,
+      },
+      {
+        label: "Sales", href: "/sales", permissions: ["sales.view"],
+        icon: "Receipt", mobilePriority: 1,
+      },
       { label: "Credit", href: "/credit", permissions: ["credit.view"], icon: "CreditCard" },
-      { label: "Payments", href: "/payments", permissions: ["payments.view"], icon: "Banknote" },
+      {
+        label: "Payments", href: "/payments", permissions: ["payments.view"],
+        icon: "Banknote", mobilePriority: 6,
+      },
     ],
   },
   {
@@ -67,6 +100,18 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     ],
   },
 ];
+
+/**
+ * The four destinations that go on the phone's bottom bar, chosen by
+ * declared priority among what this role can actually reach.
+ */
+export function primaryMobileItems(sections: NavSection[], count = 4): NavItem[] {
+  return sections
+    .flatMap((s) => s.items)
+    .filter((i) => i.mobilePriority !== undefined)
+    .sort((a, b) => (a.mobilePriority ?? 99) - (b.mobilePriority ?? 99))
+    .slice(0, count);
+}
 
 /** Sections with nothing visible to this role are dropped entirely. */
 export function navigationFor(role: UserRole): NavSection[] {

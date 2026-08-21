@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { MoreHorizontal, X } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { NavIcon } from "./nav-icon";
-import type { NavSection, NavItem } from "@/lib/navigation";
+import { primaryMobileItems, type NavSection, type NavItem } from "@/lib/navigation";
 
 /**
  * Primary navigation on phones.
@@ -23,9 +23,9 @@ export function BottomNav({ sections }: { sections: NavSection[] }) {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
 
-  const flat: NavItem[] = sections.flatMap((s) => s.items);
-  const primary = flat.slice(0, 4);
-  const rest = flat.slice(4);
+  const primary: NavItem[] = primaryMobileItems(sections);
+  const onBar = new Set(primary.map((i) => i.href));
+  const rest = sections.flatMap((s) => s.items).filter((i) => !onBar.has(i.href));
 
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
@@ -96,7 +96,7 @@ export function BottomNav({ sections }: { sections: NavSection[] }) {
                 type="button"
                 onClick={() => setOpen(false)}
                 aria-label="Close"
-                className="rounded-md p-1.5 text-[var(--text-secondary)] hover:bg-[var(--surface-sunken)]"
+                className="grid size-11 place-items-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--surface-sunken)]"
               >
                 <X className="size-5" />
               </button>

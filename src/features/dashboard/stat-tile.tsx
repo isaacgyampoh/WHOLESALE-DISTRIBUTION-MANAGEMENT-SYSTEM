@@ -28,18 +28,27 @@ export function StatTile({
 
   const body = (
     <>
-      <p className="text-xs font-medium tracking-wide text-[var(--text-muted)] uppercase">
+      <p className="text-[0.6875rem] font-medium tracking-wide text-[var(--text-muted)] uppercase sm:text-xs">
         {label}
       </p>
-      <p className={cn("numeric mt-2 text-2xl font-semibold tracking-tight", accent || "text-[var(--text-primary)]")}>
+      <p
+        className={cn(
+          // Smaller on phones so a figure like GHS 108,500.00 still fits
+          // a half-width card without truncating.
+          "numeric mt-1.5 text-lg font-semibold tracking-tight sm:mt-2 sm:text-2xl",
+          accent || "text-[var(--text-primary)]",
+        )}
+      >
         {value}
       </p>
-      {sub && <p className="mt-1 text-xs text-[var(--text-secondary)]">{sub}</p>}
+      {sub && (
+        <p className="mt-1 text-[0.6875rem] text-[var(--text-secondary)] sm:text-xs">{sub}</p>
+      )}
     </>
   );
 
   const className = cn(
-    "surface rounded-[var(--radius-panel)] border border-[var(--border-subtle)] p-4",
+    "surface rounded-[var(--radius-panel)] border border-[var(--border-subtle)] p-3 sm:p-4",
     href && "transition-colors hover:border-[var(--border-strong)]",
   );
 
