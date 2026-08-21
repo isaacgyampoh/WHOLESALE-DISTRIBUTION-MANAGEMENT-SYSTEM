@@ -5,7 +5,9 @@
   "description": "Verifies the hosted Supabase platform path: Auth, PostgREST, RLS, privileged functions and one end-to-end business workflow.",
   "scripts": {
     "preflight": "node verify.mjs --preflight-only",
-    "test": "node verify.mjs"
+    "test": "node verify.mjs",
+    "auth": "node test_auth.mjs",
+    "shell": "node test_shell.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3"

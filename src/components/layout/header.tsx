@@ -1,5 +1,3 @@
-import { MobileNav } from "./mobile-nav";
-import type { NavSection } from "@/lib/navigation";
 import type { AuthenticatedUser } from "@/types/domain";
 import { Badge } from "@/components/ui/badge";
 import { LogOut } from "lucide-react";
@@ -19,13 +17,7 @@ const ROLE_LABELS: Record<string, string> = {
  * it, so when a category manager cannot find a product, the reason is on
  * screen rather than a mystery.
  */
-export function Header({
-  user,
-  sections,
-}: {
-  user: AuthenticatedUser;
-  sections: NavSection[];
-}) {
+export function Header({ user }: { user: AuthenticatedUser }) {
   const initials = user.fullName
     .split(" ")
     .filter(Boolean)
@@ -35,7 +27,9 @@ export function Header({
 
   return (
     <header className="flex h-14 shrink-0 items-center gap-3 border-b border-[var(--border-subtle)] bg-[var(--surface-raised)] px-4">
-      <MobileNav sections={sections} />
+      <span className="text-sm font-semibold text-[var(--text-primary)] lg:hidden">
+        Distribution
+      </span>
       <div className="flex-1" />
       <Badge tone="brand">{ROLE_LABELS[user.role] ?? user.role}</Badge>
       <div className="flex items-center gap-2.5 border-l border-[var(--border-subtle)] pl-3">

@@ -3,6 +3,8 @@ import Link from "next/link";
 import { requireUser } from "@/lib/auth/session";
 import { can } from "@/types/permissions";
 import { getDashboardMetrics, getOpenVariances, getLowStock } from "@/features/dashboard/queries";
+import { getDriverSummary } from "@/features/dashboard/driver-queries";
+import { DriverDashboard } from "@/features/dashboard/driver-dashboard";
 import { StatTile } from "@/features/dashboard/stat-tile";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -17,6 +19,28 @@ export const metadata: Metadata = { title: "Dashboard" };
 
 export default async function DashboardPage() {
   const user = await requireUser();
+
+  // A driver sees their own round. The management tiles below query
+  // company-wide views a driver cannot read, so they would render as a
+  // wall of zeros rather than anything useful.
+  if (user.role === "driver") {
+    const driver = await loadDriver(user.id);
+    return (
+      <>
+        <PageHeader
+          title={`Good day, ${user.fullName.split(" ")[0]}`}
+          description="Your van, today's takings and what is still on board."
+        />
+        {driver.ok ? (
+          <DriverDashboard summary={driver.data} />
+        ) : (
+          <Card>
+            <ErrorState title="Your round could not be loaded" message={driver.message} />
+          </Card>
+        )}
+      </>
+    );
+  }
 
   // Only the data fetch is guarded here. Wrapping the JSX in try/catch
   // would not catch render errors anyway - error.tsx handles those.
@@ -222,6 +246,19 @@ interface DashboardData {
 type LoadResult =
   | { ok: true; data: DashboardData }
   | { ok: false; message: string };
+
+type DriverResult =
+  | { ok: true; data: Awaited<ReturnType<typeof getDriverSummary>> }
+  | { ok: false; message: string };
+
+async function loadDriver(userId: string): Promise<DriverResult> {
+  try {
+    return { ok: true, data: await getDriverSummary(userId) };
+  } catch (error) {
+    console.error("[dashboard] driver summary failed", error);
+    return { ok: false, message: toAppError(error).userMessage };
+  }
+}
 
 /** Fetches everything the dashboard needs, converting failure into a value. */
 async function loadDashboard(role: Parameters<typeof can>[0]): Promise<LoadResult> {

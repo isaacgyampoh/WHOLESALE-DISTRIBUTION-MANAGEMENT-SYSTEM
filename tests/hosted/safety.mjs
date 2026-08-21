@@ -25,11 +25,15 @@ export async function assessProject(admin) {
   let unknownRows = 0;
 
   for (const [table, known] of Object.entries(SEED)) {
-    const column = table === "categories" ? "name" : "code";
+    // products is keyed by sku, categories by name, the rest by code.
+    const column = table === "categories" ? "name" : table === "products" ? "sku" : "code";
     const { data, error } = await admin.from(table).select(`${column}`);
 
     if (error) {
+      // A table we cannot read is not evidence that it is empty. Treat it
+      // as unknown data so the gate refuses rather than proceeding blind.
       findings.push({ table, error: error.message });
+      unknownRows += 1;
       continue;
     }
 

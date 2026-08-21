@@ -5,6 +5,8 @@ import { SetupRequired } from "@/components/layout/setup-required";
 import { navigationFor } from "@/lib/navigation";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
+import { BottomNav } from "@/components/layout/bottom-nav";
+import { SessionWatcher } from "@/components/layout/session-watcher";
 
 /**
  * Every page in this shell depends on who is signed in, so none of it may
@@ -34,11 +36,14 @@ export default async function AppLayout({
         <Sidebar sections={sections} />
       </div>
       <div className="flex min-w-0 flex-1 flex-col">
-        <Header user={user} sections={sections} />
-        <main className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8">
+        <Header user={user} />
+        {/* Bottom padding clears the fixed mobile bar and its safe-area inset. */}
+        <main className="flex-1 overflow-y-auto px-4 py-6 pb-24 sm:px-6 lg:px-8 lg:pb-8">
           <div className="mx-auto max-w-7xl">{children}</div>
         </main>
       </div>
+      <BottomNav sections={sections} />
+      <SessionWatcher />
     </div>
   );
 }

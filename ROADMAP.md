@@ -12,6 +12,7 @@ Tracks the phases in the master development prompt. Updated as work lands.
 | Phase 1 — Inspection & architecture | Done | See "Assessment" below |
 | Phase 2 — Next.js foundation | Done | `npm run verify` passes |
 | Phase 3 — Design system (core) | Partial | Tokens, primitives, shell built |
+| Phase 5A — Auth & application shell | Done | 44 assertions against hosted Supabase |
 | Phase 4 — Hosted gate (part 1) | Partial | GitHub pushed; hosted CLI path abandoned |
 | Consolidated SQL installer | Done | Installed into a fresh database and compared object-by-object |
 
@@ -24,7 +25,7 @@ authorization bypass; policy and trigger counts change accordingly.
 
 ## Not started
 
-Phases 4-20: authentication hardening, products, warehouses, inventory,
+Phases 5B-5K: authentication hardening, products, warehouses, inventory,
 vans, drivers, van loading, customers, cash sales, credit sales, payments,
 van returns, reconciliation, manager scopes UI, reports, driver PWA,
 offline sync, security hardening, production deployment.
@@ -36,9 +37,9 @@ offline sync, security hardening, production deployment.
 | Nothing pushed to GitHub; remote has zero branches | — | RESOLVED: `main` pushed, 9 commits, 15 migrations on remote |
 | Migrations never run against hosted Supabase | Platform behaviour (PostgREST, Auth, storage) unproven | Blocked on project credentials |
 | No `supabase/config.toml` | — | RESOLVED: added, parses, `db push` idempotent |
-| Auth flow untested end to end | Sign-in renders; no credential has been exchanged | Blocked on `.env.local` |
+| Auth flow untested end to end | — | RESOLVED: 20 auth + 24 shell assertions against the hosted project |
 | Hosted gate suite never executed | 60+ assertions written, none run | Superseded: deployment is now by SQL installer |
-| Hosted install not yet performed by the owner | Installer verified locally only | Awaiting paste into the SQL Editor |
+| Hosted install not yet performed by the owner | — | RESOLVED: installed, verified, anon privileges repaired |
 
 ## Technical debt
 
