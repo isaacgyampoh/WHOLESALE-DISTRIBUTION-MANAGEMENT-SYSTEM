@@ -17,12 +17,17 @@ async function as(c, uid, fn) {
 (async () => {
   const c = new Client(CONN); await c.connect();
 
+  // Every user here stands for an administrator-issued invitation, which
+  // is what carries org_id. Without it, migration 0017 creates the
+  // account inactive and it can reach nothing - by design.
+  const org = (await q(c, `select id from organizations where slug='default'`))[0].id;
+
   const users = {};
   for (const [role, email] of [['admin','admin@wdms.test'],['manager','mgr@wdms.test'],
        ['sales_rep','rep2@wdms.test'],['warehouse','wh@wdms.test'],['accountant','acct@wdms.test']]) {
     users[role] = (await q(c, `insert into auth.users (email, raw_user_meta_data)
       values ($1, $2::jsonb) returning id`,
-      [email, JSON.stringify({ full_name: role, role })]))[0].id;
+      [email, JSON.stringify({ full_name: role, role, org_id: org })]))[0].id;
   }
   console.log('  created 5 users, one per role');
 
@@ -33,7 +38,8 @@ async function as(c, uid, fn) {
   // Two reps, one order each, to prove per-owner isolation.
   const repA = users.sales_rep;
   const repB = (await q(c, `insert into auth.users (email, raw_user_meta_data)
-    values ('rep3@wdms.test','{"full_name":"Rep B","role":"sales_rep"}'::jsonb) returning id`))[0].id;
+    values ('rep3@wdms.test', $1::jsonb) returning id`,
+    [JSON.stringify({ full_name: 'Rep B', role: 'sales_rep', org_id: org })]))[0].id;
   const oA = (await q(c, `insert into sales_orders (customer_id,warehouse_id,created_by)
                           values ($1,$2,$3) returning id`, [cus, wh, repA]))[0].id;
   const oB = (await q(c, `insert into sales_orders (customer_id,warehouse_id,created_by)

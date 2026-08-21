@@ -111,6 +111,25 @@ try {
   ok("accountant navigation excludes Users", !ac.body.includes(">Users<"));
   ok("accountant navigation includes Payments", ac.body.includes(">Payments<"));
 
+  console.log("\n=== account awaiting activation ===");
+  {
+    // What a self-registered OAuth user looks like once migration 0017 is
+    // applied. Forced here so the application's handling can be tested
+    // whether or not the hosted database has had that upgrade yet.
+    const pendingEmail = await makeUser("sales_rep", "Pending Person");
+    const pendingId = users[users.length - 1];
+    await admin.from("profiles").update({ is_active: false }).eq("id", pendingId);
+
+    const r = await signedInGet(pendingEmail, "/");
+    ok("a valid session with no active profile does not loop",
+       r.status === 200, `(HTTP ${r.status}${r.location ? " -> " + r.location : ""})`);
+    ok("it is told the account is not active yet",
+       r.body.includes("not active yet"));
+    ok("it is offered a way out", r.body.includes("Sign out"));
+    ok("it sees no navigation", !r.body.includes(">Products<") && !r.body.includes(">Customers<"));
+    ok("it sees no business figures", !r.body.includes("Cash sales today"));
+  }
+
   console.log("\n=== session integrity ===");
   const tampered = await fetch(`${BASE}/`, {
     headers: { cookie: `sb-${projectRef}-auth-token=base64-bm90LWEtc2Vzc2lvbg` },

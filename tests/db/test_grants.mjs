@@ -40,8 +40,10 @@ async function as(role, claims, sql, params) {
   finally { await c.query('rollback'); }
 }
 
-const uid = (await c.query(`insert into auth.users (email, raw_user_meta_data)
-  values ('grants@test', '{"role":"admin"}'::jsonb) returning id`)).rows[0].id;
+const grantsOrg = (await c.query(`select id from organizations where slug='default'`)).rows[0].id;
+const uid = (await c.query(
+  `insert into auth.users (email, raw_user_meta_data) values ('grants@test', $1::jsonb) returning id`,
+  [JSON.stringify({ role: 'admin', org_id: grantsOrg })])).rows[0].id;
 const authed = { sub: uid, role:'authenticated' };
 const anon = { role:'anon' };
 
@@ -82,8 +84,9 @@ for (const [name, sql] of [
 }
 
 console.log('\n=== authenticated non-manager still refused ===');
-const drvId = (await c.query(`insert into auth.users (email, raw_user_meta_data)
-  values ('drv-grants@test', '{"role":"driver"}'::jsonb) returning id`)).rows[0].id;
+const drvId = (await c.query(
+  `insert into auth.users (email, raw_user_meta_data) values ('drv-grants@test', $1::jsonb) returning id`,
+  [JSON.stringify({ role: 'driver', org_id: grantsOrg })])).rows[0].id;
 r = await as('authenticated', { sub: drvId, role:'authenticated' },
   `select public.approve_reconciliation('00000000-0000-0000-0000-000000000000')`);
 // Must be refused on privilege, not on existence: a "not found" reply

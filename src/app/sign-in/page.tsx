@@ -1,14 +1,21 @@
 import type { Metadata } from "next";
 import { SignInForm } from "./sign-in-form";
+import { Alert } from "@/components/ui/states";
 
 export const metadata: Metadata = { title: "Sign in" };
+
+const CALLBACK_ERRORS: Record<string, string> = {
+  missing_code: "That sign-in link was incomplete. Please try again.",
+  exchange_failed: "That sign-in could not be completed. Please try again.",
+};
 
 export default async function SignInPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string }>;
+  searchParams: Promise<{ next?: string; error?: string }>;
 }) {
-  const { next } = await searchParams;
+  const { next, error } = await searchParams;
+  const callbackError = error ? CALLBACK_ERRORS[error] : undefined;
 
   return (
     <div className="grid min-h-dvh lg:grid-cols-2">
@@ -26,6 +33,11 @@ export default async function SignInPage({
           <p className="mt-1.5 mb-8 text-sm text-[var(--text-secondary)]">
             Use the account issued by your administrator.
           </p>
+          {callbackError && (
+            <div className="mb-4">
+              <Alert tone="danger">{callbackError}</Alert>
+            </div>
+          )}
           <SignInForm nextPath={next} />
         </div>
       </div>

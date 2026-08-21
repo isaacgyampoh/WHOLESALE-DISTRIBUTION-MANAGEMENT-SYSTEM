@@ -9,6 +9,7 @@ CLI tools.
 | `WHOLESALE_DISTRIBUTION_DATABASE.sql` | The installer. Paste this into Supabase. |
 | `VERIFY_DATABASE.sql` | A read-only check. Paste it afterwards to confirm the install worked. |
 | `FIX_ANON_GRANTS.sql` | Repair script. Only needed if verification row 16 fails. |
+| `UPGRADE_0017_SIGNUP_GUARD.sql` | Upgrade for a database installed before migration 0017. |
 | `build.mjs` | Regenerates the installer from `supabase/migrations`. You do not need to run this. |
 
 ---
@@ -84,6 +85,55 @@ and is safe to run twice.
 
 Then run `VERIFY_DATABASE.sql` again: row 16 should read `0` / `OK` and
 row 18 should read `0`.
+
+### If rows 22 or 23 fail
+
+Those two rows cover migration 0017:
+
+- **Row 22, "Uninvited signups are created inactive."** Without it, turning
+  on Google or any other sign-in provider lets anyone with an account at
+  that provider sign in and read your catalogue and customer list.
+- **Row 23, "Phone accepted as an identity."** Without it, a driver
+  signing in with a phone number and no email fails outright.
+
+If your database was installed before this migration existed, run
+`database/UPGRADE_0017_SIGNUP_GUARD.sql` the same way you ran the
+installer. It changes no business data and is safe to run twice.
+
+**After running it**, accounts you create in Authentication are inactive
+unless their user metadata carries an `org_id`. To activate one by hand:
+
+```sql
+update public.profiles
+set is_active = true, role = 'admin'
+where email = 'you@example.com';
+```
+
+### Sign-in methods
+
+Email and password works out of the box. Two more are supported and both
+are off until you switch them on in `.env.local`:
+
+| Method | Set in `.env.local` | Also needs |
+|---|---|---|
+| Google | `NEXT_PUBLIC_AUTH_GOOGLE=true` | Authentication → Providers → Google, with OAuth credentials from Google Cloud |
+| Phone | `NEXT_PUBLIC_AUTH_PHONE=true` | Authentication → Providers → Phone |
+
+A button for an unconfigured provider fails confusingly, so neither
+appears until enabled.
+
+**Two things worth knowing before choosing:**
+
+*Google* suits office staff who already have company accounts. Anyone
+with a Google account can reach the sign-in page, but migration 0017
+means an uninvited one lands inactive and sees nothing until you
+activate it.
+
+*Phone* suits drivers, who carry phones and often have no work email.
+Prefer **phone plus password** over SMS one-time codes: an OTP costs a
+message on every sign-in, billed by whichever SMS provider you configure,
+and it fails exactly when a driver has poor signal. Reserve OTP for
+password recovery.
 
 ### If row 7 reports a different function count
 
@@ -166,9 +216,9 @@ created in Step 8.
   stock, customers, suppliers, sales, invoices, payments, purchasing,
   vans, van loading, van sales, returns, credit and reconciliation
 - **8 reporting views**
-- **33 functions**, including the business workflow (van dispatch, sale
+- **34 functions**, including the business workflow (van dispatch, sale
   completion, returns, reconciliation) and the security helpers
-- **64 triggers**
+- **65 triggers**
 - **67 row level security policies**, with RLS enabled on all 29 tables
 - Demo data: two warehouses, four categories, two suppliers, three
   customers, six products and opening stock

@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
-import { getCurrentUser } from "@/lib/auth/session";
+import { getSessionState } from "@/lib/auth/session";
 import { isSupabaseConfigured } from "@/lib/env/server";
 import { SetupRequired } from "@/components/layout/setup-required";
+import { AccountPending } from "@/components/layout/account-pending";
 import { navigationFor } from "@/lib/navigation";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
@@ -25,9 +26,14 @@ export default async function AppLayout({
   // setup step, the second is a redirect.
   if (!isSupabaseConfigured()) return <SetupRequired />;
 
-  const user = await getCurrentUser();
-  if (!user) redirect("/sign-in");
+  const session = await getSessionState();
 
+  // A pending account holds a valid session, so redirecting it to
+  // sign-in would bounce straight back here. Say what is happening.
+  if (session.status === "pending") return <AccountPending email={session.email} />;
+  if (session.status === "anonymous") redirect("/sign-in");
+
+  const { user } = session;
   const sections = navigationFor(user.role);
 
   return (

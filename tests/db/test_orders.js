@@ -7,8 +7,10 @@ const q = async (c, s, p) => (await c.query(s, p)).rows;
   const c = new Client(CONN); await c.connect();
 
   // A real user, created the way Supabase Auth would.
+  const defaultOrg = (await q(c, `select id from organizations where slug='default'`))[0].id;
   const u = (await q(c, `insert into auth.users (email, raw_user_meta_data)
-    values ('rep@wdms.test', '{"full_name":"Test Rep","role":"sales_rep"}'::jsonb) returning id`))[0].id;
+    values ('rep@wdms.test', $1::jsonb) returning id`,
+    [JSON.stringify({ full_name: 'Test Rep', role: 'sales_rep', org_id: defaultOrg })]))[0].id;
   const prof = (await q(c, `select role, full_name from profiles where id=$1`, [u]))[0];
   ok('signup trigger created profile', !!prof, `(role=${prof && prof.role})`);
 

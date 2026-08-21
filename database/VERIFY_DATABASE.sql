@@ -196,10 +196,10 @@ report as (
           case when e.n = 12 then 'OK' else 'FAIL' end,
           (select names from enum_bad)
   from enum_match e
-  union all select  7, 'Functions', '33', c.functions::text,
-          case when c.functions = 33 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  8, 'Triggers', '64', c.triggers::text,
-          case when c.triggers = 64 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  7, 'Functions', '34', c.functions::text,
+          case when c.functions = 34 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  8, 'Triggers', '65', c.triggers::text,
+          case when c.triggers = 65 then 'OK' else 'CHECK' end, '' from counts c
   union all select  9, 'RLS policies', '67', c.policies::text,
           case when c.policies = 67 then 'OK' else 'CHECK' end, '' from counts c
   union all select 10, 'RLS enabled on every table',
@@ -207,10 +207,10 @@ report as (
           case when c.rls_tables = c.all_tables then 'OK' else 'FAIL' end, '' from counts c
   union all select 11, 'Generated columns', '12', c.generated_cols::text,
           case when c.generated_cols = 12 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 12, 'Indexes', '111', c.indexes::text,
-          case when c.indexes = 111 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 13, 'Constraints', '201', c.constraints::text,
-          case when c.constraints = 201 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 12, 'Indexes', '112', c.indexes::text,
+          case when c.indexes = 112 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 13, 'Constraints', '202', c.constraints::text,
+          case when c.constraints = 202 then 'OK' else 'CHECK' end, '' from counts c
   union all select 14, 'Security functions present', '8', s.n::text,
           case when s.n = 8 then 'OK' else 'FAIL' end, '' from security_fns s
   union all select 15, 'Business functions present', '7', b.n::text,
@@ -232,13 +232,33 @@ report as (
           case when e.n = 0 then 'OK' else 'FAIL' end, '' from anon_privileged_exec e
   union all select 21, 'Stock ledger append-only for users', '0', l.n::text,
           case when l.n = 0 then 'OK' else 'FAIL' end, '' from ledger_locked l
-  union all select 22, 'Organizations', 'at least 1',
+  union all select 22, 'Uninvited signups are created inactive', 'present',
+          case when exists (
+            select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'public' and p.proname = 'handle_new_user'
+              and pg_get_functiondef(p.oid) like '%was_invited%'
+          ) then 'present' else 'MISSING' end,
+          case when exists (
+            select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'public' and p.proname = 'handle_new_user'
+              and pg_get_functiondef(p.oid) like '%was_invited%'
+          ) then 'OK' else 'FAIL' end,
+          'Migration 0017; without it an OAuth signup becomes an active user'
+  union all select 23, 'Phone accepted as an identity', 'nullable email',
+          (select case when is_nullable = 'YES' then 'nullable email' else 'email REQUIRED' end
+           from information_schema.columns
+           where table_schema='public' and table_name='profiles' and column_name='email'),
+          (select case when is_nullable = 'YES' then 'OK' else 'FAIL' end
+           from information_schema.columns
+           where table_schema='public' and table_name='profiles' and column_name='email'),
+          'Migration 0017; phone-only sign-in fails without it'
+  union all select 24, 'Organizations', 'at least 1',
           (select count(*)::text from public.organizations),
           case when (select count(*) from public.organizations) >= 1
                then 'OK' else 'FAIL' end, ''
-  union all select 23, 'Demo products (0 if seed removed)', 'any',
+  union all select 25, 'Demo products (0 if seed removed)', 'any',
           (select count(*)::text from public.products), 'INFO', ''
-  union all select 24, 'Application users (create in Authentication)', 'any',
+  union all select 26, 'Application users (create in Authentication)', 'any',
           (select count(*)::text from public.profiles), 'INFO',
           'Create your first user, then set profiles.role to admin'
 )

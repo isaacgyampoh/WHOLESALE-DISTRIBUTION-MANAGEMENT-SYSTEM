@@ -26,6 +26,9 @@ grant usage on schema auth to anon, authenticated, service_role;
 create table auth.users (
   id                 uuid primary key default gen_random_uuid(),
   email              text unique,
+  -- Supabase provisions this column; phone-only accounts have no email.
+  phone              text unique,
+  raw_app_meta_data  jsonb not null default '{}'::jsonb,
   encrypted_password text,
   raw_user_meta_data jsonb not null default '{}'::jsonb,
   created_at         timestamptz not null default now()

@@ -10,7 +10,7 @@ const CONTROL =
 
 export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
   ({ className, ...props }, ref) => (
-    <input ref={ref} className={cn(CONTROL, "h-9.5", className)} {...props} />
+    <input ref={ref} className={cn(CONTROL, "h-11 sm:h-9.5", className)} {...props} />
   ),
 );
 Input.displayName = "Input";
@@ -19,7 +19,7 @@ export const Select = React.forwardRef<
   HTMLSelectElement,
   React.SelectHTMLAttributes<HTMLSelectElement>
 >(({ className, children, ...props }, ref) => (
-  <select ref={ref} className={cn(CONTROL, "h-9.5", className)} {...props}>
+  <select ref={ref} className={cn(CONTROL, "h-11 sm:h-9.5", className)} {...props}>
     {children}
   </select>
 ));
