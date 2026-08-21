@@ -1,16 +1,14 @@
--- =====================================================================
--- WHOLESALE DISTRIBUTION MANAGEMENT SYSTEM
--- Post-installation verification
+-- Wholesale Distribution Management System
+-- Post-installation verification. READ ONLY: inspects the catalog only,
+-- creates nothing, changes nothing, deletes nothing.
 --
--- READ ONLY. This script only inspects the catalog: it creates nothing,
--- changes nothing and deletes nothing. Safe to run at any time.
+-- Supabase -> SQL Editor -> New query -> Select All -> paste -> Run.
+-- Read the "status" column: every row should say OK or INFO.
 --
--- HOW TO USE
---   Supabase -> SQL Editor -> New query -> paste -> Run.
---   Read the "status" column. Everything should say OK.
---
--- It is written as one statement so the editor shows the whole report.
--- =====================================================================
+-- Use Ctrl+A / Cmd+A inside the file to select it. Dragging a selection
+-- can clip the leading "-- " from the first line, which turns a comment
+-- into SQL and produces: operator too long at or near "===".
+-- There are deliberately no decorative rules in this file.
 
 with counts as (
   select
@@ -50,7 +48,7 @@ with counts as (
       where n.nspname = 'public')                                          as constraints
 ),
 security_fns as (
-  select count(*) as n from pg_proc p
+  select count(distinct p.proname) as n from pg_proc p
   join pg_namespace ns on ns.oid = p.pronamespace
   where ns.nspname = 'public'
     and p.proname in ('is_trusted_context', 'require_role', 'auth_role',
@@ -67,18 +65,37 @@ business_fns as (
                       'receive_purchase_line')
 ),
 anon_tables as (
-  -- anon must hold no privileges on any application table.
+  -- Raw grant rows held by anon. Reported for information: a project
+  -- created before Supabase stopped auto-exposing new entities may carry
+  -- legacy grants that are harmless once schema USAGE is revoked.
   select count(*) as n
   from information_schema.role_table_grants
   where table_schema = 'public' and grantee = 'anon'
 ),
+anon_schema_usage as (
+  select has_schema_privilege('anon', 'public', 'USAGE') as granted
+),
+anon_effective_read as (
+  -- What actually matters: can an anonymous caller read anything? That
+  -- needs BOTH schema USAGE and a table privilege, so both are tested
+  -- together rather than inferring from grant rows alone.
+  select count(*) as n
+  from pg_class c
+  join pg_namespace ns on ns.oid = c.relnamespace
+  where ns.nspname = 'public'
+    and c.relkind in ('r', 'v')
+    and has_schema_privilege('anon', 'public', 'USAGE')
+    and has_table_privilege('anon', c.oid, 'SELECT')
+),
 authed_tables as (
+  -- Covers tables and views: role_table_grants reports both.
   select count(distinct table_name) as n
   from information_schema.role_table_grants
-  where table_schema = 'public' and grantee = 'authenticated' and privilege_type = 'SELECT'
+  where table_schema = 'public' and grantee = 'authenticated'
+    and privilege_type = 'SELECT'
 ),
 anon_privileged_exec as (
-  -- anon must not be able to execute any privileged business function.
+  -- Effective execute, which also requires schema USAGE.
   select count(*) as n
   from pg_proc p
   join pg_namespace ns on ns.oid = p.pronamespace
@@ -86,6 +103,7 @@ anon_privileged_exec as (
     and p.proname in ('dispatch_van_load', 'complete_van_sale',
                       'approve_van_return', 'approve_reconciliation',
                       'record_credit_payment')
+    and has_schema_privilege('anon', 'public', 'USAGE')
     and has_function_privilege('anon', p.oid, 'EXECUTE')
 ),
 ledger_locked as (
@@ -94,50 +112,142 @@ ledger_locked as (
   where table_schema = 'public' and table_name = 'stock_movements'
     and grantee = 'authenticated' and privilege_type in ('UPDATE', 'DELETE')
 ),
+expected_enums (typname, members) as (
+  -- Members AND their order. Order matters: the installer declares these
+  -- up front rather than appending, and a mismatch would mean the
+  -- installer and the migrations have diverged.
+  values
+    ('credit_txn_type',       'charge,payment,adjustment,write_off'),
+    ('invoice_status',        'draft,issued,partially_paid,paid,overdue,void'),
+    ('movement_type',         'receipt,issue,adjustment_in,adjustment_out,transfer_in,transfer_out,customer_return,supplier_return,damage,shortage'),
+    ('order_status',          'draft,confirmed,picking,packed,shipped,delivered,cancelled'),
+    ('payment_method',        'cash,bank_transfer,cheque,card,mobile_money'),
+    ('po_status',             'draft,submitted,partially_received,received,cancelled'),
+    ('reconciliation_status', 'draft,submitted,approved,rejected,settled'),
+    ('user_role',             'admin,manager,sales_rep,warehouse,accountant,driver,senior_manager'),
+    ('van_load_status',       'draft,loaded,dispatched,returned,reconciled,cancelled'),
+    ('van_return_status',     'draft,submitted,approved,rejected'),
+    ('van_sale_status',       'draft,completed,void'),
+    ('van_sale_type',         'cash,credit')
+),
+actual_enums as (
+  select t.typname::text as typname,
+         string_agg(e.enumlabel, ',' order by e.enumsortorder) as members
+  from pg_type t
+  join pg_enum e on e.enumtypid = t.oid
+  join pg_namespace n on n.oid = t.typnamespace
+  where n.nspname = 'public'
+  group by t.typname
+),
+enum_match as (
+  select count(*) as n
+  from expected_enums x
+  join actual_enums a on a.typname = x.typname and a.members = x.members
+),
+enum_bad as (
+  select coalesce(string_agg(x.typname, ', '), '') as names
+  from expected_enums x
+  left join actual_enums a on a.typname = x.typname and a.members = x.members
+  where a.typname is null
+),
+missing_tables as (
+  -- Named check, so a missing table is identified rather than inferred
+  -- from a count.
+  select coalesce(string_agg(t, ', '), '') as names
+  from unnest(array[
+    'categories','credit_transactions','customers','inventory','invoices',
+    'manager_category_scopes','organizations','payments','products','profiles',
+    'purchase_order_items','purchase_orders','sales_order_items','sales_orders',
+    'stock_movements','stock_transfer_items','stock_transfers','suppliers',
+    'van_assignments','van_inventory','van_load_items','van_loads',
+    'van_reconciliations','van_return_items','van_returns','van_sale_items',
+    'van_sales','vans','warehouses'
+  ]) as t
+  where not exists (
+    select 1 from information_schema.tables
+    where table_schema = 'public' and table_type = 'BASE TABLE' and table_name = t
+  )
+),
+missing_views as (
+  select coalesce(string_agg(v, ', '), '') as names
+  from unnest(array[
+    'customer_balances','customer_credit_position','customer_statement',
+    'invoice_ageing','reconciliation_variances','stock_summary',
+    'van_load_summary','van_stock_summary'
+  ]) as v
+  where not exists (
+    select 1 from information_schema.views
+    where table_schema = 'public' and table_name = v
+  )
+),
 report as (
-  select  1 as ord, 'Tables'                    as check_name,
+  select  1 as ord, 'Tables' as check_name,
           '29'::text as expected, c.tables::text as actual,
-          case when c.tables = 29 then 'OK' else 'CHECK' end as status from counts c
-  union all select  2, 'Views', '8', c.views::text,
-          case when c.views = 8 then 'OK' else 'CHECK' end from counts c
-  union all select  3, 'Enum types', '12', c.enums::text,
-          case when c.enums = 12 then 'OK' else 'CHECK' end from counts c
-  union all select  4, 'Functions', '33', c.functions::text,
-          case when c.functions = 33 then 'OK' else 'CHECK' end from counts c
-  union all select  5, 'Triggers', '64', c.triggers::text,
-          case when c.triggers = 64 then 'OK' else 'CHECK' end from counts c
-  union all select  6, 'RLS policies', '67', c.policies::text,
-          case when c.policies = 67 then 'OK' else 'CHECK' end from counts c
-  union all select  7, 'Tables with RLS enabled',
+          case when c.tables = 29 then 'OK' else 'CHECK' end as status,
+          ''::text as detail
+  from counts c
+  union all select  2, 'Expected tables all present', 'none missing',
+          case when m.names = '' then 'none missing' else 'MISSING' end,
+          case when m.names = '' then 'OK' else 'FAIL' end, m.names
+  from missing_tables m
+  union all select  3, 'Views', '8', c.views::text,
+          case when c.views = 8 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  4, 'Expected views all present', 'none missing',
+          case when v.names = '' then 'none missing' else 'MISSING' end,
+          case when v.names = '' then 'OK' else 'FAIL' end, v.names
+  from missing_views v
+  union all select  5, 'Enum types', '12', c.enums::text,
+          case when c.enums = 12 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  6, 'Enum members and order', '12 matching', e.n::text,
+          case when e.n = 12 then 'OK' else 'FAIL' end,
+          (select names from enum_bad)
+  from enum_match e
+  union all select  7, 'Functions', '33', c.functions::text,
+          case when c.functions = 33 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  8, 'Triggers', '64', c.triggers::text,
+          case when c.triggers = 64 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  9, 'RLS policies', '67', c.policies::text,
+          case when c.policies = 67 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 10, 'RLS enabled on every table',
           c.all_tables::text, c.rls_tables::text,
-          case when c.rls_tables = c.all_tables then 'OK' else 'FAIL' end from counts c
-  union all select  8, 'Generated columns', '12', c.generated_cols::text,
-          case when c.generated_cols = 12 then 'OK' else 'CHECK' end from counts c
-  union all select  9, 'Indexes', '111', c.indexes::text,
-          case when c.indexes >= 100 then 'OK' else 'CHECK' end from counts c
-  union all select 10, 'Constraints', '201', c.constraints::text,
-          case when c.constraints >= 190 then 'OK' else 'CHECK' end from counts c
-  union all select 11, 'Security functions present', '8', s.n::text,
-          case when s.n = 8 then 'OK' else 'FAIL' end from security_fns s
-  union all select 12, 'Business functions present', '7', b.n::text,
-          case when b.n = 7 then 'OK' else 'FAIL' end from business_fns b
-  union all select 13, 'anon has NO table privileges', '0', a.n::text,
-          case when a.n = 0 then 'OK' else 'FAIL' end from anon_tables a
-  -- Counts tables and views together: role_table_grants covers both.
-  union all select 14, 'authenticated can read tables + views', '37', t.n::text,
-          case when t.n >= 37 then 'OK' else 'FAIL' end from authed_tables t
-  union all select 15, 'anon cannot execute privileged functions', '0', e.n::text,
-          case when e.n = 0 then 'OK' else 'FAIL' end from anon_privileged_exec e
-  union all select 16, 'stock ledger is append-only for users', '0', l.n::text,
-          case when l.n = 0 then 'OK' else 'FAIL' end from ledger_locked l
-  union all select 17, 'Organizations', 'at least 1',
+          case when c.rls_tables = c.all_tables then 'OK' else 'FAIL' end, '' from counts c
+  union all select 11, 'Generated columns', '12', c.generated_cols::text,
+          case when c.generated_cols = 12 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 12, 'Indexes', '111', c.indexes::text,
+          case when c.indexes = 111 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 13, 'Constraints', '201', c.constraints::text,
+          case when c.constraints = 201 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 14, 'Security functions present', '8', s.n::text,
+          case when s.n = 8 then 'OK' else 'FAIL' end, '' from security_fns s
+  union all select 15, 'Business functions present', '7', b.n::text,
+          case when b.n = 7 then 'OK' else 'FAIL' end, '' from business_fns b
+  union all select 16, 'anon cannot read any table or view', '0', ar.n::text,
+          case when ar.n = 0 then 'OK' else 'FAIL' end,
+          'This is the decisive check for anonymous access'
+  from anon_effective_read ar
+  union all select 17, 'anon schema USAGE (inert without privileges)', 'any',
+          case when u.granted then 'inherited from PUBLIC' else 'revoked' end,
+          'INFO',
+          'PostgreSQL grants public schema USAGE to PUBLIC by default; harmless with no table rights'
+  from anon_schema_usage u
+  union all select 18, 'anon legacy grant rows', 'any',
+          a.n::text, 'INFO', '' from anon_tables a
+  union all select 19, 'authenticated can read tables and views', '37', t.n::text,
+          case when t.n >= 37 then 'OK' else 'FAIL' end, '' from authed_tables t
+  union all select 20, 'anon cannot execute privileged functions', '0', e.n::text,
+          case when e.n = 0 then 'OK' else 'FAIL' end, '' from anon_privileged_exec e
+  union all select 21, 'Stock ledger append-only for users', '0', l.n::text,
+          case when l.n = 0 then 'OK' else 'FAIL' end, '' from ledger_locked l
+  union all select 22, 'Organizations', 'at least 1',
           (select count(*)::text from public.organizations),
-          case when (select count(*) from public.organizations) >= 1 then 'OK' else 'FAIL' end
-  union all select 18, 'Demo products (0 if seed skipped)', 'any',
-          (select count(*)::text from public.products), 'INFO'
-  union all select 19, 'Application users (create in Authentication)', 'any',
-          (select count(*)::text from public.profiles), 'INFO'
+          case when (select count(*) from public.organizations) >= 1
+               then 'OK' else 'FAIL' end, ''
+  union all select 23, 'Demo products (0 if seed removed)', 'any',
+          (select count(*)::text from public.products), 'INFO', ''
+  union all select 24, 'Application users (create in Authentication)', 'any',
+          (select count(*)::text from public.profiles), 'INFO',
+          'Create your first user, then set profiles.role to admin'
 )
-select ord as "#", check_name as "check", expected, actual, status
+select ord as "#", check_name as "check", expected, actual, status, detail
 from report
 order by ord;
