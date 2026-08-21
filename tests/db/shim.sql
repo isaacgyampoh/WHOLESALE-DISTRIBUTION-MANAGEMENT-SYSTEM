@@ -11,6 +11,12 @@ begin
     create role service_role nologin noinherit bypassrls; end if;
   if not exists (select 1 from pg_roles where rolname = 'supabase_auth_admin') then
     create role supabase_auth_admin login noinherit createrole; end if;
+  -- PostgREST connects as this role and then SET ROLE's to anon /
+  -- authenticated / service_role per request. session_user is therefore
+  -- 'authenticator' for every Data API call, which is what
+  -- is_trusted_context() relies on.
+  if not exists (select 1 from pg_roles where rolname = 'authenticator') then
+    create role authenticator login noinherit; end if;
 end
 $shim$;
 
@@ -55,3 +61,5 @@ alter default privileges in schema public
   grant all on functions to anon, authenticated, service_role;
 alter default privileges in schema public
   grant all on sequences to anon, authenticated, service_role;
+
+grant anon, authenticated, service_role to authenticator;
