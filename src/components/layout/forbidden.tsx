@@ -24,7 +24,7 @@ export function Forbidden({
         </p>
         <Link
           href="/"
-          className="mt-5 inline-flex h-9 items-center rounded-[var(--radius-panel)] border border-[var(--border-strong)] px-4 text-sm font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-sunken)]"
+          className="mt-5 inline-flex h-11 items-center rounded-[var(--radius-panel)] border border-[var(--border-strong)] px-4 text-sm font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-sunken)] pointer-fine:h-9"
         >
           Back to dashboard
         </Link>

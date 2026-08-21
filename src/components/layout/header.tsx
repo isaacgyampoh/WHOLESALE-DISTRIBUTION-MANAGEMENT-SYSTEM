@@ -1,7 +1,8 @@
 import type { AuthenticatedUser } from "@/types/domain";
 import { Badge } from "@/components/ui/badge";
 import { BRAND } from "@/lib/brand";
-import { LogOut } from "lucide-react";
+import { LogOut, UserCog } from "lucide-react";
+import Link from "next/link";
 
 const ROLE_LABELS: Record<string, string> = {
   admin: "Administrator",
@@ -45,6 +46,13 @@ export function Header({ user }: { user: AuthenticatedUser }) {
           <p className="truncate text-sm font-medium text-[var(--text-primary)]">{user.fullName}</p>
           <p className="truncate text-xs text-[var(--text-muted)]">{user.email}</p>
         </div>
+        <Link
+          href="/account"
+          aria-label="Your account"
+          className="grid size-11 place-items-center rounded-md text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-sunken)] hover:text-[var(--text-primary)] pointer-fine:size-9"
+        >
+          <UserCog className="size-4" />
+        </Link>
         <form action="/auth/sign-out" method="post">
           <button
             type="submit"

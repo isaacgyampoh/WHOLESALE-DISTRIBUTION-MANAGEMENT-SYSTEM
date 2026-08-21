@@ -87,7 +87,7 @@ try {
   ok("page renders the signed-in user", a.body.includes("Shell Admin"));
   ok("role is shown in the header", a.body.includes("Administrator"));
   ok("dashboard heading rendered", /Good day/.test(a.body));
-  for (const label of ["Products", "Warehouses", "Customers", "Vans", "Reports", "Users"]) {
+  for (const label of ["Products", "Warehouses", "Customers", "Vans", "Reports", "Staff"]) {
     ok(`admin navigation includes ${label}`, a.body.includes(`>${label}<`));
   }
 
@@ -99,7 +99,7 @@ try {
   ok("role is shown as Driver", d.body.includes(">Driver<"));
   ok("driver sees their own round, not admin tiles",
      d.body.includes("No van assigned") || d.body.includes("Stock on board"));
-  ok("driver navigation excludes Users", !d.body.includes(">Users<"));
+  ok("driver navigation excludes Staff", !d.body.includes(">Staff<"));
   ok("driver navigation excludes Warehouses", !d.body.includes(">Warehouses<"));
   ok("driver navigation excludes Purchasing", !d.body.includes(">Purchasing<"));
   ok("driver navigation includes Customers", d.body.includes(">Customers<"));
@@ -108,7 +108,7 @@ try {
   const acctEmail = await makeUser("accountant", "Shell Accountant");
   const ac = await signedInGet(acctEmail, "/");
   ok("accountant reaches the shell", ac.status === 200, `(HTTP ${ac.status})`);
-  ok("accountant navigation excludes Users", !ac.body.includes(">Users<"));
+  ok("accountant navigation excludes Staff", !ac.body.includes(">Staff<"));
   ok("accountant navigation includes Payments", ac.body.includes(">Payments<"));
 
   console.log("\n=== account awaiting activation ===");

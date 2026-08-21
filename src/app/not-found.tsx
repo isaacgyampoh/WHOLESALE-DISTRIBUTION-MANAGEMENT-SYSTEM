@@ -15,7 +15,7 @@ export default function NotFound() {
         </p>
         <Link
           href="/"
-          className="inline-flex h-9.5 items-center rounded-[var(--radius-panel)] bg-brand-700 px-4 text-sm font-medium text-white transition-colors hover:bg-brand-800"
+          className="inline-flex h-11 items-center rounded-[var(--radius-panel)] bg-brand-700 px-4 text-sm font-medium text-white transition-colors hover:bg-brand-800 pointer-fine:h-9.5"
         >
           Back to dashboard
         </Link>

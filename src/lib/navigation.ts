@@ -96,7 +96,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     label: "Insight",
     items: [
       { label: "Reports", href: "/reports", permissions: ["reports.view"], icon: "BarChart3" },
-      { label: "Users", href: "/users", permissions: ["users.manage"], icon: "Users" },
+      { label: "Staff", href: "/users", permissions: ["users.manage"], icon: "Users" },
     ],
   },
 ];

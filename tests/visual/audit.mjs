@@ -123,6 +123,16 @@ try {
     const p = await anon.newPage();
     await p.goto(`${BASE}/sign-in`, { waitUntil: "domcontentloaded" });
     await shot(p, "signin", vp); findings.push(await diagnose(p, "sign-in", vp));
+
+    // Rejected PIN: type four digits and let the form submit itself.
+    const boxes = p.locator('input[aria-label^="Digit"]');
+    if (await boxes.count()) {
+      for (const digit of ["9", "8", "7", "6"]) await boxes.first().press(digit);
+      await p.waitForTimeout(1200);
+      await shot(p, "signin-rejected", vp);
+      findings.push(await diagnose(p, "sign-in rejected", vp));
+    }
+
     await p.goto(`${BASE}/nope`, { waitUntil: "domcontentloaded" });
     await shot(p, "notfound", vp); findings.push(await diagnose(p, "not-found", vp));
     await anon.close();
@@ -133,6 +143,25 @@ try {
       const pg = await c.newPage();
       await pg.goto(`${BASE}/`, { waitUntil: "domcontentloaded" });
       await shot(pg, label, vp); findings.push(await diagnose(pg, label, vp));
+
+      if (who === "admin") {
+        await pg.goto(`${BASE}/users`, { waitUntil: "domcontentloaded" });
+        await shot(pg, "staff", vp); findings.push(await diagnose(pg, "staff", vp));
+        // The PIN dialog.
+        const reset = pg.locator('button:has-text("Set PIN"), button:has-text("Reset PIN")').first();
+        if (await reset.count() && await reset.isVisible()) {
+          await reset.click(); await pg.waitForTimeout(300);
+          await shot(pg, "staff-pin-dialog", vp);
+          findings.push(await diagnose(pg, "staff pin dialog", vp));
+          await pg.keyboard.press("Escape");
+        }
+        await pg.goto(`${BASE}/account`, { waitUntil: "domcontentloaded" });
+        await shot(pg, "account", vp); findings.push(await diagnose(pg, "account", vp));
+      }
+      if (who === "driver") {
+        await pg.goto(`${BASE}/users`, { waitUntil: "domcontentloaded" });
+        await shot(pg, "forbidden", vp); findings.push(await diagnose(pg, "forbidden", vp));
+      }
       if (vp.touch && who === "admin") {
         // The bottom bar is hidden from 1024px up, where the sidebar takes
         // over, so the control exists in the DOM but is not shown.

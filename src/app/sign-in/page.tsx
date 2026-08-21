@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { SignInForm } from "./sign-in-form";
 import { Alert } from "@/components/ui/states";
-import { getAuthMethods } from "@/lib/auth/providers";
 import { BrandMark } from "@/components/layout/brand-mark";
 
 export const metadata: Metadata = { title: "Sign in" };
@@ -17,7 +16,6 @@ export default async function SignInPage({
   searchParams: Promise<{ next?: string; error?: string }>;
 }) {
   const { next, error } = await searchParams;
-  const methods = await getAuthMethods();
   const callbackError = error ? CALLBACK_ERRORS[error] : undefined;
 
   return (
@@ -29,14 +27,14 @@ export default async function SignInPage({
             Sign in
           </h1>
           <p className="mt-1.5 mb-8 text-sm text-[var(--text-secondary)]">
-            Use the account issued by your administrator.
+            Sign in with the PIN issued to you.
           </p>
           {callbackError && (
             <div className="mb-4">
               <Alert tone="danger">{callbackError}</Alert>
             </div>
           )}
-          <SignInForm nextPath={next} methods={methods} />
+          <SignInForm nextPath={next} />
         </div>
       </div>
 

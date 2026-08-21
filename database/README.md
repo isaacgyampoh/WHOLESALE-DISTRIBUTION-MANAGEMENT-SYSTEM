@@ -10,6 +10,7 @@ CLI tools.
 | `VERIFY_DATABASE.sql` | A read-only check. Paste it afterwards to confirm the install worked. |
 | `FIX_ANON_GRANTS.sql` | Repair script. Only needed if verification row 16 fails. |
 | `UPGRADE_0017_SIGNUP_GUARD.sql` | Upgrade for a database installed before migration 0017. |
+| `UPGRADE_0018_PIN_AUTH.sql` | Upgrade for a database installed before migration 0018. Adds PIN sign-in. |
 | `build.mjs` | Regenerates the installer from `supabase/migrations`. You do not need to run this. |
 
 ---
@@ -109,31 +110,37 @@ set is_active = true, role = 'admin'
 where email = 'you@example.com';
 ```
 
-### Sign-in methods
+### Signing in
 
-Email and password works out of the box. Two more are supported and both
-are off until you switch them on in `.env.local`:
+Sign-in is a **four-digit PIN**. There is no username, email, Google or
+SMS on the login screen.
 
-| Method | Set in `.env.local` | Also needs |
-|---|---|---|
-| Google | `NEXT_PUBLIC_AUTH_GOOGLE=true` | Authentication → Providers → Google, with OAuth credentials from Google Cloud |
-| Phone | `NEXT_PUBLIC_AUTH_PHONE=true` | Authentication → Providers → Phone |
+The PIN is never stored. What the database holds is an HMAC of it under
+`PIN_PEPPER`, a secret that lives only in the server environment, so a
+copy of the database is not enough to recover anyone's PIN.
 
-A button for an unconfigured provider fails confusingly, so neither
-appears until enabled.
+Before anyone can sign in you must set that secret:
 
-**Two things worth knowing before choosing:**
+```bash
+openssl rand -hex 32     # put the result in .env.local as PIN_PEPPER
+```
 
-*Google* suits office staff who already have company accounts. Anyone
-with a Google account can reach the sign-in page, but migration 0017
-means an uninvited one lands inactive and sees nothing until you
-activate it.
+Changing it later invalidates every PIN, and they all need reissuing.
 
-*Phone* suits drivers, who carry phones and often have no work email.
-Prefer **phone plus password** over SMS one-time codes: an OTP costs a
-message on every sign-in, billed by whichever SMS provider you configure,
-and it fails exactly when a driver has poor signal. Reserve OTP for
-password recovery.
+No two **active** people may share a PIN, enforced by a unique index.
+Uniqueness is global rather than per organization: the login screen asks
+for nothing but the PIN, so at the moment of lookup there is no
+organization to scope by, and a PIN must resolve to exactly one person.
+
+A PIN frees up automatically when an account is deactivated.
+
+### Old sign-in methods
+
+Email addresses are still held on each profile, because Supabase Auth
+identifies an account by one and the session it issues depends on it.
+They are not used to sign in and are not shown on the login screen.
+
+Google, phone one-time codes and SMS are not used at all.
 
 ### If row 7 reports a different function count
 
