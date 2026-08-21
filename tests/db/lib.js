@@ -1,7 +1,12 @@
 const { Client } = require('pg');
 const fs = require('fs');
 
-const CONN = { host: '127.0.0.1', port: 55432, user: 'postgres', database: 'wdms' };
+// WDMS_DB lets the same suites run against a database built by the
+// consolidated installer instead of by the migrations.
+const CONN = {
+  host: '127.0.0.1', port: 55432, user: 'postgres',
+  database: process.env.WDMS_DB || 'wdms',
+};
 
 // Split SQL on semicolons that are not inside string literals, dollar-quoted
 // blocks, or comments. Needed so a failing statement can be reported exactly.

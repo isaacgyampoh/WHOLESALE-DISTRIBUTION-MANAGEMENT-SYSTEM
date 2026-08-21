@@ -12,12 +12,13 @@ Tracks the phases in the master development prompt. Updated as work lands.
 | Phase 1 — Inspection & architecture | Done | See "Assessment" below |
 | Phase 2 — Next.js foundation | Done | `npm run verify` passes |
 | Phase 3 — Design system (core) | Partial | Tokens, primitives, shell built |
-| Phase 4 — Hosted gate (part 1) | Partial | GitHub pushed; hosted project pending |
+| Phase 4 — Hosted gate (part 1) | Partial | GitHub pushed; hosted CLI path abandoned |
+| Consolidated SQL installer | Done | Installed into a fresh database and compared object-by-object |
 
 ## Verified database state
 
 29 tables · 8 views · 5 enums · RLS on all 29 tables.
-**137 assertions across 7 suites, 0 failures** (`npm run db:test`).
+**152 assertions across 8 suites, 0 failures** (`npm run db:test`).
 Migration 0015 adds Data API grants and closes an anonymous
 authorization bypass; policy and trigger counts change accordingly.
 
@@ -36,7 +37,8 @@ offline sync, security hardening, production deployment.
 | Migrations never run against hosted Supabase | Platform behaviour (PostgREST, Auth, storage) unproven | Blocked on project credentials |
 | No `supabase/config.toml` | — | RESOLVED: added, parses, `db push` idempotent |
 | Auth flow untested end to end | Sign-in renders; no credential has been exchanged | Blocked on `.env.local` |
-| Hosted gate suite never executed | 60+ assertions written, none run | Blocked on `.env.local` |
+| Hosted gate suite never executed | 60+ assertions written, none run | Superseded: deployment is now by SQL installer |
+| Hosted install not yet performed by the owner | Installer verified locally only | Awaiting paste into the SQL Editor |
 
 ## Technical debt
 

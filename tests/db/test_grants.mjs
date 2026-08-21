@@ -14,10 +14,19 @@ await admin.query('create database hosted_sim'); await admin.end();
 const c = new Client({ ...CONN, database:'hosted_sim' }); await c.connect();
 let shim = fs.readFileSync('shim.sql','utf8').replace(/alter default privileges in schema public[\s\S]*?;/g, '');
 for (const s of splitStatements(shim)) await c.query(s);
-const dir = '../../supabase/migrations';
-for (const f of fs.readdirSync(dir).filter(f=>f.endsWith('.sql')).sort())
-  for (const s of splitStatements(fs.readFileSync(`${dir}/${f}`,'utf8'))) await c.query(s);
-console.log('migrations 0001-0015 applied to a no-auto-grant database\n');
+
+// WDMS_FROM_INSTALLER proves the consolidated installer carries the same
+// grants and anonymous-access protections as the migration path.
+if (process.env.WDMS_FROM_INSTALLER) {
+  const file = '../../database/WHOLESALE_DISTRIBUTION_DATABASE.sql';
+  await c.query(fs.readFileSync(file, 'utf8'));
+  console.log('consolidated installer applied to a no-auto-grant database\n');
+} else {
+  const dir = '../../supabase/migrations';
+  for (const f of fs.readdirSync(dir).filter(f=>f.endsWith('.sql')).sort())
+    for (const s of splitStatements(fs.readFileSync(`${dir}/${f}`,'utf8'))) await c.query(s);
+  console.log('migrations 0001-0015 applied to a no-auto-grant database\n');
+}
 
 let pass=0, fail=0;
 const ok=(n,c,x='')=>{c?(pass++,console.log(`  PASS  ${n} ${x}`)):(fail++,console.log(`  FAIL  ${n} ${x}`));};

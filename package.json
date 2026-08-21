@@ -14,7 +14,9 @@
     "db:test": "npm --prefix tests/db test",
     "db:inspect": "npm --prefix tests/db run inspect",
     "hosted:preflight": "npm --prefix tests/hosted run preflight",
-    "hosted:test": "npm --prefix tests/hosted test"
+    "hosted:test": "npm --prefix tests/hosted test",
+    "db:build-installer": "node database/build.mjs",
+    "db:verify-installer": "cd tests/db && node test_installer.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",
