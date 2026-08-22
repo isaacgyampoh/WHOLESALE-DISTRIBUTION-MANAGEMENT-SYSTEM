@@ -1,12 +1,19 @@
--- ===================================================================
--- UPGRADE 0022 — offline operation and synchronisation
--- ===================================================================
+-- ====================================================================
+-- UPGRADE 0022 - offline operation and synchronisation
+-- ====================================================================
 --
--- For a database installed before migration 0022. Run it in the
--- Supabase SQL editor.
+-- For a database installed before migration 0022.
+-- Run it in the Supabase SQL editor.
 --
--- It is safe to run twice: every object is created with a guard, so a
--- second run reports success and changes nothing.
+-- GENERATED FILE - do not edit by hand.
+-- Source: supabase/migrations/0022_offline_sync.sql
+-- Regenerate: node database/build.mjs
+--
+-- Safe to run twice. Every object is created behind an existence check,
+-- so a second run reports success and changes nothing. An enum that
+-- already exists is compared against what this script expects and the
+-- script stops with both lists if they differ, rather than altering a
+-- type other code may already depend on.
 --
 -- WHAT IT ADDS
 --
@@ -23,46 +30,63 @@
 -- The driver PWA does not work without this. Everything else in the
 -- application does.
 
--- ===================================================================
--- 0022  Offline operation and synchronisation
--- ===================================================================
---
--- A driver in a van loses signal. They must keep selling, collecting
--- and recording returns, and none of it may be lost or duplicated when
--- the phone reconnects.
---
--- The rule that makes this safe is that the *client* names the
--- operation. Every offline mutation carries a uuid generated on the
--- device before the work is queued. That uuid is the primary key here,
--- so a retry - a flaky upload, a killed browser, a user pressing
--- refresh - collides on insert and returns the original outcome rather
--- than performing the work twice. Idempotency is a database
--- constraint, not a convention the client is trusted to honour.
---
--- What the queue may never carry is a credential. It holds an
--- operation, a payload and a device id. Authorization is re-derived on
--- the server from the session presenting the row, never read from the
--- payload: a device that has been offline may be holding a role that
--- was revoked while it was away.
+do $enum$
+declare
+  found text[];
+  wanted text[] := array['applied', 'failed', 'conflict'];
+begin
+  if not exists (
+    select 1 from pg_type t
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'sync_status'
+  ) then
+    create type public.sync_status as enum ('applied', 'failed', 'conflict');
+  else
+    select array_agg(e.enumlabel order by e.enumsortorder) into found
+      from pg_enum e
+      join pg_type t on t.oid = e.enumtypid
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'sync_status';
 
--- ------------------------------------------------------------------
--- The queue
--- ------------------------------------------------------------------
-do $guard$ begin
-  if not exists (select 1 from pg_type where typname = 'sync_status') then
-    create type public.sync_status as enum (
-  'applied',      -- done; the result is recorded
-  'failed',       -- rejected for good reason, and will not be retried
-      'applied', 'failed', 'conflict');
+    -- Already correct: nothing to do, and the script carries on.
+    if found is distinct from wanted then
+      raise exception
+        'public.sync_status already exists with different values. Found %, expected %. '
+        'Reconcile it before running this script; this script will not alter an '
+        'enum other code may already depend on.',
+        found, wanted;
+    end if;
   end if;
-end $guard$;
+end $enum$;
+do $enum$
+declare
+  found text[];
+  wanted text[] := array['van_sale', 'collection', 'van_return', 'reconciliation'];
+begin
+  if not exists (
+    select 1 from pg_type t
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'sync_operation'
+  ) then
+    create type public.sync_operation as enum ('van_sale', 'collection', 'van_return', 'reconciliation');
+  else
+    select array_agg(e.enumlabel order by e.enumsortorder) into found
+      from pg_enum e
+      join pg_type t on t.oid = e.enumtypid
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'sync_operation';
 
-do $guard$ begin
-  if not exists (select 1 from pg_type where typname = 'sync_operation') then
-    create type public.sync_operation as enum (
-      'van_sale', 'collection', 'van_return', 'reconciliation');
+    -- Already correct: nothing to do, and the script carries on.
+    if found is distinct from wanted then
+      raise exception
+        'public.sync_operation already exists with different values. Found %, expected %. '
+        'Reconcile it before running this script; this script will not alter an '
+        'enum other code may already depend on.',
+        found, wanted;
+    end if;
   end if;
-end $guard$;
+end $enum$;
+
 
 create table if not exists public.sync_operations (
   -- Generated on the device. This is what makes a retry safe.
@@ -86,6 +110,7 @@ create table if not exists public.sync_operations (
   constraint sync_operations_attempts_sane check (attempts between 1 and 1000)
 );
 
+
 comment on table public.sync_operations is
   'One row per offline mutation, keyed by a client-generated uuid so a '
   'retried upload cannot apply the same work twice. Never holds a '
@@ -94,15 +119,16 @@ comment on column public.sync_operations.id is
   'Idempotency key, generated on the device before queueing.';
 
 create index if not exists sync_operations_org_time on public.sync_operations (org_id, received_at desc);
+
 create index if not exists sync_operations_profile on public.sync_operations (profile_id, received_at desc);
+
 create index if not exists sync_operations_status on public.sync_operations (org_id, status, received_at desc);
 
-alter table public.sync_operations enable row level security;
 
+alter table public.sync_operations enable row level security;drop policy if exists sync_operations_select on public.sync_operations;
 -- A person sees their own sync history. A supervisor sees the
 -- organization's, because a failed sale that never arrived is an
 -- operational problem, not a private one.
-drop policy if exists sync_operations_select on public.sync_operations;
 create policy sync_operations_select on public.sync_operations
   for select using (
     org_id = public.auth_org_id()
@@ -111,6 +137,7 @@ create policy sync_operations_select on public.sync_operations
       or public.has_role('admin', 'senior_manager', 'manager', 'accountant')
     )
   );
+
 
 -- Nothing writes here through the Data API. Rows are written by
 -- sync_submit(), which is SECURITY DEFINER and re-checks authorization.
@@ -131,12 +158,11 @@ begin
   raise exception 'sync history cannot be altered'
     using errcode = '42501';
 end;
-$$;
-
-drop trigger if exists sync_operations_no_edit on public.sync_operations;
+$$;drop trigger if exists sync_operations_no_edit on public.sync_operations;
 create trigger sync_operations_no_edit
   before update or delete on public.sync_operations
   for each row execute function public.block_sync_mutation();
+
 
 -- ------------------------------------------------------------------
 -- Applying a queued operation
@@ -493,37 +519,47 @@ comment on function public.sync_bootstrap is
 revoke all on function public.sync_bootstrap() from public, anon;
 grant execute on function public.sync_bootstrap() to authenticated, service_role;
 
-
--- ------------------------------------------------------------------
+-- ====================================================================
 -- Confirm it took. Every row should read PASS.
--- ------------------------------------------------------------------
+-- ====================================================================
 select 'sync_operations table' as check,
        case when to_regclass('public.sync_operations') is not null
             then 'PASS' else 'FAIL' end as result
 union all
+select 'sync_status has exactly applied/failed/conflict',
+       case when (
+         select array_agg(e.enumlabel order by e.enumsortorder)
+           from pg_enum e join pg_type t on t.oid = e.enumtypid
+          where t.typname = 'sync_status'
+       ) = array['applied','failed','conflict']::name[]
+            then 'PASS' else 'FAIL' end
+union all
 select 'row level security on',
-       case when (select relrowsecurity from pg_class where oid = 'public.sync_operations'::regclass)
+       case when (select relrowsecurity from pg_class
+                   where oid = 'public.sync_operations'::regclass)
             then 'PASS' else 'FAIL' end
 union all
 select 'sync_submit function',
-       case when exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-                          where n.nspname='public' and p.proname='sync_submit')
+       case when exists (select 1 from pg_proc p
+                           join pg_namespace n on n.oid = p.pronamespace
+                          where n.nspname = 'public' and p.proname = 'sync_submit')
             then 'PASS' else 'FAIL' end
 union all
 select 'sync_bootstrap function',
-       case when exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-                          where n.nspname='public' and p.proname='sync_bootstrap')
+       case when exists (select 1 from pg_proc p
+                           join pg_namespace n on n.oid = p.pronamespace
+                          where n.nspname = 'public' and p.proname = 'sync_bootstrap')
             then 'PASS' else 'FAIL' end
 union all
 select 'history is append-only',
        case when exists (select 1 from pg_trigger
-                          where tgrelid='public.sync_operations'::regclass
-                            and tgname='sync_operations_no_edit')
+                          where tgrelid = 'public.sync_operations'::regclass
+                            and tgname = 'sync_operations_no_edit')
             then 'PASS' else 'FAIL' end
 union all
 select 'authenticated cannot write it',
        case when not exists (
               select 1 from information_schema.role_table_grants
-               where table_name='sync_operations' and grantee='authenticated'
+               where table_name = 'sync_operations' and grantee = 'authenticated'
                  and privilege_type in ('INSERT','UPDATE','DELETE'))
             then 'PASS' else 'FAIL' end;

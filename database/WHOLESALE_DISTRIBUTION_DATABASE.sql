@@ -34,43 +34,180 @@
 -- =====================================================================
 
 create extension if not exists "pgcrypto";
-create extension if not exists "citext";
+create extension if not exists "citext";do $enum$
+declare
+  found text[];
+  wanted text[] := array['admin', 'manager', 'sales_rep', 'warehouse', 'accountant', 'driver', 'senior_manager'];
+begin
+  if not exists (
+    select 1 from pg_type t
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'user_role'
+  ) then
+    create type public.user_role as enum ('admin', 'manager', 'sales_rep', 'warehouse', 'accountant', 'driver', 'senior_manager');
+  else
+    select array_agg(e.enumlabel order by e.enumsortorder) into found
+      from pg_enum e
+      join pg_type t on t.oid = e.enumtypid
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'user_role';
 
--- ---------------------------------------------------------------- enums
-create type public.user_role as enum (
-  'admin', 'manager', 'sales_rep', 'warehouse', 'accountant',
-  -- Appended by migration 0010; declared here so the whole installer can
-  -- run inside one transaction.
-  'driver', 'senior_manager'
-);
+    -- Already correct: nothing to do, and the script carries on.
+    if found is distinct from wanted then
+      raise exception
+        'public.user_role already exists with different values. Found %, expected %. '
+        'Reconcile it before running this script; this script will not alter an '
+        'enum other code may already depend on.',
+        found, wanted;
+    end if;
+  end if;
+end $enum$;
+do $enum$
+declare
+  found text[];
+  wanted text[] := array['draft', 'confirmed', 'picking', 'packed', 'shipped', 'delivered', 'cancelled'];
+begin
+  if not exists (
+    select 1 from pg_type t
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'order_status'
+  ) then
+    create type public.order_status as enum ('draft', 'confirmed', 'picking', 'packed', 'shipped', 'delivered', 'cancelled');
+  else
+    select array_agg(e.enumlabel order by e.enumsortorder) into found
+      from pg_enum e
+      join pg_type t on t.oid = e.enumtypid
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'order_status';
 
-create type public.order_status as enum (
-  'draft', 'confirmed', 'picking', 'packed', 'shipped', 'delivered', 'cancelled'
-);
+    -- Already correct: nothing to do, and the script carries on.
+    if found is distinct from wanted then
+      raise exception
+        'public.order_status already exists with different values. Found %, expected %. '
+        'Reconcile it before running this script; this script will not alter an '
+        'enum other code may already depend on.',
+        found, wanted;
+    end if;
+  end if;
+end $enum$;
+do $enum$
+declare
+  found text[];
+  wanted text[] := array['draft', 'issued', 'partially_paid', 'paid', 'overdue', 'void'];
+begin
+  if not exists (
+    select 1 from pg_type t
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'invoice_status'
+  ) then
+    create type public.invoice_status as enum ('draft', 'issued', 'partially_paid', 'paid', 'overdue', 'void');
+  else
+    select array_agg(e.enumlabel order by e.enumsortorder) into found
+      from pg_enum e
+      join pg_type t on t.oid = e.enumtypid
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'invoice_status';
 
-create type public.invoice_status as enum (
-  'draft', 'issued', 'partially_paid', 'paid', 'overdue', 'void'
-);
+    -- Already correct: nothing to do, and the script carries on.
+    if found is distinct from wanted then
+      raise exception
+        'public.invoice_status already exists with different values. Found %, expected %. '
+        'Reconcile it before running this script; this script will not alter an '
+        'enum other code may already depend on.',
+        found, wanted;
+    end if;
+  end if;
+end $enum$;
+do $enum$
+declare
+  found text[];
+  wanted text[] := array['draft', 'submitted', 'partially_received', 'received', 'cancelled'];
+begin
+  if not exists (
+    select 1 from pg_type t
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'po_status'
+  ) then
+    create type public.po_status as enum ('draft', 'submitted', 'partially_received', 'received', 'cancelled');
+  else
+    select array_agg(e.enumlabel order by e.enumsortorder) into found
+      from pg_enum e
+      join pg_type t on t.oid = e.enumtypid
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'po_status';
 
-create type public.po_status as enum (
-  'draft', 'submitted', 'partially_received', 'received', 'cancelled'
-);
+    -- Already correct: nothing to do, and the script carries on.
+    if found is distinct from wanted then
+      raise exception
+        'public.po_status already exists with different values. Found %, expected %. '
+        'Reconcile it before running this script; this script will not alter an '
+        'enum other code may already depend on.',
+        found, wanted;
+    end if;
+  end if;
+end $enum$;
+do $enum$
+declare
+  found text[];
+  wanted text[] := array['receipt', 'issue', 'adjustment_in', 'adjustment_out', 'transfer_in', 'transfer_out', 'customer_return', 'supplier_return', 'damage', 'shortage'];
+begin
+  if not exists (
+    select 1 from pg_type t
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'movement_type'
+  ) then
+    create type public.movement_type as enum ('receipt', 'issue', 'adjustment_in', 'adjustment_out', 'transfer_in', 'transfer_out', 'customer_return', 'supplier_return', 'damage', 'shortage');
+  else
+    select array_agg(e.enumlabel order by e.enumsortorder) into found
+      from pg_enum e
+      join pg_type t on t.oid = e.enumtypid
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'movement_type';
 
-create type public.movement_type as enum (
-  'receipt', 'issue', 'adjustment_in', 'adjustment_out',
-  'transfer_in', 'transfer_out', 'customer_return', 'supplier_return',
-  -- Appended by migration 0010, as above.
-  'damage', 'shortage'
-);
+    -- Already correct: nothing to do, and the script carries on.
+    if found is distinct from wanted then
+      raise exception
+        'public.movement_type already exists with different values. Found %, expected %. '
+        'Reconcile it before running this script; this script will not alter an '
+        'enum other code may already depend on.',
+        found, wanted;
+    end if;
+  end if;
+end $enum$;
+do $enum$
+declare
+  found text[];
+  wanted text[] := array['cash', 'bank_transfer', 'cheque', 'card', 'mobile_money'];
+begin
+  if not exists (
+    select 1 from pg_type t
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'payment_method'
+  ) then
+    create type public.payment_method as enum ('cash', 'bank_transfer', 'cheque', 'card', 'mobile_money');
+  else
+    select array_agg(e.enumlabel order by e.enumsortorder) into found
+      from pg_enum e
+      join pg_type t on t.oid = e.enumtypid
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'payment_method';
 
-create type public.payment_method as enum (
-  'cash', 'bank_transfer', 'cheque', 'card', 'mobile_money'
-);
+    -- Already correct: nothing to do, and the script carries on.
+    if found is distinct from wanted then
+      raise exception
+        'public.payment_method already exists with different values. Found %, expected %. '
+        'Reconcile it before running this script; this script will not alter an '
+        'enum other code may already depend on.',
+        found, wanted;
+    end if;
+  end if;
+end $enum$;
+
 
 -- ------------------------------------------------------------- profiles
 -- One row per auth.users record. Holds the role that every RLS policy
 -- in 0006_rls.sql keys off of.
-create table public.profiles (
+create table if not exists public.profiles (
   id          uuid primary key references auth.users (id) on delete cascade,
   full_name   text        not null default '',
   email       citext      not null,
@@ -80,6 +217,7 @@ create table public.profiles (
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
 );
+
 
 comment on table public.profiles is
   'Application user profile; role drives all row level security.';
@@ -113,15 +251,15 @@ begin
   on conflict (id) do nothing;
   return new;
 end;
-$$;
-
+$$;drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
-
+drop trigger if exists profiles_set_updated_at on public.profiles;
 create trigger profiles_set_updated_at
   before update on public.profiles
   for each row execute function public.set_updated_at();
+
 
 -- ------------------------------------------------------ role helpers
 -- Named auth_role() rather than current_role() to avoid the SQL keyword.
@@ -181,7 +319,7 @@ $$;
 -- Trading partners: customers (sell side) and suppliers (buy side).
 -- =====================================================================
 
-create table public.customers (
+create table if not exists public.customers (
   id                  uuid primary key default gen_random_uuid(),
   code                text        not null unique,
   name                text        not null,
@@ -205,10 +343,13 @@ create table public.customers (
   updated_at          timestamptz not null default now()
 );
 
-create index customers_name_idx on public.customers using gin (to_tsvector('simple', name));
-create index customers_active_idx on public.customers (is_active) where is_active;
 
-create table public.suppliers (
+create index if not exists customers_name_idx on public.customers using gin (to_tsvector('simple', name));
+
+create index if not exists customers_active_idx on public.customers (is_active) where is_active;
+
+
+create table if not exists public.suppliers (
   id                  uuid primary key default gen_random_uuid(),
   code                text        not null unique,
   name                text        not null,
@@ -228,15 +369,17 @@ create table public.suppliers (
   updated_at          timestamptz not null default now()
 );
 
-create index suppliers_active_idx on public.suppliers (is_active) where is_active;
 
+create index if not exists suppliers_active_idx on public.suppliers (is_active) where is_active;
+drop trigger if exists customers_set_updated_at on public.customers;
 create trigger customers_set_updated_at
   before update on public.customers
   for each row execute function public.set_updated_at();
-
+drop trigger if exists suppliers_set_updated_at on public.suppliers;
 create trigger suppliers_set_updated_at
   before update on public.suppliers
   for each row execute function public.set_updated_at();
+
 
 
 -- ====================================================================
@@ -249,7 +392,7 @@ create trigger suppliers_set_updated_at
 -- stock_movements, and a trigger folds it into public.inventory.
 -- =====================================================================
 
-create table public.categories (
+create table if not exists public.categories (
   id          uuid primary key default gen_random_uuid(),
   name        text not null,
   parent_id   uuid references public.categories (id) on delete set null,
@@ -259,7 +402,8 @@ create table public.categories (
   unique (name, parent_id)
 );
 
-create table public.warehouses (
+
+create table if not exists public.warehouses (
   id          uuid primary key default gen_random_uuid(),
   code        text not null unique,
   name        text not null,
@@ -271,11 +415,13 @@ create table public.warehouses (
   updated_at  timestamptz not null default now()
 );
 
+
 -- At most one default warehouse.
-create unique index warehouses_single_default_idx
+create unique index if not exists warehouses_single_default_idx
   on public.warehouses ((true)) where is_default;
 
-create table public.products (
+
+create table if not exists public.products (
   id              uuid primary key default gen_random_uuid(),
   sku             text        not null unique,
   barcode         text        unique,
@@ -297,13 +443,17 @@ create table public.products (
   updated_at      timestamptz not null default now()
 );
 
-create index products_category_idx on public.products (category_id);
-create index products_supplier_idx on public.products (supplier_id);
-create index products_search_idx
+
+create index if not exists products_category_idx on public.products (category_id);
+
+create index if not exists products_supplier_idx on public.products (supplier_id);
+
+create index if not exists products_search_idx
   on public.products using gin (to_tsvector('simple', sku || ' ' || name));
 
+
 -- Current stock, one row per product/warehouse pair.
-create table public.inventory (
+create table if not exists public.inventory (
   id            uuid primary key default gen_random_uuid(),
   product_id    uuid not null references public.products (id) on delete cascade,
   warehouse_id  uuid not null references public.warehouses (id) on delete cascade,
@@ -316,10 +466,12 @@ create table public.inventory (
   unique (product_id, warehouse_id)
 );
 
-create index inventory_warehouse_idx on public.inventory (warehouse_id);
+
+create index if not exists inventory_warehouse_idx on public.inventory (warehouse_id);
+
 
 -- Append-only ledger. quantity is always positive; direction comes from type.
-create table public.stock_movements (
+create table if not exists public.stock_movements (
   id            uuid primary key default gen_random_uuid(),
   product_id    uuid not null references public.products (id) on delete restrict,
   warehouse_id  uuid not null references public.warehouses (id) on delete restrict,
@@ -334,8 +486,11 @@ create table public.stock_movements (
   created_at    timestamptz not null default now()
 );
 
-create index stock_movements_product_idx on public.stock_movements (product_id, created_at desc);
-create index stock_movements_ref_idx on public.stock_movements (reference_type, reference_id);
+
+create index if not exists stock_movements_product_idx on public.stock_movements (product_id, created_at desc);
+
+create index if not exists stock_movements_ref_idx on public.stock_movements (reference_type, reference_id);
+
 
 -- ------------------------------------------------- movement -> inventory
 create or replace function public.movement_direction(t public.movement_type)
@@ -374,11 +529,11 @@ begin
 
   return new;
 end;
-$$;
-
+$$;drop trigger if exists stock_movements_apply on public.stock_movements;
 create trigger stock_movements_apply
   after insert on public.stock_movements
   for each row execute function public.apply_stock_movement();
+
 
 -- The ledger is immutable: correct mistakes with a reversing movement.
 create or replace function public.block_movement_mutation()
@@ -388,18 +543,20 @@ as $$
 begin
   raise exception 'stock_movements is append-only; post a reversing movement instead';
 end;
-$$;
-
+$$;drop trigger if exists stock_movements_no_update on public.stock_movements;
 create trigger stock_movements_no_update
   before update or delete on public.stock_movements
   for each row execute function public.block_movement_mutation();
-
+drop trigger if exists categories_set_updated_at on public.categories;
 create trigger categories_set_updated_at before update on public.categories
   for each row execute function public.set_updated_at();
+drop trigger if exists warehouses_set_updated_at on public.warehouses;
 create trigger warehouses_set_updated_at before update on public.warehouses
   for each row execute function public.set_updated_at();
+drop trigger if exists products_set_updated_at on public.products;
 create trigger products_set_updated_at before update on public.products
   for each row execute function public.set_updated_at();
+
 
 
 -- ====================================================================
@@ -412,7 +569,7 @@ create trigger products_set_updated_at before update on public.products
 -- application never has to keep them in sync by hand.
 -- =====================================================================
 
-create table public.sales_orders (
+create table if not exists public.sales_orders (
   id             uuid primary key default gen_random_uuid(),
   order_number   text not null unique
                  default public.next_document_number('SO', 'public.sales_order_seq'),
@@ -433,10 +590,13 @@ create table public.sales_orders (
   updated_at     timestamptz not null default now()
 );
 
-create index sales_orders_customer_idx on public.sales_orders (customer_id, order_date desc);
-create index sales_orders_status_idx on public.sales_orders (status);
 
-create table public.sales_order_items (
+create index if not exists sales_orders_customer_idx on public.sales_orders (customer_id, order_date desc);
+
+create index if not exists sales_orders_status_idx on public.sales_orders (status);
+
+
+create table if not exists public.sales_order_items (
   id             uuid primary key default gen_random_uuid(),
   order_id       uuid not null references public.sales_orders (id) on delete cascade,
   product_id     uuid not null references public.products (id) on delete restrict,
@@ -454,9 +614,11 @@ create table public.sales_order_items (
   unique (order_id, product_id)
 );
 
-create index sales_order_items_order_idx on public.sales_order_items (order_id);
 
-create table public.invoices (
+create index if not exists sales_order_items_order_idx on public.sales_order_items (order_id);
+
+
+create table if not exists public.invoices (
   id             uuid primary key default gen_random_uuid(),
   invoice_number text not null unique
                  default public.next_document_number('INV', 'public.invoice_seq'),
@@ -476,11 +638,14 @@ create table public.invoices (
   updated_at     timestamptz not null default now()
 );
 
-create index invoices_customer_idx on public.invoices (customer_id, issue_date desc);
-create index invoices_open_idx on public.invoices (status)
+
+create index if not exists invoices_customer_idx on public.invoices (customer_id, issue_date desc);
+
+create index if not exists invoices_open_idx on public.invoices (status)
   where status in ('issued', 'partially_paid', 'overdue');
 
-create table public.payments (
+
+create table if not exists public.payments (
   id             uuid primary key default gen_random_uuid(),
   payment_number text not null unique
                  default public.next_document_number('PAY', 'public.payment_seq'),
@@ -493,7 +658,9 @@ create table public.payments (
   created_at     timestamptz not null default now()
 );
 
-create index payments_invoice_idx on public.payments (invoice_id);
+
+create index if not exists payments_invoice_idx on public.payments (invoice_id);
+
 
 -- ------------------------------------------------- derived order totals
 create or replace function public.recalc_order_totals()
@@ -523,11 +690,11 @@ begin
 
   return null;
 end;
-$$;
-
+$$;drop trigger if exists sales_order_items_recalc on public.sales_order_items;
 create trigger sales_order_items_recalc
   after insert or update or delete on public.sales_order_items
   for each row execute function public.recalc_order_totals();
+
 
 -- ------------------------------------------ payments -> invoice balance
 create or replace function public.recalc_invoice_payment()
@@ -560,11 +727,11 @@ begin
 
   return null;
 end;
-$$;
-
+$$;drop trigger if exists payments_recalc_invoice on public.payments;
 create trigger payments_recalc_invoice
   after insert or update or delete on public.payments
   for each row execute function public.recalc_invoice_payment();
+
 
 -- ------------------------------------- reserve / release / ship stock
 -- Confirming an order reserves stock; shipping converts the reservation
@@ -624,16 +791,17 @@ begin
 
   return new;
 end;
-$$;
-
+$$;drop trigger if exists sales_orders_status_change on public.sales_orders;
 create trigger sales_orders_status_change
   before update of status on public.sales_orders
   for each row execute function public.handle_order_status_change();
-
+drop trigger if exists sales_orders_set_updated_at on public.sales_orders;
 create trigger sales_orders_set_updated_at before update on public.sales_orders
   for each row execute function public.set_updated_at();
+drop trigger if exists invoices_set_updated_at on public.invoices;
 create trigger invoices_set_updated_at before update on public.invoices
   for each row execute function public.set_updated_at();
+
 
 
 -- ====================================================================
@@ -645,7 +813,7 @@ create trigger invoices_set_updated_at before update on public.invoices
 -- movement, so replenishment flows through the same ledger as sales.
 -- =====================================================================
 
-create table public.purchase_orders (
+create table if not exists public.purchase_orders (
   id             uuid primary key default gen_random_uuid(),
   po_number      text not null unique
                  default public.next_document_number('PO', 'public.purchase_order_seq'),
@@ -663,11 +831,14 @@ create table public.purchase_orders (
   updated_at     timestamptz not null default now()
 );
 
-create index purchase_orders_supplier_idx
-  on public.purchase_orders (supplier_id, order_date desc);
-create index purchase_orders_status_idx on public.purchase_orders (status);
 
-create table public.purchase_order_items (
+create index if not exists purchase_orders_supplier_idx
+  on public.purchase_orders (supplier_id, order_date desc);
+
+create index if not exists purchase_orders_status_idx on public.purchase_orders (status);
+
+
+create table if not exists public.purchase_order_items (
   id            uuid primary key default gen_random_uuid(),
   po_id         uuid not null references public.purchase_orders (id) on delete cascade,
   product_id    uuid not null references public.products (id) on delete restrict,
@@ -683,7 +854,9 @@ create table public.purchase_order_items (
   unique (po_id, product_id)
 );
 
-create index purchase_order_items_po_idx on public.purchase_order_items (po_id);
+
+create index if not exists purchase_order_items_po_idx on public.purchase_order_items (po_id);
+
 
 create or replace function public.recalc_po_totals()
 returns trigger
@@ -709,11 +882,11 @@ begin
 
   return null;
 end;
-$$;
-
+$$;drop trigger if exists purchase_order_items_recalc on public.purchase_order_items;
 create trigger purchase_order_items_recalc
   after insert or update or delete on public.purchase_order_items
   for each row execute function public.recalc_po_totals();
+
 
 -- Receive a quantity against one PO line: posts stock, updates the line,
 -- refreshes cost price, and advances the PO status.
@@ -779,10 +952,10 @@ begin
 
   return item;
 end;
-$$;
-
+$$;drop trigger if exists purchase_orders_set_updated_at on public.purchase_orders;
 create trigger purchase_orders_set_updated_at before update on public.purchase_orders
   for each row execute function public.set_updated_at();
+
 
 
 -- ====================================================================
@@ -795,7 +968,7 @@ create trigger purchase_orders_set_updated_at before update on public.purchase_o
 -- =====================================================================
 
 -- Receivables per customer, for credit checks and the ageing widget.
-create view public.customer_balances
+create or replace view public.customer_balances
 with (security_invoker = on) as
   select
     c.id                                            as customer_id,
@@ -811,8 +984,9 @@ with (security_invoker = on) as
    and i.status in ('issued', 'partially_paid', 'overdue')
   group by c.id, c.code, c.name, c.credit_limit;
 
+
 -- Stock across all warehouses with a reorder flag for the buyer's queue.
-create view public.stock_summary
+create or replace view public.stock_summary
 with (security_invoker = on) as
   select
     p.id            as product_id,
@@ -833,8 +1007,9 @@ with (security_invoker = on) as
   group by p.id, p.sku, p.name, p.reorder_point, p.reorder_qty,
            p.cost_price, p.list_price;
 
+
 -- Invoice ageing buckets for the finance dashboard.
-create view public.invoice_ageing
+create or replace view public.invoice_ageing
 with (security_invoker = on) as
   select
     i.id,
@@ -856,6 +1031,7 @@ with (security_invoker = on) as
   from public.invoices i
   join public.customers c on c.id = i.customer_id
   where i.status <> 'void';
+
 
 -- Flip issued invoices to overdue. Schedule via pg_cron or call from the app.
 create or replace function public.mark_overdue_invoices()
@@ -906,64 +1082,72 @@ alter table public.sales_order_items   enable row level security;
 alter table public.invoices            enable row level security;
 alter table public.payments            enable row level security;
 alter table public.purchase_orders     enable row level security;
-alter table public.purchase_order_items enable row level security;
-
+alter table public.purchase_order_items enable row level security;drop policy if exists profiles_select_self on public.profiles;
 -- ------------------------------------------------------------ profiles
 create policy profiles_select_self on public.profiles
   for select using (id = auth.uid() or public.has_role('admin', 'manager'));
-
+drop policy if exists profiles_update_self on public.profiles;
 create policy profiles_update_self on public.profiles
   for update using (id = auth.uid())
-  with check (id = auth.uid() and role = public.auth_role());  -- cannot self-promote
+  with check (id = auth.uid() and role = public.auth_role());
+drop policy if exists profiles_admin_all on public.profiles;
+-- cannot self-promote
 
 create policy profiles_admin_all on public.profiles
   for all using (public.has_role('admin'))
   with check (public.has_role('admin'));
-
+drop policy if exists categories_read on public.categories;
 -- ------------------------------------------------------- master data
 -- Any active staff member may read the catalogue and partner lists.
 create policy categories_read on public.categories
   for select using (public.is_staff());
+drop policy if exists categories_write on public.categories;
 create policy categories_write on public.categories
   for all using (public.has_role('admin', 'manager'))
   with check (public.has_role('admin', 'manager'));
-
+drop policy if exists warehouses_read on public.warehouses;
 create policy warehouses_read on public.warehouses
   for select using (public.is_staff());
+drop policy if exists warehouses_write on public.warehouses;
 create policy warehouses_write on public.warehouses
   for all using (public.has_role('admin', 'manager'))
   with check (public.has_role('admin', 'manager'));
-
+drop policy if exists products_read on public.products;
 create policy products_read on public.products
   for select using (public.is_staff());
+drop policy if exists products_write on public.products;
 create policy products_write on public.products
   for all using (public.has_role('admin', 'manager'))
   with check (public.has_role('admin', 'manager'));
-
+drop policy if exists customers_read on public.customers;
 create policy customers_read on public.customers
   for select using (public.is_staff());
+drop policy if exists customers_write on public.customers;
 create policy customers_write on public.customers
   for all using (public.has_role('admin', 'manager', 'sales_rep'))
   with check (public.has_role('admin', 'manager', 'sales_rep'));
-
+drop policy if exists suppliers_read on public.suppliers;
 create policy suppliers_read on public.suppliers
   for select using (public.is_staff());
+drop policy if exists suppliers_write on public.suppliers;
 create policy suppliers_write on public.suppliers
   for all using (public.has_role('admin', 'manager'))
   with check (public.has_role('admin', 'manager'));
-
+drop policy if exists inventory_read on public.inventory;
 -- ------------------------------------------------------------ stock
 create policy inventory_read on public.inventory
   for select using (public.is_staff());
+drop policy if exists inventory_write on public.inventory;
 create policy inventory_write on public.inventory
   for all using (public.has_role('admin', 'manager', 'warehouse'))
   with check (public.has_role('admin', 'manager', 'warehouse'));
-
+drop policy if exists stock_movements_read on public.stock_movements;
 create policy stock_movements_read on public.stock_movements
   for select using (public.is_staff());
+drop policy if exists stock_movements_insert on public.stock_movements;
 create policy stock_movements_insert on public.stock_movements
   for insert with check (public.has_role('admin', 'manager', 'warehouse'));
-
+drop policy if exists sales_orders_read on public.sales_orders;
 -- ------------------------------------------------------ sales orders
 -- Sales reps see and edit their own orders; everyone else operational
 -- sees all of them.
@@ -972,32 +1156,32 @@ create policy sales_orders_read on public.sales_orders
     public.has_role('admin', 'manager', 'warehouse', 'accountant')
     or created_by = auth.uid()
   );
-
+drop policy if exists sales_orders_insert on public.sales_orders;
 create policy sales_orders_insert on public.sales_orders
   for insert with check (
     public.has_role('admin', 'manager', 'sales_rep')
     and created_by = auth.uid()
   );
-
+drop policy if exists sales_orders_update on public.sales_orders;
 create policy sales_orders_update on public.sales_orders
   for update using (
     public.has_role('admin', 'manager', 'warehouse')
     or (public.has_role('sales_rep') and created_by = auth.uid() and status = 'draft')
   );
-
+drop policy if exists sales_orders_delete on public.sales_orders;
 create policy sales_orders_delete on public.sales_orders
   for delete using (
     public.has_role('admin')
     or (public.has_role('manager', 'sales_rep') and status = 'draft'
         and created_by = auth.uid())
   );
-
+drop policy if exists sales_order_items_read on public.sales_order_items;
 -- Line items inherit their parent order's visibility.
 create policy sales_order_items_read on public.sales_order_items
   for select using (
     exists (select 1 from public.sales_orders o where o.id = order_id)
   );
-
+drop policy if exists sales_order_items_write on public.sales_order_items;
 create policy sales_order_items_write on public.sales_order_items
   for all using (
     exists (
@@ -1015,7 +1199,7 @@ create policy sales_order_items_write on public.sales_order_items
              or (o.created_by = auth.uid() and o.status = 'draft'))
     )
   );
-
+drop policy if exists invoices_read on public.invoices;
 -- ------------------------------------------------------- receivables
 create policy invoices_read on public.invoices
   for select using (
@@ -1023,34 +1207,35 @@ create policy invoices_read on public.invoices
     or exists (select 1 from public.sales_orders o
                where o.id = order_id and o.created_by = auth.uid())
   );
-
+drop policy if exists invoices_write on public.invoices;
 create policy invoices_write on public.invoices
   for all using (public.has_role('admin', 'manager', 'accountant'))
   with check (public.has_role('admin', 'manager', 'accountant'));
-
+drop policy if exists payments_read on public.payments;
 create policy payments_read on public.payments
   for select using (public.has_role('admin', 'manager', 'accountant'));
-
+drop policy if exists payments_write on public.payments;
 create policy payments_write on public.payments
   for all using (public.has_role('admin', 'manager', 'accountant'))
   with check (public.has_role('admin', 'manager', 'accountant'));
-
+drop policy if exists purchase_orders_read on public.purchase_orders;
 -- --------------------------------------------------------- purchasing
 create policy purchase_orders_read on public.purchase_orders
   for select using (public.has_role('admin', 'manager', 'warehouse', 'accountant'));
-
+drop policy if exists purchase_orders_write on public.purchase_orders;
 create policy purchase_orders_write on public.purchase_orders
   for all using (public.has_role('admin', 'manager'))
   with check (public.has_role('admin', 'manager'));
-
+drop policy if exists purchase_order_items_read on public.purchase_order_items;
 create policy purchase_order_items_read on public.purchase_order_items
   for select using (
     exists (select 1 from public.purchase_orders p where p.id = po_id)
   );
-
+drop policy if exists purchase_order_items_write on public.purchase_order_items;
 create policy purchase_order_items_write on public.purchase_order_items
   for all using (public.has_role('admin', 'manager'))
   with check (public.has_role('admin', 'manager'));
+
 
 -- ------------------------------------------------- role escalation guard
 -- Belt and braces alongside profiles_update_self: only an admin may ever
@@ -1072,11 +1257,11 @@ begin
   end if;
   return new;
 end;
-$$;
-
+$$;drop trigger if exists profiles_guard_role_change on public.profiles;
 create trigger profiles_guard_role_change
   before update on public.profiles
   for each row execute function public.guard_role_change();
+
 
 
 -- ====================================================================
@@ -1158,7 +1343,7 @@ where not exists (
 -- application query filters.
 -- =====================================================================
 
-create table public.organizations (
+create table if not exists public.organizations (
   id          uuid primary key default gen_random_uuid(),
   name        text not null,
   slug        text not null unique,
@@ -1168,9 +1353,10 @@ create table public.organizations (
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
 );
-
+drop trigger if exists organizations_set_updated_at on public.organizations;
 create trigger organizations_set_updated_at before update on public.organizations
   for each row execute function public.set_updated_at();
+
 
 insert into public.organizations (name, slug)
 values ('Default Organization', 'default');
@@ -1230,8 +1416,9 @@ alter table public.categories add constraint categories_org_name_parent_key
 
 -- One default warehouse per organization, not one globally.
 drop index public.warehouses_single_default_idx;
-create unique index warehouses_single_default_idx
+create unique index if not exists warehouses_single_default_idx
   on public.warehouses (org_id) where is_default;
+
 
 -- ------------------------------------------------------ tenant helper
 create or replace function public.auth_org_id()
@@ -1288,11 +1475,11 @@ begin
   end if;
   return new;
 end;
-$$;
-
+$$;drop trigger if exists profiles_guard_org_change on public.profiles;
 create trigger profiles_guard_org_change
   before update on public.profiles
   for each row execute function public.guard_org_change();
+
 
 -- ----------------------------------------------- rebuild RLS policies
 -- Every policy from 0007 is replaced with an org-scoped equivalent.
@@ -1310,74 +1497,80 @@ begin
 end
 $mig$;
 
-alter table public.organizations enable row level security;
-
+alter table public.organizations enable row level security;drop policy if exists organizations_read on public.organizations;
 create policy organizations_read on public.organizations
   for select using (id = public.auth_org_id());
-
+drop policy if exists profiles_select on public.profiles;
 -- ------------------------------------------------------------ profiles
 create policy profiles_select on public.profiles
   for select using (
     id = auth.uid()
     or (org_id = public.auth_org_id() and public.has_role('admin', 'manager'))
   );
-
+drop policy if exists profiles_update_self on public.profiles;
 create policy profiles_update_self on public.profiles
   for update using (id = auth.uid())
   with check (id = auth.uid());
-
+drop policy if exists profiles_admin_manage on public.profiles;
 create policy profiles_admin_manage on public.profiles
   for all using (org_id = public.auth_org_id() and public.has_role('admin'))
   with check (org_id = public.auth_org_id() and public.has_role('admin'));
-
+drop policy if exists categories_read on public.categories;
 -- --------------------------------------------------------- master data
 create policy categories_read on public.categories
   for select using (org_id = public.auth_org_id());
+drop policy if exists categories_write on public.categories;
 create policy categories_write on public.categories
   for all using (org_id = public.auth_org_id() and public.has_role('admin', 'manager'))
   with check (org_id = public.auth_org_id() and public.has_role('admin', 'manager'));
-
+drop policy if exists warehouses_read on public.warehouses;
 create policy warehouses_read on public.warehouses
   for select using (org_id = public.auth_org_id());
+drop policy if exists warehouses_write on public.warehouses;
 create policy warehouses_write on public.warehouses
   for all using (org_id = public.auth_org_id() and public.has_role('admin', 'manager'))
   with check (org_id = public.auth_org_id() and public.has_role('admin', 'manager'));
-
+drop policy if exists products_read on public.products;
 create policy products_read on public.products
   for select using (org_id = public.auth_org_id());
+drop policy if exists products_write on public.products;
 create policy products_write on public.products
   for all using (org_id = public.auth_org_id() and public.has_role('admin', 'manager'))
   with check (org_id = public.auth_org_id() and public.has_role('admin', 'manager'));
-
+drop policy if exists customers_read on public.customers;
 create policy customers_read on public.customers
   for select using (org_id = public.auth_org_id());
+drop policy if exists customers_write on public.customers;
 create policy customers_write on public.customers
   for all using (org_id = public.auth_org_id()
                  and public.has_role('admin', 'manager', 'sales_rep'))
   with check (org_id = public.auth_org_id()
               and public.has_role('admin', 'manager', 'sales_rep'));
-
+drop policy if exists suppliers_read on public.suppliers;
 create policy suppliers_read on public.suppliers
   for select using (org_id = public.auth_org_id());
+drop policy if exists suppliers_write on public.suppliers;
 create policy suppliers_write on public.suppliers
   for all using (org_id = public.auth_org_id() and public.has_role('admin', 'manager'))
   with check (org_id = public.auth_org_id() and public.has_role('admin', 'manager'));
-
+drop policy if exists inventory_read on public.inventory;
 -- --------------------------------------------------------------- stock
 create policy inventory_read on public.inventory
   for select using (org_id = public.auth_org_id());
+drop policy if exists inventory_write on public.inventory;
 create policy inventory_write on public.inventory
   for all using (org_id = public.auth_org_id()
                  and public.has_role('admin', 'manager', 'warehouse'))
   with check (org_id = public.auth_org_id()
               and public.has_role('admin', 'manager', 'warehouse'));
-
+drop policy if exists stock_movements_read on public.stock_movements;
 create policy stock_movements_read on public.stock_movements
   for select using (org_id = public.auth_org_id());
+drop policy if exists stock_movements_insert on public.stock_movements;
 create policy stock_movements_insert on public.stock_movements
   for insert with check (org_id = public.auth_org_id()
                          and public.has_role('admin', 'manager', 'warehouse'));
-
+drop policy if exists sales_orders_read on public.sales_orders;
 -- -------------------------------------------------------- sales orders
 create policy sales_orders_read on public.sales_orders
   for select using (
@@ -1385,21 +1578,21 @@ create policy sales_orders_read on public.sales_orders
     and (public.has_role('admin', 'manager', 'warehouse', 'accountant')
          or created_by = auth.uid())
   );
-
+drop policy if exists sales_orders_insert on public.sales_orders;
 create policy sales_orders_insert on public.sales_orders
   for insert with check (
     org_id = public.auth_org_id()
     and public.has_role('admin', 'manager', 'sales_rep')
     and created_by = auth.uid()
   );
-
+drop policy if exists sales_orders_update on public.sales_orders;
 create policy sales_orders_update on public.sales_orders
   for update using (
     org_id = public.auth_org_id()
     and (public.has_role('admin', 'manager', 'warehouse')
          or (public.has_role('sales_rep') and created_by = auth.uid() and status = 'draft'))
   );
-
+drop policy if exists sales_orders_delete on public.sales_orders;
 create policy sales_orders_delete on public.sales_orders
   for delete using (
     org_id = public.auth_org_id()
@@ -1407,13 +1600,13 @@ create policy sales_orders_delete on public.sales_orders
          or (public.has_role('manager', 'sales_rep') and status = 'draft'
              and created_by = auth.uid()))
   );
-
+drop policy if exists sales_order_items_read on public.sales_order_items;
 create policy sales_order_items_read on public.sales_order_items
   for select using (
     org_id = public.auth_org_id()
     and exists (select 1 from public.sales_orders o where o.id = order_id)
   );
-
+drop policy if exists sales_order_items_write on public.sales_order_items;
 create policy sales_order_items_write on public.sales_order_items
   for all using (
     org_id = public.auth_org_id()
@@ -1433,7 +1626,7 @@ create policy sales_order_items_write on public.sales_order_items
              or (o.created_by = auth.uid() and o.status = 'draft'))
     )
   );
-
+drop policy if exists invoices_read on public.invoices;
 -- --------------------------------------------------------- receivables
 create policy invoices_read on public.invoices
   for select using (
@@ -1442,38 +1635,42 @@ create policy invoices_read on public.invoices
          or exists (select 1 from public.sales_orders o
                     where o.id = order_id and o.created_by = auth.uid()))
   );
-
+drop policy if exists invoices_write on public.invoices;
 create policy invoices_write on public.invoices
   for all using (org_id = public.auth_org_id()
                  and public.has_role('admin', 'manager', 'accountant'))
   with check (org_id = public.auth_org_id()
               and public.has_role('admin', 'manager', 'accountant'));
-
+drop policy if exists payments_read on public.payments;
 create policy payments_read on public.payments
   for select using (org_id = public.auth_org_id()
                     and public.has_role('admin', 'manager', 'accountant'));
+drop policy if exists payments_write on public.payments;
 create policy payments_write on public.payments
   for all using (org_id = public.auth_org_id()
                  and public.has_role('admin', 'manager', 'accountant'))
   with check (org_id = public.auth_org_id()
               and public.has_role('admin', 'manager', 'accountant'));
-
+drop policy if exists purchase_orders_read on public.purchase_orders;
 -- ---------------------------------------------------------- purchasing
 create policy purchase_orders_read on public.purchase_orders
   for select using (org_id = public.auth_org_id()
                     and public.has_role('admin', 'manager', 'warehouse', 'accountant'));
+drop policy if exists purchase_orders_write on public.purchase_orders;
 create policy purchase_orders_write on public.purchase_orders
   for all using (org_id = public.auth_org_id() and public.has_role('admin', 'manager'))
   with check (org_id = public.auth_org_id() and public.has_role('admin', 'manager'));
-
+drop policy if exists purchase_order_items_read on public.purchase_order_items;
 create policy purchase_order_items_read on public.purchase_order_items
   for select using (
     org_id = public.auth_org_id()
     and exists (select 1 from public.purchase_orders p where p.id = po_id)
   );
+drop policy if exists purchase_order_items_write on public.purchase_order_items;
 create policy purchase_order_items_write on public.purchase_order_items
   for all using (org_id = public.auth_org_id() and public.has_role('admin', 'manager'))
   with check (org_id = public.auth_org_id() and public.has_role('admin', 'manager'));
+
 
 -- ================================================================
 -- org_id backfill on insert
@@ -1517,34 +1714,46 @@ begin
 
   return new;
 end;
-$$;
-
+$$;drop trigger if exists inventory_fill_org on public.inventory;
 create trigger inventory_fill_org before insert on public.inventory
   for each row execute function public.fill_org_from_parent('product_id', 'products');
+drop trigger if exists stock_movements_fill_org on public.stock_movements;
 create trigger stock_movements_fill_org before insert on public.stock_movements
   for each row execute function public.fill_org_from_parent('product_id', 'products');
+drop trigger if exists sales_order_items_fill_org on public.sales_order_items;
 create trigger sales_order_items_fill_org before insert on public.sales_order_items
   for each row execute function public.fill_org_from_parent('order_id', 'sales_orders');
+drop trigger if exists payments_fill_org on public.payments;
 create trigger payments_fill_org before insert on public.payments
   for each row execute function public.fill_org_from_parent('invoice_id', 'invoices');
+drop trigger if exists purchase_order_items_fill_org on public.purchase_order_items;
 create trigger purchase_order_items_fill_org before insert on public.purchase_order_items
   for each row execute function public.fill_org_from_parent('po_id', 'purchase_orders');
+drop trigger if exists sales_orders_fill_org on public.sales_orders;
 create trigger sales_orders_fill_org before insert on public.sales_orders
   for each row execute function public.fill_org_from_parent('customer_id', 'customers');
+drop trigger if exists invoices_fill_org on public.invoices;
 create trigger invoices_fill_org before insert on public.invoices
   for each row execute function public.fill_org_from_parent('customer_id', 'customers');
+drop trigger if exists purchase_orders_fill_org on public.purchase_orders;
 create trigger purchase_orders_fill_org before insert on public.purchase_orders
   for each row execute function public.fill_org_from_parent('supplier_id', 'suppliers');
+drop trigger if exists products_fill_org on public.products;
 create trigger products_fill_org before insert on public.products
   for each row execute function public.fill_org_from_parent();
+drop trigger if exists customers_fill_org on public.customers;
 create trigger customers_fill_org before insert on public.customers
   for each row execute function public.fill_org_from_parent();
+drop trigger if exists suppliers_fill_org on public.suppliers;
 create trigger suppliers_fill_org before insert on public.suppliers
   for each row execute function public.fill_org_from_parent();
+drop trigger if exists categories_fill_org on public.categories;
 create trigger categories_fill_org before insert on public.categories
   for each row execute function public.fill_org_from_parent();
+drop trigger if exists warehouses_fill_org on public.warehouses;
 create trigger warehouses_fill_org before insert on public.warehouses
   for each row execute function public.fill_org_from_parent();
+
 
 -- A cross-tenant reference would silently leak data, so reject any row
 -- whose parent belongs to a different organization.
@@ -1575,29 +1784,35 @@ begin
 
   return new;
 end;
-$$;
-
+$$;drop trigger if exists products_same_org_category on public.products;
 create trigger products_same_org_category before insert or update on public.products
   for each row execute function public.assert_same_org('category_id', 'categories');
+drop trigger if exists products_same_org_supplier on public.products;
 create trigger products_same_org_supplier before insert or update on public.products
   for each row execute function public.assert_same_org('supplier_id', 'suppliers');
+drop trigger if exists sales_orders_same_org_customer on public.sales_orders;
 create trigger sales_orders_same_org_customer before insert or update on public.sales_orders
   for each row execute function public.assert_same_org('customer_id', 'customers');
+drop trigger if exists sales_orders_same_org_warehouse on public.sales_orders;
 create trigger sales_orders_same_org_warehouse before insert or update on public.sales_orders
   for each row execute function public.assert_same_org('warehouse_id', 'warehouses');
+drop trigger if exists sales_order_items_same_org on public.sales_order_items;
 create trigger sales_order_items_same_org before insert or update on public.sales_order_items
   for each row execute function public.assert_same_org('product_id', 'products');
+drop trigger if exists stock_movements_same_org_wh on public.stock_movements;
 create trigger stock_movements_same_org_wh before insert on public.stock_movements
   for each row execute function public.assert_same_org('warehouse_id', 'warehouses');
+drop trigger if exists invoices_same_org_customer on public.invoices;
 create trigger invoices_same_org_customer before insert or update on public.invoices
   for each row execute function public.assert_same_org('customer_id', 'customers');
+
 
 -- Views must be org-aware too; security_invoker keeps RLS applied, but the
 -- ageing view joins customers directly and is rebuilt here for clarity.
 -- Dropped and recreated rather than replaced: org_id is inserted into the
 -- middle of the column list, which CREATE OR REPLACE VIEW cannot do.
 drop view public.customer_balances;
-create view public.customer_balances
+create or replace view public.customer_balances
 with (security_invoker = on) as
   select
     c.id as customer_id, c.org_id, c.code, c.name, c.credit_limit,
@@ -1609,50 +1824,175 @@ with (security_invoker = on) as
     on i.customer_id = c.id
    and i.status in ('issued', 'partially_paid', 'overdue')
   group by c.id, c.org_id, c.code, c.name, c.credit_limit;
+do $enum$
+declare
+  found text[];
+  wanted text[] := array['draft', 'loaded', 'dispatched', 'returned', 'reconciled', 'cancelled'];
+begin
+  if not exists (
+    select 1 from pg_type t
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'van_load_status'
+  ) then
+    create type public.van_load_status as enum ('draft', 'loaded', 'dispatched', 'returned', 'reconciled', 'cancelled');
+  else
+    select array_agg(e.enumlabel order by e.enumsortorder) into found
+      from pg_enum e
+      join pg_type t on t.oid = e.enumtypid
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'van_load_status';
 
+    -- Already correct: nothing to do, and the script carries on.
+    if found is distinct from wanted then
+      raise exception
+        'public.van_load_status already exists with different values. Found %, expected %. '
+        'Reconcile it before running this script; this script will not alter an '
+        'enum other code may already depend on.',
+        found, wanted;
+    end if;
+  end if;
+end $enum$;
+do $enum$
+declare
+  found text[];
+  wanted text[] := array['cash', 'credit'];
+begin
+  if not exists (
+    select 1 from pg_type t
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'van_sale_type'
+  ) then
+    create type public.van_sale_type as enum ('cash', 'credit');
+  else
+    select array_agg(e.enumlabel order by e.enumsortorder) into found
+      from pg_enum e
+      join pg_type t on t.oid = e.enumtypid
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'van_sale_type';
 
--- ====================================================================
--- 0010_enum_extensions.sql
--- ====================================================================
--- Migration 0010 appends values to user_role and movement_type.
--- In this consolidated installer those values are already part of the
--- enum declarations in section 0001, because PostgreSQL cannot use a new
--- enum value in the transaction that added it. Nothing to do here.
+    -- Already correct: nothing to do, and the script carries on.
+    if found is distinct from wanted then
+      raise exception
+        'public.van_sale_type already exists with different values. Found %, expected %. '
+        'Reconcile it before running this script; this script will not alter an '
+        'enum other code may already depend on.',
+        found, wanted;
+    end if;
+  end if;
+end $enum$;
+do $enum$
+declare
+  found text[];
+  wanted text[] := array['draft', 'completed', 'void'];
+begin
+  if not exists (
+    select 1 from pg_type t
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'van_sale_status'
+  ) then
+    create type public.van_sale_status as enum ('draft', 'completed', 'void');
+  else
+    select array_agg(e.enumlabel order by e.enumsortorder) into found
+      from pg_enum e
+      join pg_type t on t.oid = e.enumtypid
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'van_sale_status';
 
+    -- Already correct: nothing to do, and the script carries on.
+    if found is distinct from wanted then
+      raise exception
+        'public.van_sale_status already exists with different values. Found %, expected %. '
+        'Reconcile it before running this script; this script will not alter an '
+        'enum other code may already depend on.',
+        found, wanted;
+    end if;
+  end if;
+end $enum$;
+do $enum$
+declare
+  found text[];
+  wanted text[] := array['draft', 'submitted', 'approved', 'rejected'];
+begin
+  if not exists (
+    select 1 from pg_type t
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'van_return_status'
+  ) then
+    create type public.van_return_status as enum ('draft', 'submitted', 'approved', 'rejected');
+  else
+    select array_agg(e.enumlabel order by e.enumsortorder) into found
+      from pg_enum e
+      join pg_type t on t.oid = e.enumtypid
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'van_return_status';
 
--- ====================================================================
--- 0011_distribution_operations.sql
--- ====================================================================
--- =====================================================================
--- 0011_distribution_operations.sql
--- Van-based distribution: vans, drivers, loading, van sales, returns,
--- and end-of-day cash/stock reconciliation.
---
--- The stock ledger from 0003 is generalised rather than duplicated: a
--- movement now happens at exactly one location, which is either a
--- warehouse or a van. Van stock is therefore derived from the same
--- append-only ledger as warehouse stock.
--- =====================================================================
+    -- Already correct: nothing to do, and the script carries on.
+    if found is distinct from wanted then
+      raise exception
+        'public.van_return_status already exists with different values. Found %, expected %. '
+        'Reconcile it before running this script; this script will not alter an '
+        'enum other code may already depend on.',
+        found, wanted;
+    end if;
+  end if;
+end $enum$;
+do $enum$
+declare
+  found text[];
+  wanted text[] := array['draft', 'submitted', 'approved', 'rejected', 'settled'];
+begin
+  if not exists (
+    select 1 from pg_type t
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'reconciliation_status'
+  ) then
+    create type public.reconciliation_status as enum ('draft', 'submitted', 'approved', 'rejected', 'settled');
+  else
+    select array_agg(e.enumlabel order by e.enumsortorder) into found
+      from pg_enum e
+      join pg_type t on t.oid = e.enumtypid
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'reconciliation_status';
 
-create type public.van_load_status as enum (
-  'draft', 'loaded', 'dispatched', 'returned', 'reconciled', 'cancelled'
-);
+    -- Already correct: nothing to do, and the script carries on.
+    if found is distinct from wanted then
+      raise exception
+        'public.reconciliation_status already exists with different values. Found %, expected %. '
+        'Reconcile it before running this script; this script will not alter an '
+        'enum other code may already depend on.',
+        found, wanted;
+    end if;
+  end if;
+end $enum$;
+do $enum$
+declare
+  found text[];
+  wanted text[] := array['charge', 'payment', 'adjustment', 'write_off'];
+begin
+  if not exists (
+    select 1 from pg_type t
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'credit_txn_type'
+  ) then
+    create type public.credit_txn_type as enum ('charge', 'payment', 'adjustment', 'write_off');
+  else
+    select array_agg(e.enumlabel order by e.enumsortorder) into found
+      from pg_enum e
+      join pg_type t on t.oid = e.enumtypid
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'credit_txn_type';
 
-create type public.van_sale_type as enum ('cash', 'credit');
+    -- Already correct: nothing to do, and the script carries on.
+    if found is distinct from wanted then
+      raise exception
+        'public.credit_txn_type already exists with different values. Found %, expected %. '
+        'Reconcile it before running this script; this script will not alter an '
+        'enum other code may already depend on.',
+        found, wanted;
+    end if;
+  end if;
+end $enum$;
 
-create type public.van_sale_status as enum ('draft', 'completed', 'void');
-
-create type public.van_return_status as enum (
-  'draft', 'submitted', 'approved', 'rejected'
-);
-
-create type public.reconciliation_status as enum (
-  'draft', 'submitted', 'approved', 'rejected', 'settled'
-);
-
-create type public.credit_txn_type as enum (
-  'charge', 'payment', 'adjustment', 'write_off'
-);
 
 create sequence public.van_load_seq        start 1000;
 create sequence public.van_sale_seq        start 1000;
@@ -1664,7 +2004,7 @@ create sequence public.stock_transfer_seq  start 1000;
 -- Vans and drivers
 -- ===================================================================
 
-create table public.vans (
+create table if not exists public.vans (
   id             uuid primary key default gen_random_uuid(),
   org_id         uuid not null references public.organizations (id) on delete restrict,
   code           text not null,
@@ -1680,10 +2020,12 @@ create table public.vans (
   unique (org_id, registration_no)
 );
 
-create index vans_org_idx on public.vans (org_id) where is_active;
+
+create index if not exists vans_org_idx on public.vans (org_id) where is_active;
+
 
 -- Assignment history. The open row (unassigned_at is null) is current.
-create table public.van_assignments (
+create table if not exists public.van_assignments (
   id            uuid primary key default gen_random_uuid(),
   org_id        uuid not null references public.organizations (id) on delete restrict,
   van_id        uuid not null references public.vans (id) on delete cascade,
@@ -1695,13 +2037,17 @@ create table public.van_assignments (
   check (unassigned_at is null or unassigned_at >= assigned_at)
 );
 
+
 -- A van has at most one active driver, and a driver at most one active van.
-create unique index van_assignments_one_active_van
+create unique index if not exists van_assignments_one_active_van
   on public.van_assignments (van_id) where unassigned_at is null;
-create unique index van_assignments_one_active_driver
+
+create unique index if not exists van_assignments_one_active_driver
   on public.van_assignments (driver_id) where unassigned_at is null;
 
-create index van_assignments_driver_idx on public.van_assignments (driver_id);
+
+create index if not exists van_assignments_driver_idx on public.van_assignments (driver_id);
+
 
 -- Convenience: the van the calling user currently drives.
 create or replace function public.my_van_id()
@@ -1720,7 +2066,7 @@ $$;
 -- Van stock, on the same ledger as warehouse stock
 -- ===================================================================
 
-create table public.van_inventory (
+create table if not exists public.van_inventory (
   id           uuid primary key default gen_random_uuid(),
   org_id       uuid not null references public.organizations (id) on delete restrict,
   van_id       uuid not null references public.vans (id) on delete cascade,
@@ -1730,7 +2076,9 @@ create table public.van_inventory (
   unique (van_id, product_id)
 );
 
-create index van_inventory_van_idx on public.van_inventory (van_id);
+
+create index if not exists van_inventory_van_idx on public.van_inventory (van_id);
+
 
 -- A movement is now located at a warehouse OR a van, never both.
 alter table public.stock_movements
@@ -1745,7 +2093,8 @@ alter table public.stock_movements
     or (warehouse_id is null and van_id is not null)
   );
 
-create index stock_movements_van_idx on public.stock_movements (van_id, created_at desc);
+create index if not exists stock_movements_van_idx on public.stock_movements (van_id, created_at desc);
+
 
 -- Damage and shortage both remove stock from wherever they are recorded.
 create or replace function public.movement_direction(t public.movement_type)
@@ -1801,7 +2150,7 @@ $$;
 -- Warehouse to warehouse transfers (the missing transfer document)
 -- ===================================================================
 
-create table public.stock_transfers (
+create table if not exists public.stock_transfers (
   id              uuid primary key default gen_random_uuid(),
   org_id          uuid not null references public.organizations (id) on delete restrict,
   transfer_number text not null unique
@@ -1818,7 +2167,8 @@ create table public.stock_transfers (
   check (from_warehouse_id <> to_warehouse_id)
 );
 
-create table public.stock_transfer_items (
+
+create table if not exists public.stock_transfer_items (
   id          uuid primary key default gen_random_uuid(),
   org_id      uuid not null references public.organizations (id) on delete restrict,
   transfer_id uuid not null references public.stock_transfers (id) on delete cascade,
@@ -1827,11 +2177,12 @@ create table public.stock_transfer_items (
   unique (transfer_id, product_id)
 );
 
+
 -- ===================================================================
 -- Van loading
 -- ===================================================================
 
-create table public.van_loads (
+create table if not exists public.van_loads (
   id            uuid primary key default gen_random_uuid(),
   org_id        uuid not null references public.organizations (id) on delete restrict,
   load_number   text not null unique
@@ -1851,16 +2202,21 @@ create table public.van_loads (
   updated_at    timestamptz not null default now()
 );
 
-create index van_loads_van_idx on public.van_loads (van_id, load_date desc);
-create index van_loads_driver_idx on public.van_loads (driver_id, load_date desc);
-create index van_loads_status_idx on public.van_loads (status);
+
+create index if not exists van_loads_van_idx on public.van_loads (van_id, load_date desc);
+
+create index if not exists van_loads_driver_idx on public.van_loads (driver_id, load_date desc);
+
+create index if not exists van_loads_status_idx on public.van_loads (status);
+
 
 -- One open load per van at a time.
-create unique index van_loads_one_open_per_van
+create unique index if not exists van_loads_one_open_per_van
   on public.van_loads (van_id)
   where status in ('loaded', 'dispatched');
 
-create table public.van_load_items (
+
+create table if not exists public.van_load_items (
   id           uuid primary key default gen_random_uuid(),
   org_id       uuid not null references public.organizations (id) on delete restrict,
   load_id      uuid not null references public.van_loads (id) on delete cascade,
@@ -1873,13 +2229,15 @@ create table public.van_load_items (
   unique (load_id, product_id)
 );
 
-create index van_load_items_load_idx on public.van_load_items (load_id);
+
+create index if not exists van_load_items_load_idx on public.van_load_items (load_id);
+
 
 -- ===================================================================
 -- Van sales
 -- ===================================================================
 
-create table public.van_sales (
+create table if not exists public.van_sales (
   id           uuid primary key default gen_random_uuid(),
   org_id       uuid not null references public.organizations (id) on delete restrict,
   sale_number  text not null unique
@@ -1904,11 +2262,15 @@ create table public.van_sales (
   updated_at   timestamptz not null default now()
 );
 
-create index van_sales_load_idx on public.van_sales (load_id);
-create index van_sales_customer_idx on public.van_sales (customer_id, sold_at desc);
-create index van_sales_driver_idx on public.van_sales (driver_id, sold_at desc);
 
-create table public.van_sale_items (
+create index if not exists van_sales_load_idx on public.van_sales (load_id);
+
+create index if not exists van_sales_customer_idx on public.van_sales (customer_id, sold_at desc);
+
+create index if not exists van_sales_driver_idx on public.van_sales (driver_id, sold_at desc);
+
+
+create table if not exists public.van_sale_items (
   id           uuid primary key default gen_random_uuid(),
   org_id       uuid not null references public.organizations (id) on delete restrict,
   sale_id      uuid not null references public.van_sales (id) on delete cascade,
@@ -1926,13 +2288,15 @@ create table public.van_sale_items (
   unique (sale_id, product_id)
 );
 
-create index van_sale_items_sale_idx on public.van_sale_items (sale_id);
+
+create index if not exists van_sale_items_sale_idx on public.van_sale_items (sale_id);
+
 
 -- ===================================================================
 -- Customer credit ledger
 -- ===================================================================
 
-create table public.credit_transactions (
+create table if not exists public.credit_transactions (
   id             uuid primary key default gen_random_uuid(),
   org_id         uuid not null references public.organizations (id) on delete restrict,
   customer_id    uuid not null references public.customers (id) on delete restrict,
@@ -1947,14 +2311,16 @@ create table public.credit_transactions (
   notes          text
 );
 
-create index credit_transactions_customer_idx
+
+create index if not exists credit_transactions_customer_idx
   on public.credit_transactions (customer_id, occurred_at desc);
+
 
 -- ===================================================================
 -- Van returns
 -- ===================================================================
 
-create table public.van_returns (
+create table if not exists public.van_returns (
   id            uuid primary key default gen_random_uuid(),
   org_id        uuid not null references public.organizations (id) on delete restrict,
   return_number text not null unique
@@ -1974,7 +2340,8 @@ create table public.van_returns (
   unique (load_id)
 );
 
-create table public.van_return_items (
+
+create table if not exists public.van_return_items (
   id                 uuid primary key default gen_random_uuid(),
   org_id             uuid not null references public.organizations (id) on delete restrict,
   return_id          uuid not null references public.van_returns (id) on delete cascade,
@@ -1990,13 +2357,15 @@ create table public.van_return_items (
   unique (return_id, product_id)
 );
 
-create index van_return_items_return_idx on public.van_return_items (return_id);
+
+create index if not exists van_return_items_return_idx on public.van_return_items (return_id);
+
 
 -- ===================================================================
 -- End-of-day reconciliation
 -- ===================================================================
 
-create table public.van_reconciliations (
+create table if not exists public.van_reconciliations (
   id             uuid primary key default gen_random_uuid(),
   org_id         uuid not null references public.organizations (id) on delete restrict,
   recon_number   text not null unique
@@ -2045,15 +2414,18 @@ create table public.van_reconciliations (
     check (status <> 'rejected' or rejection_reason is not null)
 );
 
-create index van_reconciliations_driver_idx
+
+create index if not exists van_reconciliations_driver_idx
   on public.van_reconciliations (driver_id, created_at desc);
-create index van_reconciliations_status_idx on public.van_reconciliations (status);
+
+create index if not exists van_reconciliations_status_idx on public.van_reconciliations (status);
+
 
 -- ===================================================================
 -- Manager product scopes
 -- ===================================================================
 
-create table public.manager_category_scopes (
+create table if not exists public.manager_category_scopes (
   id          uuid primary key default gen_random_uuid(),
   org_id      uuid not null references public.organizations (id) on delete restrict,
   profile_id  uuid not null references public.profiles (id) on delete cascade,
@@ -2063,8 +2435,10 @@ create table public.manager_category_scopes (
   unique (profile_id, category_id)
 );
 
-create index manager_category_scopes_profile_idx
+
+create index if not exists manager_category_scopes_profile_idx
   on public.manager_category_scopes (profile_id);
+
 
 -- Which product categories the caller may see.
 --   admin / senior_manager  -> everything
@@ -2110,22 +2484,25 @@ as $$
     when public.auth_role() is null then false
     else true
   end
-$$;
-
+$$;drop trigger if exists vans_set_updated_at on public.vans;
 create trigger vans_set_updated_at before update on public.vans
   for each row execute function public.set_updated_at();
+drop trigger if exists van_loads_set_updated_at on public.van_loads;
 create trigger van_loads_set_updated_at before update on public.van_loads
   for each row execute function public.set_updated_at();
+drop trigger if exists van_sales_set_updated_at on public.van_sales;
 create trigger van_sales_set_updated_at before update on public.van_sales
   for each row execute function public.set_updated_at();
+drop trigger if exists van_returns_set_updated_at on public.van_returns;
 create trigger van_returns_set_updated_at before update on public.van_returns
   for each row execute function public.set_updated_at();
+drop trigger if exists van_reconciliations_set_updated_at on public.van_reconciliations;
 create trigger van_reconciliations_set_updated_at before update on public.van_reconciliations
   for each row execute function public.set_updated_at();
+drop trigger if exists stock_transfers_set_updated_at on public.stock_transfers;
 create trigger stock_transfers_set_updated_at before update on public.stock_transfers
   for each row execute function public.set_updated_at();
-
-
+drop trigger if exists vans_fill_org on public.vans;
 -- ====================================================================
 -- 0012_distribution_logic.sql
 -- ====================================================================
@@ -2140,37 +2517,52 @@ create trigger stock_transfers_set_updated_at before update on public.stock_tran
 -- ---------------------------------------------- org_id backfill triggers
 create trigger vans_fill_org before insert on public.vans
   for each row execute function public.fill_org_from_parent();
+drop trigger if exists van_assignments_fill_org on public.van_assignments;
 create trigger van_assignments_fill_org before insert on public.van_assignments
   for each row execute function public.fill_org_from_parent('van_id', 'vans');
+drop trigger if exists van_inventory_fill_org on public.van_inventory;
 create trigger van_inventory_fill_org before insert on public.van_inventory
   for each row execute function public.fill_org_from_parent('van_id', 'vans');
+drop trigger if exists van_loads_fill_org on public.van_loads;
 create trigger van_loads_fill_org before insert on public.van_loads
   for each row execute function public.fill_org_from_parent('van_id', 'vans');
+drop trigger if exists van_load_items_fill_org on public.van_load_items;
 create trigger van_load_items_fill_org before insert on public.van_load_items
   for each row execute function public.fill_org_from_parent('load_id', 'van_loads');
+drop trigger if exists van_sales_fill_org on public.van_sales;
 create trigger van_sales_fill_org before insert on public.van_sales
   for each row execute function public.fill_org_from_parent('van_id', 'vans');
+drop trigger if exists van_sale_items_fill_org on public.van_sale_items;
 create trigger van_sale_items_fill_org before insert on public.van_sale_items
   for each row execute function public.fill_org_from_parent('sale_id', 'van_sales');
+drop trigger if exists van_returns_fill_org on public.van_returns;
 create trigger van_returns_fill_org before insert on public.van_returns
   for each row execute function public.fill_org_from_parent('van_id', 'vans');
+drop trigger if exists van_return_items_fill_org on public.van_return_items;
 create trigger van_return_items_fill_org before insert on public.van_return_items
   for each row execute function public.fill_org_from_parent('return_id', 'van_returns');
+drop trigger if exists van_reconciliations_fill_org on public.van_reconciliations;
 create trigger van_reconciliations_fill_org before insert on public.van_reconciliations
   for each row execute function public.fill_org_from_parent('van_id', 'vans');
+drop trigger if exists credit_transactions_fill_org on public.credit_transactions;
 create trigger credit_transactions_fill_org before insert on public.credit_transactions
   for each row execute function public.fill_org_from_parent('customer_id', 'customers');
+drop trigger if exists manager_category_scopes_fill_org on public.manager_category_scopes;
 create trigger manager_category_scopes_fill_org before insert on public.manager_category_scopes
   for each row execute function public.fill_org_from_parent('profile_id', 'profiles');
+drop trigger if exists stock_transfers_fill_org on public.stock_transfers;
 create trigger stock_transfers_fill_org before insert on public.stock_transfers
   for each row execute function public.fill_org_from_parent('from_warehouse_id', 'warehouses');
+drop trigger if exists stock_transfer_items_fill_org on public.stock_transfer_items;
 create trigger stock_transfer_items_fill_org before insert on public.stock_transfer_items
   for each row execute function public.fill_org_from_parent('transfer_id', 'stock_transfers');
-
+drop trigger if exists van_sales_same_org_customer on public.van_sales;
 create trigger van_sales_same_org_customer before insert or update on public.van_sales
   for each row execute function public.assert_same_org('customer_id', 'customers');
+drop trigger if exists stock_movements_same_org_van on public.stock_movements;
 create trigger stock_movements_same_org_van before insert on public.stock_movements
   for each row execute function public.assert_same_org('van_id', 'vans');
+
 
 -- ===================================================================
 -- Authorization inside SECURITY DEFINER functions
@@ -2224,11 +2616,11 @@ begin
   where s.id = target;
   return null;
 end;
-$$;
-
+$$;drop trigger if exists van_sale_items_recalc on public.van_sale_items;
 create trigger van_sale_items_recalc
   after insert or update or delete on public.van_sale_items
   for each row execute function public.recalc_van_sale_totals();
+
 
 -- ===================================================================
 -- Dispatch: warehouse -> van
@@ -2673,12 +3065,13 @@ begin
   end if;
   return new;
 end;
-$$;
-
+$$;drop trigger if exists credit_transactions_stamp_author on public.credit_transactions;
 create trigger credit_transactions_stamp_author before insert on public.credit_transactions
   for each row execute function public.stamp_created_by();
+drop trigger if exists stock_transfers_stamp_author on public.stock_transfers;
 create trigger stock_transfers_stamp_author before insert on public.stock_transfers
   for each row execute function public.stamp_created_by();
+
 
 
 -- ====================================================================
@@ -2719,14 +3112,15 @@ join public.categories c on c.org_id = p.org_id
 where p.role = 'manager'
 on conflict do nothing;
 
-drop policy products_read on public.products;
+drop policy products_read on public.products;drop policy if exists products_read on public.products;
 create policy products_read on public.products
   for select using (
     org_id = public.auth_org_id()
     and public.can_access_product(id)
   );
 
-drop policy products_write on public.products;
+
+drop policy products_write on public.products;drop policy if exists products_write on public.products;
 create policy products_write on public.products
   for all using (
     org_id = public.auth_org_id()
@@ -2739,28 +3133,30 @@ create policy products_write on public.products
     and (category_id is null or public.can_access_category(category_id))
   );
 
-drop policy categories_read on public.categories;
+
+drop policy categories_read on public.categories;drop policy if exists categories_read on public.categories;
 create policy categories_read on public.categories
   for select using (
     org_id = public.auth_org_id()
     and public.can_access_category(id)
   );
 
+
 -- senior_manager inherits every policy that named 'manager' before it
 -- existed, so those policies are widened here.
-drop policy categories_write on public.categories;
+drop policy categories_write on public.categories;drop policy if exists categories_write on public.categories;
 create policy categories_write on public.categories
   for all using (org_id = public.auth_org_id()
                  and public.has_role('admin', 'senior_manager'))
   with check (org_id = public.auth_org_id()
               and public.has_role('admin', 'senior_manager'));
-
+drop policy if exists manager_scopes_read on public.manager_category_scopes;
 create policy manager_scopes_read on public.manager_category_scopes
   for select using (
     org_id = public.auth_org_id()
     and (profile_id = auth.uid() or public.has_role('admin', 'senior_manager'))
   );
-
+drop policy if exists manager_scopes_write on public.manager_category_scopes;
 -- Only admins and senior managers grant scopes: a scoped manager must not
 -- be able to widen their own access.
 create policy manager_scopes_write on public.manager_category_scopes
@@ -2768,7 +3164,7 @@ create policy manager_scopes_write on public.manager_category_scopes
                  and public.has_role('admin', 'senior_manager'))
   with check (org_id = public.auth_org_id()
               and public.has_role('admin', 'senior_manager'));
-
+drop policy if exists vans_read on public.vans;
 -- ================================================================
 -- Vans and assignments
 -- ================================================================
@@ -2778,40 +3174,40 @@ create policy vans_read on public.vans
     org_id = public.auth_org_id()
     and (not public.has_role('driver') or id = public.my_van_id())
   );
-
+drop policy if exists vans_write on public.vans;
 create policy vans_write on public.vans
   for all using (org_id = public.auth_org_id()
                  and public.has_role('admin', 'senior_manager', 'manager'))
   with check (org_id = public.auth_org_id()
               and public.has_role('admin', 'senior_manager', 'manager'));
-
+drop policy if exists van_assignments_read on public.van_assignments;
 create policy van_assignments_read on public.van_assignments
   for select using (
     org_id = public.auth_org_id()
     and (driver_id = auth.uid()
          or public.has_role('admin', 'senior_manager', 'manager', 'warehouse'))
   );
-
+drop policy if exists van_assignments_write on public.van_assignments;
 -- A driver must never assign themselves a van.
 create policy van_assignments_write on public.van_assignments
   for all using (org_id = public.auth_org_id()
                  and public.has_role('admin', 'senior_manager', 'manager'))
   with check (org_id = public.auth_org_id()
               and public.has_role('admin', 'senior_manager', 'manager'));
-
+drop policy if exists van_inventory_read on public.van_inventory;
 create policy van_inventory_read on public.van_inventory
   for select using (
     org_id = public.auth_org_id()
     and (not public.has_role('driver') or van_id = public.my_van_id())
   );
-
+drop policy if exists van_inventory_write on public.van_inventory;
 -- Van stock is derived from the ledger; nobody edits it directly.
 create policy van_inventory_write on public.van_inventory
   for all using (org_id = public.auth_org_id()
                  and public.has_role('admin', 'senior_manager'))
   with check (org_id = public.auth_org_id()
               and public.has_role('admin', 'senior_manager'));
-
+drop policy if exists van_loads_read on public.van_loads;
 -- ================================================================
 -- Loading
 -- ================================================================
@@ -2822,32 +3218,32 @@ create policy van_loads_read on public.van_loads
     and (driver_id = auth.uid()
          or public.has_role('admin', 'senior_manager', 'manager', 'warehouse', 'accountant'))
   );
-
+drop policy if exists van_loads_write on public.van_loads;
 create policy van_loads_write on public.van_loads
   for all using (org_id = public.auth_org_id()
                  and public.has_role('admin', 'senior_manager', 'manager', 'warehouse'))
   with check (org_id = public.auth_org_id()
               and public.has_role('admin', 'senior_manager', 'manager', 'warehouse'));
-
+drop policy if exists van_loads_driver_confirm on public.van_loads;
 -- The driver confirms receipt of their own load, and nothing else on it.
 create policy van_loads_driver_confirm on public.van_loads
   for update using (org_id = public.auth_org_id()
                     and driver_id = auth.uid()
                     and status = 'loaded')
   with check (org_id = public.auth_org_id() and driver_id = auth.uid());
-
+drop policy if exists van_load_items_read on public.van_load_items;
 create policy van_load_items_read on public.van_load_items
   for select using (
     org_id = public.auth_org_id()
     and exists (select 1 from public.van_loads l where l.id = load_id)
   );
-
+drop policy if exists van_load_items_write on public.van_load_items;
 create policy van_load_items_write on public.van_load_items
   for all using (org_id = public.auth_org_id()
                  and public.has_role('admin', 'senior_manager', 'manager', 'warehouse'))
   with check (org_id = public.auth_org_id()
               and public.has_role('admin', 'senior_manager', 'manager', 'warehouse'));
-
+drop policy if exists van_sales_read on public.van_sales;
 -- ================================================================
 -- Van sales
 -- ================================================================
@@ -2858,7 +3254,7 @@ create policy van_sales_read on public.van_sales
     and (driver_id = auth.uid()
          or public.has_role('admin', 'senior_manager', 'manager', 'accountant'))
   );
-
+drop policy if exists van_sales_driver_insert on public.van_sales;
 -- A driver may only sell from the van they are actually assigned to.
 create policy van_sales_driver_insert on public.van_sales
   for insert with check (
@@ -2867,7 +3263,7 @@ create policy van_sales_driver_insert on public.van_sales
     and driver_id = auth.uid()
     and van_id = public.my_van_id()
   );
-
+drop policy if exists van_sales_driver_update on public.van_sales;
 create policy van_sales_driver_update on public.van_sales
   for update using (
     org_id = public.auth_org_id()
@@ -2875,19 +3271,19 @@ create policy van_sales_driver_update on public.van_sales
     and driver_id = auth.uid()
     and status = 'draft'
   );
-
+drop policy if exists van_sales_manage on public.van_sales;
 create policy van_sales_manage on public.van_sales
   for all using (org_id = public.auth_org_id()
                  and public.has_role('admin', 'senior_manager', 'manager'))
   with check (org_id = public.auth_org_id()
               and public.has_role('admin', 'senior_manager', 'manager'));
-
+drop policy if exists van_sale_items_read on public.van_sale_items;
 create policy van_sale_items_read on public.van_sale_items
   for select using (
     org_id = public.auth_org_id()
     and exists (select 1 from public.van_sales s where s.id = sale_id)
   );
-
+drop policy if exists van_sale_items_write on public.van_sale_items;
 create policy van_sale_items_write on public.van_sale_items
   for all using (
     org_id = public.auth_org_id()
@@ -2907,7 +3303,7 @@ create policy van_sale_items_write on public.van_sale_items
              or (s.driver_id = auth.uid() and s.status = 'draft'))
     )
   );
-
+drop policy if exists credit_transactions_read on public.credit_transactions;
 -- ================================================================
 -- Credit
 -- ================================================================
@@ -2918,20 +3314,20 @@ create policy credit_transactions_read on public.credit_transactions
     and (public.has_role('admin', 'senior_manager', 'manager', 'accountant')
          or created_by = auth.uid())
   );
-
+drop policy if exists credit_transactions_insert on public.credit_transactions;
 -- Drivers record collections in the field; nobody edits history afterwards.
 create policy credit_transactions_insert on public.credit_transactions
   for insert with check (
     org_id = public.auth_org_id()
     and public.has_role('admin', 'senior_manager', 'manager', 'accountant', 'driver')
   );
-
+drop policy if exists credit_transactions_manage on public.credit_transactions;
 create policy credit_transactions_manage on public.credit_transactions
   for update using (org_id = public.auth_org_id()
                     and public.has_role('admin', 'senior_manager', 'accountant'))
   with check (org_id = public.auth_org_id()
               and public.has_role('admin', 'senior_manager', 'accountant'));
-
+drop policy if exists van_returns_read on public.van_returns;
 -- ================================================================
 -- Returns
 -- ================================================================
@@ -2942,14 +3338,14 @@ create policy van_returns_read on public.van_returns
     and (driver_id = auth.uid()
          or public.has_role('admin', 'senior_manager', 'manager', 'warehouse', 'accountant'))
   );
-
+drop policy if exists van_returns_driver on public.van_returns;
 create policy van_returns_driver on public.van_returns
   for insert with check (
     org_id = public.auth_org_id()
     and public.has_role('driver')
     and driver_id = auth.uid()
   );
-
+drop policy if exists van_returns_driver_update on public.van_returns;
 create policy van_returns_driver_update on public.van_returns
   for update using (
     org_id = public.auth_org_id()
@@ -2957,19 +3353,19 @@ create policy van_returns_driver_update on public.van_returns
     and driver_id = auth.uid()
     and status = 'draft'
   );
-
+drop policy if exists van_returns_manage on public.van_returns;
 create policy van_returns_manage on public.van_returns
   for all using (org_id = public.auth_org_id()
                  and public.has_role('admin', 'senior_manager', 'manager', 'warehouse'))
   with check (org_id = public.auth_org_id()
               and public.has_role('admin', 'senior_manager', 'manager', 'warehouse'));
-
+drop policy if exists van_return_items_read on public.van_return_items;
 create policy van_return_items_read on public.van_return_items
   for select using (
     org_id = public.auth_org_id()
     and exists (select 1 from public.van_returns r where r.id = return_id)
   );
-
+drop policy if exists van_return_items_write on public.van_return_items;
 create policy van_return_items_write on public.van_return_items
   for all using (
     org_id = public.auth_org_id()
@@ -2989,7 +3385,7 @@ create policy van_return_items_write on public.van_return_items
              or (r.driver_id = auth.uid() and r.status = 'draft'))
     )
   );
-
+drop policy if exists van_reconciliations_read on public.van_reconciliations;
 -- ================================================================
 -- Reconciliation
 -- ================================================================
@@ -3000,7 +3396,7 @@ create policy van_reconciliations_read on public.van_reconciliations
     and (driver_id = auth.uid()
          or public.has_role('admin', 'senior_manager', 'manager', 'accountant'))
   );
-
+drop policy if exists van_reconciliations_driver on public.van_reconciliations;
 -- A driver may submit their own reconciliation, but only while it is a
 -- draft: once submitted the numbers are out of their hands.
 create policy van_reconciliations_driver on public.van_reconciliations
@@ -3015,7 +3411,7 @@ create policy van_reconciliations_driver on public.van_reconciliations
     and driver_id = auth.uid()
     and status in ('draft', 'submitted')
   );
-
+drop policy if exists van_reconciliations_manage on public.van_reconciliations;
 create policy van_reconciliations_manage on public.van_reconciliations
   for all using (
     org_id = public.auth_org_id()
@@ -3027,72 +3423,78 @@ create policy van_reconciliations_manage on public.van_reconciliations
     -- Belt and braces with the table's check constraint.
     and (approved_by is null or approved_by <> driver_id)
   );
-
+drop policy if exists stock_transfers_read on public.stock_transfers;
 -- ================================================================
 -- Transfers
 -- ================================================================
 
 create policy stock_transfers_read on public.stock_transfers
   for select using (org_id = public.auth_org_id());
-
+drop policy if exists stock_transfers_write on public.stock_transfers;
 create policy stock_transfers_write on public.stock_transfers
   for all using (org_id = public.auth_org_id()
                  and public.has_role('admin', 'senior_manager', 'manager', 'warehouse'))
   with check (org_id = public.auth_org_id()
               and public.has_role('admin', 'senior_manager', 'manager', 'warehouse'));
-
+drop policy if exists stock_transfer_items_read on public.stock_transfer_items;
 create policy stock_transfer_items_read on public.stock_transfer_items
   for select using (
     org_id = public.auth_org_id()
     and exists (select 1 from public.stock_transfers t where t.id = transfer_id)
   );
-
+drop policy if exists stock_transfer_items_write on public.stock_transfer_items;
 create policy stock_transfer_items_write on public.stock_transfer_items
   for all using (org_id = public.auth_org_id()
                  and public.has_role('admin', 'senior_manager', 'manager', 'warehouse'))
   with check (org_id = public.auth_org_id()
               and public.has_role('admin', 'senior_manager', 'manager', 'warehouse'));
 
+
 -- ================================================================
 -- Widen existing policies to include senior_manager and let drivers
 -- see the customers and stock they need to do their job.
 -- ================================================================
 
-drop policy customers_write on public.customers;
+drop policy customers_write on public.customers;drop policy if exists customers_write on public.customers;
 create policy customers_write on public.customers
   for all using (org_id = public.auth_org_id()
                  and public.has_role('admin', 'senior_manager', 'manager', 'sales_rep', 'driver'))
   with check (org_id = public.auth_org_id()
               and public.has_role('admin', 'senior_manager', 'manager', 'sales_rep', 'driver'));
 
-drop policy warehouses_write on public.warehouses;
+
+drop policy warehouses_write on public.warehouses;drop policy if exists warehouses_write on public.warehouses;
 create policy warehouses_write on public.warehouses
   for all using (org_id = public.auth_org_id()
                  and public.has_role('admin', 'senior_manager', 'manager'))
   with check (org_id = public.auth_org_id()
               and public.has_role('admin', 'senior_manager', 'manager'));
 
+
 -- Drivers have no business writing warehouse stock.
-drop policy inventory_write on public.inventory;
+drop policy inventory_write on public.inventory;drop policy if exists inventory_write on public.inventory;
 create policy inventory_write on public.inventory
   for all using (org_id = public.auth_org_id()
                  and public.has_role('admin', 'senior_manager', 'manager', 'warehouse'))
   with check (org_id = public.auth_org_id()
               and public.has_role('admin', 'senior_manager', 'manager', 'warehouse'));
 
-drop policy stock_movements_insert on public.stock_movements;
+
+drop policy stock_movements_insert on public.stock_movements;drop policy if exists stock_movements_insert on public.stock_movements;
 create policy stock_movements_insert on public.stock_movements
   for insert with check (
     org_id = public.auth_org_id()
     and public.has_role('admin', 'senior_manager', 'manager', 'warehouse')
   );
 
-drop policy profiles_admin_manage on public.profiles;
+
+drop policy profiles_admin_manage on public.profiles;drop policy if exists profiles_admin_manage on public.profiles;
 create policy profiles_admin_manage on public.profiles
   for all using (org_id = public.auth_org_id()
                  and public.has_role('admin', 'senior_manager'))
   with check (org_id = public.auth_org_id()
               and public.has_role('admin', 'senior_manager'));
+
 
 
 -- ====================================================================
@@ -3105,7 +3507,7 @@ create policy profiles_admin_manage on public.profiles
 -- =====================================================================
 
 -- Running customer statement from the credit ledger.
-create view public.customer_statement
+create or replace view public.customer_statement
 with (security_invoker = on) as
   select
     ct.org_id,
@@ -3128,8 +3530,9 @@ with (security_invoker = on) as
   from public.credit_transactions ct
   join public.customers c on c.id = ct.customer_id;
 
+
 -- Live credit position per customer, combining invoices and van credit.
-create view public.customer_credit_position
+create or replace view public.customer_credit_position
 with (security_invoker = on) as
   select
     c.org_id,
@@ -3155,8 +3558,9 @@ with (security_invoker = on) as
     group by customer_id
   ) ct on ct.customer_id = c.id;
 
+
 -- What each van is currently carrying, valued at cost.
-create view public.van_stock_summary
+create or replace view public.van_stock_summary
 with (security_invoker = on) as
   select
     vi.org_id,
@@ -3174,8 +3578,9 @@ with (security_invoker = on) as
   join public.products p on p.id = vi.product_id
   where vi.qty_on_hand <> 0;
 
+
 -- One row per trip: what went out, what sold, what came back.
-create view public.van_load_summary
+create or replace view public.van_load_summary
 with (security_invoker = on) as
   select
     l.org_id,
@@ -3211,8 +3616,9 @@ with (security_invoker = on) as
   ) s on s.load_id = l.id
   left join public.van_reconciliations r on r.load_id = l.id;
 
+
 -- Variances awaiting a manager decision.
-create view public.reconciliation_variances
+create or replace view public.reconciliation_variances
 with (security_invoker = on) as
   select
     r.org_id,
@@ -3236,6 +3642,7 @@ with (security_invoker = on) as
   join public.vans v on v.id = r.van_id
   join public.profiles p on p.id = r.driver_id
   where r.cash_variance <> 0 or r.stock_variance <> 0;
+
 
 
 -- ====================================================================
@@ -3785,9 +4192,10 @@ alter table public.profiles
 -- Phone numbers identify a person within an organization, so they must
 -- not repeat there. Stored as given; normalise to E.164 in the
 -- application before writing.
-create unique index profiles_org_phone_key
+create unique index if not exists profiles_org_phone_key
   on public.profiles (org_id, phone)
   where phone is not null;
+
 
 -- ------------------------------------------------------- signup guard
 create or replace function public.handle_new_user()
@@ -3859,11 +4267,11 @@ begin
   end if;
   return new;
 end;
-$$;
-
+$$;drop trigger if exists on_auth_user_identity_changed on auth.users;
 create trigger on_auth_user_identity_changed
   after update of email, phone on auth.users
   for each row execute function public.sync_identity_from_auth();
+
 
 
 -- ====================================================================
@@ -3911,9 +4319,10 @@ comment on column public.profiles.pin_hash is
 -- No two active people may share a PIN, or one PIN could not identify
 -- one person. Enforced here rather than in application code so a race
 -- between two administrators cannot slip a duplicate through.
-create unique index profiles_active_pin_key
+create unique index if not exists profiles_active_pin_key
   on public.profiles (pin_hash)
   where pin_hash is not null and is_active;
+
 
 -- A PIN is a credential, so only an administrator may set someone
 -- else's. Changing your own is handled by a function that requires the
@@ -3939,16 +4348,16 @@ begin
 
   return new;
 end;
-$$;
-
+$$;drop trigger if exists profiles_guard_pin_change on public.profiles;
 create trigger profiles_guard_pin_change
   before update on public.profiles
   for each row execute function public.guard_pin_change();
 
+
 -- ------------------------------------------------- brute force defence
 -- Four digits is ten thousand possibilities, so unlimited guessing would
 -- find someone's PIN quickly. Attempts are recorded and throttled.
-create table public.auth_pin_attempts (
+create table if not exists public.auth_pin_attempts (
   id           uuid primary key default gen_random_uuid(),
   request_ip   inet,
   user_agent   text,
@@ -3958,11 +4367,14 @@ create table public.auth_pin_attempts (
   attempted_at timestamptz not null default now()
 );
 
-create index auth_pin_attempts_by_ip
+
+create index if not exists auth_pin_attempts_by_ip
   on public.auth_pin_attempts (request_ip, attempted_at desc)
   where request_ip is not null;
-create index auth_pin_attempts_recent
+
+create index if not exists auth_pin_attempts_recent
   on public.auth_pin_attempts (attempted_at desc);
+
 
 comment on table public.auth_pin_attempts is
   'Sign-in attempt log, for rate limiting. Holds no PIN and no digest.';
@@ -4014,7 +4426,7 @@ grant execute on function public.purge_old_pin_attempts(interval) to service_rol
 -- PIN digest into the log by passing a whole row.
 -- =====================================================================
 
-create table public.audit_log (
+create table if not exists public.audit_log (
   id           uuid primary key default gen_random_uuid(),
   org_id       uuid not null references public.organizations (id) on delete restrict,
 
@@ -4038,10 +4450,15 @@ create table public.audit_log (
   occurred_at  timestamptz not null default now()
 );
 
-create index audit_log_org_time on public.audit_log (org_id, occurred_at desc);
-create index audit_log_actor on public.audit_log (actor_id, occurred_at desc);
-create index audit_log_target on public.audit_log (target_type, target_id, occurred_at desc);
-create index audit_log_action on public.audit_log (action, occurred_at desc);
+
+create index if not exists audit_log_org_time on public.audit_log (org_id, occurred_at desc);
+
+create index if not exists audit_log_actor on public.audit_log (actor_id, occurred_at desc);
+
+create index if not exists audit_log_target on public.audit_log (target_type, target_id, occurred_at desc);
+
+create index if not exists audit_log_action on public.audit_log (action, occurred_at desc);
+
 
 comment on table public.audit_log is
   'Append-only record of administrative actions. Never holds a PIN, a '
@@ -4056,11 +4473,11 @@ begin
   raise exception 'audit_log is append-only; history cannot be altered'
     using errcode = '42501';
 end;
-$$;
-
+$$;drop trigger if exists audit_log_no_update on public.audit_log;
 create trigger audit_log_no_update
   before update or delete on public.audit_log
   for each row execute function public.block_audit_mutation();
+
 
 -- ------------------------------------------------ secrets never enter
 create or replace function public.redact_audit_secrets()
@@ -4080,11 +4497,11 @@ begin
   end loop;
   return new;
 end;
-$$;
-
+$$;drop trigger if exists audit_log_redact on public.audit_log;
 create trigger audit_log_redact
   before insert on public.audit_log
   for each row execute function public.redact_audit_secrets();
+
 
 -- ------------------------------------------------------------ access
 alter table public.audit_log enable row level security;
@@ -4094,13 +4511,13 @@ alter table public.audit_log enable row level security;
 -- server actions running as the service role.
 revoke all on public.audit_log from anon, authenticated;
 grant select on public.audit_log to authenticated;
-grant all on public.audit_log to service_role;
-
+grant all on public.audit_log to service_role;drop policy if exists audit_log_read on public.audit_log;
 create policy audit_log_read on public.audit_log
   for select using (
     org_id = public.auth_org_id()
     and public.has_role('admin', 'senior_manager')
   );
+
 
 -- No insert, update or delete policy for authenticated. Even with a
 -- privilege granted by mistake, row level security would refuse.
@@ -4136,8 +4553,9 @@ comment on column public.categories.is_active is
 
 -- Category lists are almost always filtered by status within one
 -- organization.
-create index categories_org_active_idx
+create index if not exists categories_org_active_idx
   on public.categories (org_id, is_active);
+
 
 -- The reporting view gains the two columns the product screens filter
 -- on, so a product list does not have to join twice to show stock.
@@ -4243,51 +4661,65 @@ $$;
 comment on function public.block_audit_mutation is
   'Refuses every UPDATE, and every DELETE except from a trusted '
   'server-side role. Rewriting history is never allowed; removing a '
-  'tenant wholesale is.';
+  'tenant wholesale is.';do $enum$
+declare
+  found text[];
+  wanted text[] := array['applied', 'failed', 'conflict'];
+begin
+  if not exists (
+    select 1 from pg_type t
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'sync_status'
+  ) then
+    create type public.sync_status as enum ('applied', 'failed', 'conflict');
+  else
+    select array_agg(e.enumlabel order by e.enumsortorder) into found
+      from pg_enum e
+      join pg_type t on t.oid = e.enumtypid
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'sync_status';
+
+    -- Already correct: nothing to do, and the script carries on.
+    if found is distinct from wanted then
+      raise exception
+        'public.sync_status already exists with different values. Found %, expected %. '
+        'Reconcile it before running this script; this script will not alter an '
+        'enum other code may already depend on.',
+        found, wanted;
+    end if;
+  end if;
+end $enum$;
+do $enum$
+declare
+  found text[];
+  wanted text[] := array['van_sale', 'collection', 'van_return', 'reconciliation'];
+begin
+  if not exists (
+    select 1 from pg_type t
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'sync_operation'
+  ) then
+    create type public.sync_operation as enum ('van_sale', 'collection', 'van_return', 'reconciliation');
+  else
+    select array_agg(e.enumlabel order by e.enumsortorder) into found
+      from pg_enum e
+      join pg_type t on t.oid = e.enumtypid
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'sync_operation';
+
+    -- Already correct: nothing to do, and the script carries on.
+    if found is distinct from wanted then
+      raise exception
+        'public.sync_operation already exists with different values. Found %, expected %. '
+        'Reconcile it before running this script; this script will not alter an '
+        'enum other code may already depend on.',
+        found, wanted;
+    end if;
+  end if;
+end $enum$;
 
 
--- ====================================================================
--- 0022_offline_sync.sql
--- ====================================================================
--- ===================================================================
--- 0022  Offline operation and synchronisation
--- ===================================================================
---
--- A driver in a van loses signal. They must keep selling, collecting
--- and recording returns, and none of it may be lost or duplicated when
--- the phone reconnects.
---
--- The rule that makes this safe is that the *client* names the
--- operation. Every offline mutation carries a uuid generated on the
--- device before the work is queued. That uuid is the primary key here,
--- so a retry - a flaky upload, a killed browser, a user pressing
--- refresh - collides on insert and returns the original outcome rather
--- than performing the work twice. Idempotency is a database
--- constraint, not a convention the client is trusted to honour.
---
--- What the queue may never carry is a credential. It holds an
--- operation, a payload and a device id. Authorization is re-derived on
--- the server from the session presenting the row, never read from the
--- payload: a device that has been offline may be holding a role that
--- was revoked while it was away.
-
--- ------------------------------------------------------------------
--- The queue
--- ------------------------------------------------------------------
-create type public.sync_status as enum (
-  'applied',      -- done; the result is recorded
-  'failed',       -- rejected for good reason, and will not be retried
-  'conflict'      -- the world moved: stock gone, product retired
-);
-
-create type public.sync_operation as enum (
-  'van_sale',
-  'collection',
-  'van_return',
-  'reconciliation'
-);
-
-create table public.sync_operations (
+create table if not exists public.sync_operations (
   -- Generated on the device. This is what makes a retry safe.
   id            uuid primary key,
   org_id        uuid not null references public.organizations(id) on delete cascade,
@@ -4309,6 +4741,7 @@ create table public.sync_operations (
   constraint sync_operations_attempts_sane check (attempts between 1 and 1000)
 );
 
+
 comment on table public.sync_operations is
   'One row per offline mutation, keyed by a client-generated uuid so a '
   'retried upload cannot apply the same work twice. Never holds a '
@@ -4316,12 +4749,14 @@ comment on table public.sync_operations is
 comment on column public.sync_operations.id is
   'Idempotency key, generated on the device before queueing.';
 
-create index sync_operations_org_time on public.sync_operations (org_id, received_at desc);
-create index sync_operations_profile on public.sync_operations (profile_id, received_at desc);
-create index sync_operations_status on public.sync_operations (org_id, status, received_at desc);
+create index if not exists sync_operations_org_time on public.sync_operations (org_id, received_at desc);
 
-alter table public.sync_operations enable row level security;
+create index if not exists sync_operations_profile on public.sync_operations (profile_id, received_at desc);
 
+create index if not exists sync_operations_status on public.sync_operations (org_id, status, received_at desc);
+
+
+alter table public.sync_operations enable row level security;drop policy if exists sync_operations_select on public.sync_operations;
 -- A person sees their own sync history. A supervisor sees the
 -- organization's, because a failed sale that never arrived is an
 -- operational problem, not a private one.
@@ -4333,6 +4768,7 @@ create policy sync_operations_select on public.sync_operations
       or public.has_role('admin', 'senior_manager', 'manager', 'accountant')
     )
   );
+
 
 -- Nothing writes here through the Data API. Rows are written by
 -- sync_submit(), which is SECURITY DEFINER and re-checks authorization.
@@ -4353,11 +4789,11 @@ begin
   raise exception 'sync history cannot be altered'
     using errcode = '42501';
 end;
-$$;
-
+$$;drop trigger if exists sync_operations_no_edit on public.sync_operations;
 create trigger sync_operations_no_edit
   before update or delete on public.sync_operations
   for each row execute function public.block_sync_mutation();
+
 
 -- ------------------------------------------------------------------
 -- Applying a queued operation
@@ -4713,4 +5149,3 @@ comment on function public.sync_bootstrap is
 
 revoke all on function public.sync_bootstrap() from public, anon;
 grant execute on function public.sync_bootstrap() to authenticated, service_role;
-

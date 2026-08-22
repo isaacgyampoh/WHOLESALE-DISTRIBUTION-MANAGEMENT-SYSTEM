@@ -122,7 +122,11 @@ expected_enums (typname, members) as (
     ('van_load_status',       'draft,loaded,dispatched,returned,reconciled,cancelled'),
     ('van_return_status',     'draft,submitted,approved,rejected'),
     ('van_sale_status',       'draft,completed,void'),
-    ('van_sale_type',         'cash,credit')
+    ('van_sale_type',         'cash,credit'),
+    -- 0022. The duplicated label that broke an upgrade script was in
+    -- sync_status, so its members are pinned here by name and order.
+    ('sync_status',           'applied,failed,conflict'),
+    ('sync_operation',        'van_sale,collection,van_return,reconciliation')
 ),
 actual_enums as (
   select t.typname::text as typname,
@@ -155,7 +159,8 @@ missing_tables as (
     'stock_movements','stock_transfer_items','stock_transfers','suppliers',
     'van_assignments','van_inventory','van_load_items','van_loads',
     'van_reconciliations','van_return_items','van_returns','van_sale_items',
-    'van_sales','vans','warehouses','auth_pin_attempts','audit_log'
+    'van_sales','vans','warehouses','auth_pin_attempts','audit_log',
+    'sync_operations'
   ]) as t
   where not exists (
     select 1 from information_schema.tables
@@ -176,8 +181,8 @@ missing_views as (
 ),
 report as (
   select  1 as ord, 'Tables' as check_name,
-          '31'::text as expected, c.tables::text as actual,
-          case when c.tables = 31 then 'OK' else 'CHECK' end as status,
+          '32'::text as expected, c.tables::text as actual,
+          case when c.tables = 32 then 'OK' else 'CHECK' end as status,
           ''::text as detail
   from counts c
   union all select  2, 'Expected tables all present', 'none missing',
@@ -190,27 +195,27 @@ report as (
           case when v.names = '' then 'none missing' else 'MISSING' end,
           case when v.names = '' then 'OK' else 'FAIL' end, v.names
   from missing_views v
-  union all select  5, 'Enum types', '12', c.enums::text,
-          case when c.enums = 12 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  6, 'Enum members and order', '12 matching', e.n::text,
-          case when e.n = 12 then 'OK' else 'FAIL' end,
+  union all select  5, 'Enum types', '14', c.enums::text,
+          case when c.enums = 14 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  6, 'Enum members and order', '14 matching', e.n::text,
+          case when e.n = 14 then 'OK' else 'FAIL' end,
           (select names from enum_bad)
   from enum_match e
-  union all select  7, 'Functions', '38', c.functions::text,
-          case when c.functions = 38 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  8, 'Triggers', '68', c.triggers::text,
-          case when c.triggers = 68 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  9, 'RLS policies', '68', c.policies::text,
-          case when c.policies = 68 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  7, 'Functions', '41', c.functions::text,
+          case when c.functions = 41 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  8, 'Triggers', '69', c.triggers::text,
+          case when c.triggers = 69 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  9, 'RLS policies', '69', c.policies::text,
+          case when c.policies = 69 then 'OK' else 'CHECK' end, '' from counts c
   union all select 10, 'RLS enabled on every table',
           c.all_tables::text, c.rls_tables::text,
           case when c.rls_tables = c.all_tables then 'OK' else 'FAIL' end, '' from counts c
   union all select 11, 'Generated columns', '12', c.generated_cols::text,
           case when c.generated_cols = 12 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 12, 'Indexes', '122', c.indexes::text,
-          case when c.indexes = 122 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 13, 'Constraints', '207', c.constraints::text,
-          case when c.constraints = 207 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 12, 'Indexes', '126', c.indexes::text,
+          case when c.indexes = 126 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 13, 'Constraints', '212', c.constraints::text,
+          case when c.constraints = 212 then 'OK' else 'CHECK' end, '' from counts c
   union all select 14, 'Security functions present', '8', s.n::text,
           case when s.n = 8 then 'OK' else 'FAIL' end, '' from security_fns s
   union all select 15, 'Business functions present', '7', b.n::text,
@@ -321,6 +326,61 @@ report as (
   union all select 33, 'Application users (create in Authentication)', 'any',
           (select count(*)::text from public.profiles), 'INFO',
           'Create your first user, then set profiles.role to admin'
+
+  -- ---- offline sync (migration 0022) -------------------------------
+  -- The driver app does not work without these. Checked by name rather
+  -- than by count so a missing one says which.
+  union all select 34, 'Offline sync: sync_operations table', 'present',
+          case when to_regclass('public.sync_operations') is not null
+               then 'present' else 'MISSING' end,
+          case when to_regclass('public.sync_operations') is not null
+               then 'OK' else 'FAIL' end,
+          'Run database/UPGRADE_0022_OFFLINE_SYNC.sql if missing'
+  union all select 35, 'Offline sync: idempotency key is the primary key', 'yes',
+          case when exists (
+            select 1 from pg_index i
+              join pg_class t on t.oid = i.indrelid
+              join pg_attribute a on a.attrelid = t.oid and a.attnum = any(i.indkey)
+             where t.relname = 'sync_operations' and i.indisprimary and a.attname = 'id')
+               then 'yes' else 'no' end,
+          case when exists (
+            select 1 from pg_index i
+              join pg_class t on t.oid = i.indrelid
+              join pg_attribute a on a.attrelid = t.oid and a.attnum = any(i.indkey)
+             where t.relname = 'sync_operations' and i.indisprimary and a.attname = 'id')
+               then 'OK' else 'FAIL' end,
+          'This is what stops a retried upload applying a sale twice'
+  union all select 36, 'Offline sync: sync_submit and sync_bootstrap', 'both',
+          (select count(*)::text from pg_proc p
+             join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'public'
+              and p.proname in ('sync_submit', 'sync_bootstrap')),
+          case when (select count(*) from pg_proc p
+                       join pg_namespace n on n.oid = p.pronamespace
+                      where n.nspname = 'public'
+                        and p.proname in ('sync_submit', 'sync_bootstrap')) = 2
+               then 'OK' else 'FAIL' end, ''
+  union all select 37, 'Offline sync: history is append-only', 'trigger present',
+          case when exists (select 1 from pg_trigger
+                             where tgrelid = 'public.sync_operations'::regclass
+                               and tgname = 'sync_operations_no_edit')
+               then 'trigger present' else 'MISSING' end,
+          case when exists (select 1 from pg_trigger
+                             where tgrelid = 'public.sync_operations'::regclass
+                               and tgname = 'sync_operations_no_edit')
+               then 'OK' else 'FAIL' end, ''
+  union all select 38, 'Offline sync: authenticated cannot write it', 'SELECT only',
+          case when not exists (
+            select 1 from information_schema.role_table_grants
+             where table_name = 'sync_operations' and grantee = 'authenticated'
+               and privilege_type in ('INSERT','UPDATE','DELETE'))
+               then 'SELECT only' else 'TOO MUCH' end,
+          case when not exists (
+            select 1 from information_schema.role_table_grants
+             where table_name = 'sync_operations' and grantee = 'authenticated'
+               and privilege_type in ('INSERT','UPDATE','DELETE'))
+               then 'OK' else 'FAIL' end,
+          'Rows are written only by sync_submit()'
 )
 select ord as "#", check_name as "check", expected, actual, status, detail
 from report

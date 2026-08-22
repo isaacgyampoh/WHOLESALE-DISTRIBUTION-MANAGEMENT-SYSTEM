@@ -17,10 +17,83 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { idempotentSql, splitStatements } from "./sqlgen.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS = path.join(here, "..", "supabase", "migrations");
 const OUT = path.join(here, "WHOLESALE_DISTRIBUTION_DATABASE.sql");
+
+/**
+ * Upgrade scripts, for a database installed before a given migration.
+ *
+ * Generated from the migration rather than written alongside it. The
+ * first one of these was hand-patched and shipped with a duplicated enum
+ * label, so the rule now is that no upgrade file is authored directly:
+ * the migration is the source, and this turns it into something safe to
+ * run against a database that already has some of it.
+ */
+const UPGRADES = [
+  {
+    migration: "0022_offline_sync.sql",
+    out: "UPGRADE_0022_OFFLINE_SYNC.sql",
+    title: "UPGRADE 0022 - offline operation and synchronisation",
+    summary: `-- WHAT IT ADDS
+--
+--   sync_operations   one row per offline mutation, keyed by a uuid the
+--                     device generates before queueing. That key is the
+--                     primary key, so a retried upload cannot apply the
+--                     same sale twice.
+--   sync_submit()     the single entry point for a queued operation.
+--                     Re-derives authorization from the calling session
+--                     and never from the payload.
+--   sync_bootstrap()  the snapshot a phone caches so it can keep
+--                     selling with no signal.
+--
+-- The driver PWA does not work without this. Everything else in the
+-- application does.`,
+    verify: `select 'sync_operations table' as check,
+       case when to_regclass('public.sync_operations') is not null
+            then 'PASS' else 'FAIL' end as result
+union all
+select 'sync_status has exactly applied/failed/conflict',
+       case when (
+         select array_agg(e.enumlabel order by e.enumsortorder)
+           from pg_enum e join pg_type t on t.oid = e.enumtypid
+          where t.typname = 'sync_status'
+       ) = array['applied','failed','conflict']::name[]
+            then 'PASS' else 'FAIL' end
+union all
+select 'row level security on',
+       case when (select relrowsecurity from pg_class
+                   where oid = 'public.sync_operations'::regclass)
+            then 'PASS' else 'FAIL' end
+union all
+select 'sync_submit function',
+       case when exists (select 1 from pg_proc p
+                           join pg_namespace n on n.oid = p.pronamespace
+                          where n.nspname = 'public' and p.proname = 'sync_submit')
+            then 'PASS' else 'FAIL' end
+union all
+select 'sync_bootstrap function',
+       case when exists (select 1 from pg_proc p
+                           join pg_namespace n on n.oid = p.pronamespace
+                          where n.nspname = 'public' and p.proname = 'sync_bootstrap')
+            then 'PASS' else 'FAIL' end
+union all
+select 'history is append-only',
+       case when exists (select 1 from pg_trigger
+                          where tgrelid = 'public.sync_operations'::regclass
+                            and tgname = 'sync_operations_no_edit')
+            then 'PASS' else 'FAIL' end
+union all
+select 'authenticated cannot write it',
+       case when not exists (
+              select 1 from information_schema.role_table_grants
+               where table_name = 'sync_operations' and grantee = 'authenticated'
+                 and privilege_type in ('INSERT','UPDATE','DELETE'))
+            then 'PASS' else 'FAIL' end;`,
+  },
+];
 
 /** Final enum members, in the order `alter type ... add value` yields. */
 const ENUM_REWRITES = [
@@ -118,7 +191,55 @@ const header = `-- =============================================================
 -- =====================================================================
 `;
 
-fs.writeFileSync(OUT, header + parts.join("") + "\n");
+// The installer is for an empty project, but a CREATE TYPE that meets an
+// existing type aborts the whole transaction with nothing to say about
+// which one. Guarding them turns that into a message naming the type and
+// both label lists. It does not make the installer re-runnable - the
+// tables would still collide - it makes the failure legible.
+const installer = idempotentSql(header + parts.join("") + "\n");
+fs.writeFileSync(OUT, installer);
+
+// ---- upgrade scripts, from the same migrations -----------------------
+const upgradeSummaries = [];
+for (const upgrade of UPGRADES) {
+  const source = path.join(MIGRATIONS, upgrade.migration);
+  if (!fs.existsSync(source)) {
+    throw new Error(`Upgrade ${upgrade.out} names a migration that does not exist: ${upgrade.migration}`);
+  }
+
+  const body = idempotentSql(fs.readFileSync(source, "utf8"));
+  const bar = "-- " + "=".repeat(68);
+  const text = `${bar}
+-- ${upgrade.title}
+${bar}
+--
+-- For a database installed before migration ${upgrade.migration.slice(0, 4)}.
+-- Run it in the Supabase SQL editor.
+--
+-- GENERATED FILE - do not edit by hand.
+-- Source: supabase/migrations/${upgrade.migration}
+-- Regenerate: node database/build.mjs
+--
+-- Safe to run twice. Every object is created behind an existence check,
+-- so a second run reports success and changes nothing. An enum that
+-- already exists is compared against what this script expects and the
+-- script stops with both lists if they differ, rather than altering a
+-- type other code may already depend on.
+--
+${upgrade.summary}
+
+${body.trim()}
+
+${bar}
+-- Confirm it took. Every row should read PASS.
+${bar}
+${upgrade.verify}
+`;
+
+  const outPath = path.join(here, upgrade.out);
+  fs.writeFileSync(outPath, text);
+  upgradeSummaries.push(`  ${upgrade.out}  ${(text.length / 1024).toFixed(1)} KB`);
+}
 
 const text = fs.readFileSync(OUT, "utf8");
 const leftovers = text.match(/alter type[^;]*add value/gi) ?? [];
@@ -131,3 +252,18 @@ console.log(`  source migrations: ${files.length}`);
 console.log(`  enum rewrites applied: ${applied}`);
 console.log(`  size: ${(text.length / 1024).toFixed(1)} KB, ${text.split("\n").length} lines`);
 console.log(`  residual "alter type ... add value": ${leftovers.length}`);
+
+// A duplicated enum label is what broke the first upgrade script. It is
+// cheap to prove it cannot ship again.
+for (const statement of splitStatements(text)) {
+  const enumDecl = /create type public\.([a-z_]+) as enum \(([^)]*)\)/i.exec(statement);
+  if (!enumDecl) continue;
+  const labels = [...enumDecl[2].matchAll(/'([^']*)'/g)].map((m) => m[1]);
+  const dup = labels.find((l, i) => labels.indexOf(l) !== i);
+  if (dup) throw new Error(`Installer enum ${enumDecl[1]} repeats '${dup}'.`);
+}
+
+if (upgradeSummaries.length) {
+  console.log(`\nwrote ${upgradeSummaries.length} upgrade script(s):`);
+  for (const line of upgradeSummaries) console.log(line);
+}

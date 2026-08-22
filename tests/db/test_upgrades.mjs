@@ -1,0 +1,156 @@
+/**
+ * The upgrade path: a database at 0001-0021 meeting UPGRADE_0022.
+ *
+ * This is the case that broke in production. An upgrade script had been
+ * produced by patching substrings of the migration, and the patch landed
+ * inside an enum declaration:
+ *
+ *     create type public.sync_status as enum (
+ *       'applied', 'failed', 'applied', 'failed', 'conflict');
+ *
+ * PostgreSQL rejected it on the unique index over (enumtypid, enumlabel),
+ * and nothing caught it because no test ever ran an upgrade script.
+ *
+ * So this runs it - against a database at exactly the version the script
+ * is written for, then a second time. A duplicated enum label, policy,
+ * trigger or index shows up on one run or the other.
+ */
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
+const fs = require("fs");
+const path = require("path");
+const { Client, splitStatements } = require("./lib.js");
+
+const CONN = { host: "127.0.0.1", port: 55432, user: "postgres" };
+const DB = "gab_upgrade";
+const MIGRATIONS = path.join("..", "..", "supabase", "migrations");
+const UPGRADE = path.join("..", "..", "database", "UPGRADE_0022_OFFLINE_SYNC.sql");
+
+let pass = 0, fail = 0;
+const ok = (n, c, x = "") => { c ? (pass++, console.log(`  PASS  ${n} ${x}`)) : (fail++, console.log(`  FAIL  ${n} ${x}`)); };
+
+const admin = new Client({ ...CONN, database: "postgres" }); await admin.connect();
+await admin.query(`drop database if exists ${DB}`);
+await admin.query(`create database ${DB}`);
+await admin.end();
+
+const c = new Client({ ...CONN, database: DB }); await c.connect();
+
+const shim = fs.readFileSync("shim.sql", "utf8");
+for (const s of splitStatements(shim)) await c.query(s);
+
+// Everything up to but NOT including 0022.
+const files = fs.readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort()
+  .filter((f) => !f.startsWith("0022"));
+for (const f of files) {
+  const sql = fs.readFileSync(path.join(MIGRATIONS, f), "utf8");
+  for (const s of splitStatements(sql)) {
+    try { await c.query(s); }
+    catch (e) { console.log(`  FAILED applying ${f}: ${e.message}`); process.exit(1); }
+  }
+}
+console.log(`  migrations 0001-0021 applied (${files.length} files)`);
+
+const before = await c.query(
+  `select count(*)::int n from pg_type where typname = 'sync_status'`);
+ok("sync_status does not exist yet", before.rows[0].n === 0);
+
+const upgradeSql = fs.readFileSync(UPGRADE, "utf8");
+
+// Run 1 - as the SQL editor does, one implicit transaction.
+try {
+  await c.query(upgradeSql);
+  ok("UPGRADE_0022 runs on a 0021 database", true);
+} catch (e) {
+  ok("UPGRADE_0022 runs on a 0021 database", false, `-> ${e.message}`);
+}
+
+const labels = (await c.query(
+  `select array_agg(e.enumlabel order by e.enumsortorder)::text v
+     from pg_enum e join pg_type t on t.oid = e.enumtypid
+    where t.typname = 'sync_status'`)).rows[0]?.v;
+ok("sync_status is exactly applied, failed, conflict",
+   labels === "{applied,failed,conflict}", labels);
+
+for (const [what, sql] of [
+  ["sync_operations exists", `select to_regclass('public.sync_operations') is not null v`],
+  ["idempotency key is the primary key", `select exists (
+      select 1 from pg_index i join pg_class t on t.oid = i.indrelid
+        join pg_attribute a on a.attrelid = t.oid and a.attnum = any(i.indkey)
+       where t.relname = 'sync_operations' and i.indisprimary and a.attname = 'id') v`],
+  ["row level security is on", `select relrowsecurity v from pg_class where relname = 'sync_operations'`],
+  ["the select policy exists", `select exists (select 1 from pg_policies
+       where tablename = 'sync_operations' and policyname = 'sync_operations_select') v`],
+  ["the append-only trigger exists", `select exists (select 1 from pg_trigger
+       where tgrelid = 'public.sync_operations'::regclass and tgname = 'sync_operations_no_edit') v`],
+  ["sync_submit exists", `select exists (select 1 from pg_proc p join pg_namespace n
+       on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'sync_submit') v`],
+  ["sync_bootstrap exists", `select exists (select 1 from pg_proc p join pg_namespace n
+       on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'sync_bootstrap') v`],
+  // Three declared indexes plus the primary key's own.
+  ["the three declared indexes exist", `select count(*)::int = 3 v from pg_indexes
+       where tablename = 'sync_operations'
+         and indexname in ('sync_operations_org_time','sync_operations_profile','sync_operations_status')`],
+  ["authenticated has SELECT only", `select not exists (
+      select 1 from information_schema.role_table_grants
+       where table_name = 'sync_operations' and grantee = 'authenticated'
+         and privilege_type in ('INSERT','UPDATE','DELETE')) v`],
+]) {
+  const r = await c.query(sql);
+  ok(what, r.rows[0].v === true);
+}
+
+// Run 2 - the whole point.
+console.log("\n=== running it a second time ===");
+try {
+  await c.query(upgradeSql);
+  ok("UPGRADE_0022 runs again with no duplicate errors", true);
+} catch (e) {
+  ok("UPGRADE_0022 runs again with no duplicate errors", false, `-> ${e.message}`);
+}
+
+const after = (await c.query(
+  `select array_agg(e.enumlabel order by e.enumsortorder)::text v
+     from pg_enum e join pg_type t on t.oid = e.enumtypid
+    where t.typname = 'sync_status'`)).rows[0]?.v;
+ok("the enum is unchanged after a second run", after === "{applied,failed,conflict}", after);
+ok("there is still exactly one sync_operations table",
+   (await c.query(`select count(*)::int n from pg_class where relname='sync_operations' and relkind='r'`))
+     .rows[0].n === 1);
+ok("there is still exactly one select policy",
+   (await c.query(`select count(*)::int n from pg_policies where tablename='sync_operations'`))
+     .rows[0].n === 1);
+
+// An incompatible enum must stop the script rather than be ignored.
+console.log("\n=== an incompatible existing enum is refused ===");
+await c.query(`create type public.sync_status_probe as enum ('applied','failed')`);
+const probe = fs.readFileSync(UPGRADE, "utf8")
+  .replace(/sync_status/g, "sync_status_probe");
+try {
+  await c.query(probe.slice(0, probe.indexOf("end $enum$;") + 11));
+  ok("a mismatched enum stops the script", false, "it was accepted");
+} catch (e) {
+  ok("a mismatched enum stops the script", /already exists with different values/.test(e.message),
+     e.message.split("\n")[0].slice(0, 70));
+}
+
+// Leave the database as the upgrade found it, so VERIFY_DATABASE.sql can
+// be run against it afterwards and see a real schema rather than this
+// suite's scaffolding.
+await c.query(`drop type if exists public.sync_status_probe`);
+ok("the probe type is cleaned up",
+   (await c.query(`select count(*)::int n from pg_type where typname like 'sync_%_probe'`))
+     .rows[0].n === 0);
+
+// The schema this suite leaves behind must satisfy the shipped
+// verification script, which is what the owner runs after upgrading.
+const verify = fs.readFileSync(path.join("..", "..", "database", "VERIFY_DATABASE.sql"), "utf8");
+const report = await c.query(verify);
+const notOk = (report.rows ?? []).filter((r) => r.status === "FAIL" || r.status === "CHECK");
+ok("VERIFY_DATABASE.sql reports no FAIL or CHECK after the upgrade",
+   notOk.length === 0,
+   notOk.map((r) => `${r.check}: ${r.actual}`).join("; "));
+
+console.log(`\n  ${pass} passed, ${fail} failed`);
+await c.end();
+process.exit(fail ? 1 : 0);
