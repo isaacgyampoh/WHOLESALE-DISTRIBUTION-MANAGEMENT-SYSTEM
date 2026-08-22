@@ -61,7 +61,16 @@ export default async function WaybillPage({
             {WAYBILL_STATUS_LABELS[waybill.status] ?? waybill.status}
           </Badge>
           {waybill.status === "issued" && can(user.role, "documents.issue") && (
-            <MarkDeliveredButton waybillId={waybill.id} waybillNumber={waybill.waybillNumber} />
+            <MarkDeliveredButton
+              waybillId={waybill.id}
+              waybillNumber={waybill.waybillNumber}
+              lines={waybill.lines.map((l) => ({
+                id: l.id,
+                productName: l.productName,
+                unit: l.unit,
+                quantity: l.quantity,
+              }))}
+            />
           )}
         </>
       }
@@ -88,6 +97,27 @@ export default async function WaybillPage({
         </p>
       }
     >
+      {waybill.status === "delivered"
+        && waybill.lines.some((l) => l.qtyDamaged + l.qtyShort > 0) && (
+        <div className="print-keep mt-6 rounded-lg border border-critical/30 bg-critical-soft px-5 py-4 dark:bg-critical/10">
+          <p className="text-xs font-medium uppercase tracking-wider text-critical">
+            Not all of it arrived
+          </p>
+          <ul className="mt-1.5 space-y-0.5">
+            {waybill.lines
+              .filter((l) => l.qtyDamaged + l.qtyShort > 0)
+              .map((l, i) => (
+                <li key={i} className="text-sm text-[var(--text-primary)]">
+                  {l.productName}:{" "}
+                  {l.qtyDamaged > 0 && `${formatQuantity(l.qtyDamaged)} damaged`}
+                  {l.qtyDamaged > 0 && l.qtyShort > 0 && ", "}
+                  {l.qtyShort > 0 && `${formatQuantity(l.qtyShort)} missing`}
+                </li>
+              ))}
+          </ul>
+        </div>
+      )}
+
       {waybill.lines.length === 0 ? (
         <p className="mt-6 text-sm text-[var(--text-muted)]">This waybill has no lines.</p>
       ) : (
@@ -99,9 +129,23 @@ export default async function WaybillPage({
               <th className="py-2 px-3 text-right font-medium text-[var(--text-secondary)]">
                 Quantity
               </th>
-              <th className="py-2 pl-3 font-medium text-[var(--text-secondary)]">
-                Checked on receipt
-              </th>
+              {/* Before it is signed for this is a blank to fill in
+                  with a pen, which is what a waybill is for. After, it
+                  is the record of what actually arrived. */}
+              {waybill.status === "delivered" ? (
+                <>
+                  <th className="py-2 px-3 text-right font-medium text-[var(--text-secondary)]">
+                    Received
+                  </th>
+                  <th className="py-2 pl-3 text-right font-medium text-[var(--text-secondary)]">
+                    Damaged / missing
+                  </th>
+                </>
+              ) : (
+                <th className="py-2 pl-3 font-medium text-[var(--text-secondary)]">
+                  Checked on receipt
+                </th>
+              )}
             </>
           }
         >
@@ -117,11 +161,26 @@ export default async function WaybillPage({
               <td className="numeric py-2.5 px-3 text-right font-medium">
                 {formatQuantity(line.quantity)}
               </td>
-              {/* Filled in with a pen at the far end, which is the whole
-                  point of the document. */}
-              <td className="py-2.5 pl-3">
-                <span className="block h-5 w-24 border-b border-dotted border-[var(--border-strong)]" />
-              </td>
+              {waybill.status === "delivered" ? (
+                <>
+                  <td className="numeric py-2.5 px-3 text-right">
+                    {formatQuantity(line.qtyReceived ?? line.quantity)}
+                  </td>
+                  <td className="numeric py-2.5 pl-3 text-right">
+                    {line.qtyDamaged + line.qtyShort > 0 ? (
+                      <span className="text-critical">
+                        {formatQuantity(line.qtyDamaged + line.qtyShort)}
+                      </span>
+                    ) : (
+                      <span className="text-[var(--text-muted)]">—</span>
+                    )}
+                  </td>
+                </>
+              ) : (
+                <td className="py-2.5 pl-3">
+                  <span className="block h-5 w-24 border-b border-dotted border-[var(--border-strong)]" />
+                </td>
+              )}
             </tr>
           ))}
         </DocumentTable>

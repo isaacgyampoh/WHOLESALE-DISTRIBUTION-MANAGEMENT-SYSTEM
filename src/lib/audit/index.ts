@@ -39,6 +39,7 @@ export type AuditAction =
   | "load.cancelled"
   | "return.submitted"
   | "return.approved"
+  | "return.recorded"
   | "reconciliation.submitted"
   | "reconciliation.approved"
   | "reconciliation.rejected"

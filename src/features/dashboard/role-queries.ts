@@ -215,6 +215,17 @@ export async function getWarehouseView(): Promise<WarehouseView> {
 // ===================================================================
 
 export interface AdminView {
+  /** Revenue less what the goods cost us, over the period. */
+  grossMargin: number;
+  revenue: number;
+  marginPercent: number;
+  /** Everything sitting on somebody's desk rather than moving. */
+  pendingApprovals: {
+    reconciliations: number;
+    returns: number;
+    transfers: number;
+    supplierInvoices: number;
+  };
   activeUsers: number;
   inactiveUsers: number;
   /** Active staff who have no PIN yet, so cannot actually sign in. */
@@ -235,12 +246,14 @@ const UPGRADE_NAMES: Record<string, string> = {
   notifications: "0028 notifications",
 };
 
-export async function getAdminView(): Promise<AdminView> {
+export async function getAdminView(periodDays = 30): Promise<AdminView> {
   const supabase = await createSupabaseServerClient();
   const capabilities = await getCapabilities();
   const since = startOfToday().toISOString();
+  const marginSince = daysAgo(periodDays);
 
-  const [active, inactive, pending, audit, failures] = await Promise.all([
+  const [active, inactive, pending, audit, failures,
+         soldLines, recons, returns, transfers, supplierInvoices] = await Promise.all([
     supabase.from("profiles").select("id", { count: "exact", head: true }).eq("is_active", true),
     supabase.from("profiles").select("id", { count: "exact", head: true }).eq("is_active", false),
     // Not "pending": every profile has a role. Somebody who has been
@@ -252,9 +265,56 @@ export async function getAdminView(): Promise<AdminView> {
       .gte("created_at", since),
     supabase.from("auth_pin_attempts").select("id", { count: "exact", head: true })
       .eq("succeeded", false).gte("attempted_at", since),
+
+    // Margin is revenue less cost, and cost is only reachable through
+    // the masked view - so this figure exists for exactly the roles that
+    // are allowed to see cost, and is zero for anybody else. That is the
+    // right way round: a number nobody may see should not be computed
+    // into a page they can read.
+    capabilities.maskedProductPricing
+      ? supabase
+          .from("van_sale_items")
+          .select("quantity, line_total, products_priced(cost_price), van_sales!inner(sold_at, status)")
+          .gte("van_sales.sold_at", marginSince)
+          .neq("van_sales.status", "void")
+      : Promise.resolve({ data: [], error: null }),
+
+    supabase.from("van_reconciliations").select("id", { count: "exact", head: true })
+      .eq("status", "submitted"),
+    supabase.from("van_returns").select("id", { count: "exact", head: true })
+      .eq("status", "submitted"),
+    capabilities.warehouseTransfers
+      ? supabase.from("stock_transfers").select("id", { count: "exact", head: true })
+          .eq("status", "draft")
+      : Promise.resolve({ count: 0, error: null }),
+    capabilities.supplierSubmissions
+      ? supabase.from("supplier_documents").select("id", { count: "exact", head: true })
+          .in("status", ["received", "reviewing"])
+      : Promise.resolve({ count: 0, error: null }),
   ]);
 
+  let revenue = 0;
+  let cost = 0;
+  for (const line of ((soldLines.data ?? []) as unknown as Record<string, unknown>[])) {
+    const priced = line.products_priced as { cost_price?: string | null } | null;
+    revenue += parseAmount(line.line_total as string);
+    // A null cost means this caller may not see it. Counting it as zero
+    // would report the whole sale as margin, which is worse than
+    // reporting none.
+    cost += parseAmount(priced?.cost_price ?? 0) * Number(line.quantity ?? 0);
+  }
+  const grossMargin = revenue - cost;
+
   return {
+    revenue,
+    grossMargin,
+    marginPercent: revenue > 0 ? (grossMargin / revenue) * 100 : 0,
+    pendingApprovals: {
+      reconciliations: recons.count ?? 0,
+      returns: returns.count ?? 0,
+      transfers: transfers.count ?? 0,
+      supplierInvoices: supplierInvoices.count ?? 0,
+    },
     activeUsers: active.count ?? 0,
     inactiveUsers: inactive.count ?? 0,
     cannotSignIn: pending.count ?? 0,

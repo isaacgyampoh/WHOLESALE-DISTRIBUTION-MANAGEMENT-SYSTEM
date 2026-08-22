@@ -17,3 +17,23 @@ export interface DistributionState {
 }
 
 export const INITIAL_DISTRIBUTION_STATE: DistributionState = { status: "idle" };
+
+
+/**
+ * Why goods came back.
+ *
+ * Here rather than in queries.ts because the form that offers these is a
+ * client component, and queries.ts is server-only - importing it from
+ * the browser drags the Supabase server client into the bundle.
+ */
+export const RETURN_REASONS = [
+  { value: "damaged", label: "Damaged" },
+  { value: "expired", label: "Expired" },
+  { value: "wrong_item", label: "Wrong item" },
+  { value: "customer_return", label: "Customer changed their mind" },
+  { value: "unsold", label: "Unsold stock" },
+  { value: "other", label: "Other" },
+] as const;
+
+export const REASON_LABELS: Record<string, string> =
+  Object.fromEntries(RETURN_REASONS.map((r) => [r.value, r.label]));

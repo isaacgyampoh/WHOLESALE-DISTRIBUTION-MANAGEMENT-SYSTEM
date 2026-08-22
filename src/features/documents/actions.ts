@@ -100,42 +100,69 @@ export async function markWaybillDeliveredAction(
     };
   }
 
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("waybills")
-    .update({
-      status: "delivered",
-      delivered_at: new Date().toISOString(),
-      received_by: receivedBy,
-    })
-    .eq("id", id)
-    // Only a waybill that is out can be delivered. Re-signing one that
-    // already came back would overwrite who actually took the goods.
-    .eq("status", "issued")
-    .select("id, waybill_number")
-    .maybeSingle();
+  // What was damaged and what never turned up, line by line. A waybill
+  // signed without these says the delivery was perfect, which is a claim
+  // rather than a record.
+  const itemIds = formData.getAll("itemId").map(String);
+  const damagedRaw = formData.getAll("damaged").map(String);
+  const shortRaw = formData.getAll("short").map(String);
 
-  if (error) {
-    console.error("[documents] waybill could not be completed", error);
-    return { status: "error", message: "The waybill could not be updated. Please try again." };
-  }
-  if (!data) {
+  const lines = itemIds.map((itemId, i) => ({
+    item_id: itemId,
+    damaged: Number((damagedRaw[i] ?? "").trim() || 0),
+    short: Number((shortRaw[i] ?? "").trim() || 0),
+  }));
+
+  if (lines.some((l) => !Number.isInteger(l.damaged) || l.damaged < 0
+                     || !Number.isInteger(l.short) || l.short < 0)) {
     return {
       status: "error",
-      message: "That waybill is not out for delivery, so it cannot be signed for.",
+      message: "Damaged and missing have to be whole numbers, or left blank.",
     };
   }
+
+  const admin = createSupabaseAdminClient();
+  const { data: waybill } = await admin
+    .from("waybills")
+    .select("id, waybill_number, org_id")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (!waybill || waybill.org_id !== actor.organizationId) {
+    return { status: "error", message: "That waybill could not be found." };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase.rpc("receive_waybill", {
+    p_waybill_id: id,
+    p_received_by: receivedBy,
+    p_lines: lines,
+  });
+
+  if (error) {
+    console.error("[documents] waybill could not be signed for", error);
+    // These messages name a quantity that does not add up, which is
+    // something the person signing can act on.
+    return { status: "error", message: error.message };
+  }
+
+  const shortfall = lines.reduce((sum, l) => sum + l.damaged + l.short, 0);
 
   await recordAudit(actor, {
     action: "waybill.delivered",
     targetType: "waybill",
-    targetId: data.id,
-    targetLabel: data.waybill_number,
-    after: { received_by: receivedBy },
+    targetId: waybill.id,
+    targetLabel: waybill.waybill_number,
+    after: { received_by: receivedBy, damaged_or_short: shortfall },
   });
 
   revalidatePath("/waybills");
   revalidatePath(`/waybills/${id}`);
 
-  return { status: "done", message: `${data.waybill_number} signed for by ${receivedBy}.` };
+  return {
+    status: "done",
+    message: shortfall > 0
+      ? `${waybill.waybill_number} signed for by ${receivedBy}, with ${shortfall} unit${shortfall === 1 ? "" : "s"} damaged or missing.`
+      : `${waybill.waybill_number} signed for by ${receivedBy}.`,
+  };
 }

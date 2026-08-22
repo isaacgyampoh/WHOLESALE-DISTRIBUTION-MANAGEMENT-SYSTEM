@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient, createSupabaseAdminClient } from "@/lib/supabase/server";
 import { requirePermission } from "@/lib/auth/session";
 import { recordAudit } from "@/lib/audit";
+import { getCapabilities } from "@/lib/db/capabilities";
 import type { AuthenticatedUser } from "@/types/domain";
 import type { DistributionState } from "./state";
 
@@ -795,4 +796,111 @@ export async function assignDriverAction(
 
   revalidatePath("/vans");
   return { status: "done", message: `${driver.full_name} is now driving ${van.code}.` };
+}
+
+/**
+ * A customer bringing goods back, or goods going back to a supplier.
+ *
+ * Both go through record_stock_return(), which moves the stock through
+ * the ledger as a customer_return or a supplier_return rather than as an
+ * adjustment. That distinction is the whole point: an adjustment says
+ * the count was wrong, and these say goods physically moved.
+ */
+export async function recordStockReturnAction(
+  _prev: DistributionState,
+  formData: FormData,
+): Promise<DistributionState> {
+  const actor = await requirePermission("inventory.adjust");
+
+  if (!(await getCapabilities()).supplierSubmissions) {
+    return {
+      status: "error",
+      message:
+        "Customer and supplier returns need database upgrade 0031. " +
+        "Run database/UPGRADE_0031_SUPPLIER_SUBMISSIONS.sql, then reload.",
+    };
+  }
+
+  const direction = String(formData.get("direction") ?? "customer");
+  const warehouseId = String(formData.get("warehouseId") ?? "");
+  const partyId = String(formData.get("partyId") ?? "");
+  const reason = String(formData.get("reason") ?? "");
+  const notes = String(formData.get("notes") ?? "").trim();
+
+  const values = { direction, warehouseId, partyId, reason, notes };
+  const errors: Record<string, string> = {};
+
+  if (!warehouseId) errors.warehouseId = "Choose which warehouse.";
+  if (!partyId) {
+    errors.partyId = direction === "customer"
+      ? "Choose which customer is returning them."
+      : "Choose which supplier they are going back to.";
+  }
+  if (!["damaged", "expired", "wrong_item", "customer_return", "unsold", "other"]
+        .includes(reason)) {
+    errors.reason = "Choose why.";
+  }
+
+  const productIds = formData.getAll("productId").map(String);
+  const quantities = formData.getAll("quantity").map(String);
+
+  const lines = productIds
+    .map((productId, i) => ({ product_id: productId, quantity: Number(quantities[i] ?? 0) }))
+    .filter((l) => l.product_id || l.quantity > 0);
+
+  if (lines.length === 0) errors.lines = "Add at least one product.";
+  if (lines.some((l) => !l.product_id)) errors.lines = "Every line needs a product.";
+  if (lines.some((l) => !Number.isInteger(l.quantity) || l.quantity <= 0)) {
+    errors.lines = "Every line needs a whole quantity above zero.";
+  }
+  if (new Set(lines.map((l) => l.product_id)).size !== lines.length) {
+    errors.lines = "The same product is on more than one line. Combine them.";
+  }
+
+  if (Object.keys(errors).length) {
+    return { status: "error", message: "Check the fields below.", values, fieldErrors: errors };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.rpc("record_stock_return", {
+    p_warehouse_id: warehouseId,
+    p_reason: reason,
+    p_lines: lines,
+    p_customer_id: direction === "customer" ? partyId : null,
+    p_supplier_id: direction === "supplier" ? partyId : null,
+    p_notes: notes || null,
+  });
+
+  if (error) {
+    console.error("[returns] could not be recorded", error);
+    // "Only 4 on hand" is something the person can act on, so it is
+    // shown rather than replaced with something vaguer.
+    return { status: "error", message: error.message, values };
+  }
+
+  const entry = (Array.isArray(data) ? data[0] : data) as
+    { id: string; return_number: string } | null;
+
+  await recordAudit(actor, {
+    action: "return.recorded",
+    targetType: "van_return",
+    targetId: entry?.id,
+    targetLabel: entry?.return_number ?? "Return",
+    after: {
+      direction,
+      reason,
+      lines: lines.length,
+      units: lines.reduce((s, l) => s + l.quantity, 0),
+    },
+  });
+
+  revalidatePath("/returns");
+  revalidatePath("/inventory");
+
+  return {
+    status: "done",
+    message: direction === "customer"
+      ? `${entry?.return_number ?? "The return"} recorded. The stock is back on the warehouse.`
+      : `${entry?.return_number ?? "The return"} recorded. The stock has left for the supplier.`,
+  };
 }

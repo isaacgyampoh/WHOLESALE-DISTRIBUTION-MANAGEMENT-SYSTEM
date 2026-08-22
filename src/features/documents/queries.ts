@@ -372,10 +372,15 @@ export async function listWaybills(
 }
 
 export interface WaybillLine {
+  /** Needed to sign the line in: the shortage is recorded against it. */
+  id: string;
   productName: string;
   sku: string;
   unit: string;
   quantity: number;
+  qtyReceived: number | null;
+  qtyDamaged: number;
+  qtyShort: number;
   notes: string | null;
 }
 
@@ -402,7 +407,8 @@ export async function getWaybill(id: string): Promise<Result<WaybillDocument | n
       "delivered_at, received_by, notes, " +
       "vans(code, registration_no), customers(name), warehouses(name), " +
       "profiles!waybills_driver_id_fkey(full_name), " +
-      "waybill_items(quantity, notes, products(name, sku, unit_of_measure))",
+      "waybill_items(id, quantity, qty_received, qty_damaged, qty_short, notes, " +
+      "products(name, sku, unit_of_measure))",
     )
     .eq("id", id)
     .maybeSingle();
@@ -440,10 +446,18 @@ export async function getWaybill(id: string): Promise<Result<WaybillDocument | n
         const product = i.products as
           { name?: string; sku?: string; unit_of_measure?: string } | null;
         return {
+          id: i.id as string,
           productName: product?.name ?? "Item",
           sku: product?.sku ?? "",
           unit: product?.unit_of_measure ?? "unit",
           quantity: Number(i.quantity ?? 0),
+          // Null until the waybill is signed in; zero once it is and
+          // nothing was wrong.
+          qtyReceived: i.qty_received === null || i.qty_received === undefined
+            ? null
+            : Number(i.qty_received),
+          qtyDamaged: Number(i.qty_damaged ?? 0),
+          qtyShort: Number(i.qty_short ?? 0),
           notes: (i.notes as string) ?? null,
         };
       }),

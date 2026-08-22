@@ -3,7 +3,7 @@ import type { AdminView } from "./role-queries";
 import { Card, CardHeader } from "@/components/ui/card";
 import { StatTile, StatGrid } from "@/components/ui/stat-tile";
 import { Alert } from "@/components/ui/states";
-import { formatQuantity } from "@/lib/utils/format";
+import { formatMoney, formatQuantity } from "@/lib/utils/format";
 
 /**
  * Whether the system itself is healthy.
@@ -16,8 +16,68 @@ import { formatQuantity } from "@/lib/utils/format";
  * nobody reports.
  */
 export function AdminPanel({ view }: { view: AdminView }) {
+  const waiting =
+    view.pendingApprovals.reconciliations + view.pendingApprovals.returns
+    + view.pendingApprovals.transfers + view.pendingApprovals.supplierInvoices;
+
   return (
     <>
+      {/* Margin first: it is the one figure on this page that says
+          whether the trading is worth doing, and it is only computable
+          for the roles allowed to see cost. */}
+      <div className="mb-5">
+        <StatGrid>
+          <StatTile label="Revenue" value={formatMoney(view.revenue)}
+                    sub="Last 30 days, excluding voided sales" />
+          <StatTile label="Gross margin" value={formatMoney(view.grossMargin)}
+                    sub={`${view.marginPercent.toFixed(1)}% of revenue`}
+                    tone={view.grossMargin > 0 ? "positive" : "critical"} />
+          <StatTile label="Waiting on somebody" value={formatQuantity(waiting)}
+                    sub="Approvals across the whole system"
+                    tone={waiting > 0 ? "caution" : "positive"} />
+          <StatTile label="Supplier invoices to check"
+                    value={formatQuantity(view.pendingApprovals.supplierInvoices)}
+                    sub="Sent in and not yet reviewed"
+                    tone={view.pendingApprovals.supplierInvoices > 0 ? "caution" : "positive"}
+                    href="/suppliers/review" />
+        </StatGrid>
+      </div>
+
+      {waiting > 0 && (
+        <div className="mb-5">
+          <Card>
+            <CardHeader
+              title="Waiting on a decision"
+              description="Nothing here moves until somebody with the authority looks at it."
+            />
+            <div className="p-5">
+              <StatGrid>
+                <StatTile label="End of day"
+                          value={formatQuantity(view.pendingApprovals.reconciliations)}
+                          sub="A driver cannot clear their own variance"
+                          tone={view.pendingApprovals.reconciliations > 0 ? "caution" : "neutral"}
+                          href="/reconciliation" />
+                <StatTile label="Returns"
+                          value={formatQuantity(view.pendingApprovals.returns)}
+                          sub="Stock does not come back until approved"
+                          tone={view.pendingApprovals.returns > 0 ? "caution" : "neutral"}
+                          href="/returns" />
+                <StatTile label="Transfers"
+                          value={formatQuantity(view.pendingApprovals.transfers)}
+                          sub="A depot cannot approve its own"
+                          tone={view.pendingApprovals.transfers > 0 ? "caution" : "neutral"}
+                          href="/transfers?status=draft" />
+                <StatTile label="Supplier invoices"
+                          value={formatQuantity(view.pendingApprovals.supplierInvoices)}
+                          sub="Approving one is agreeing to pay it"
+                          tone={view.pendingApprovals.supplierInvoices > 0 ? "caution" : "neutral"}
+                          href="/suppliers/review" />
+              </StatGrid>
+            </div>
+          </Card>
+        </div>
+      )}
+
       {view.pendingUpgrades.length > 0 && (
         <div className="mb-5">
           <Alert tone="warning" title="The database is behind this build">

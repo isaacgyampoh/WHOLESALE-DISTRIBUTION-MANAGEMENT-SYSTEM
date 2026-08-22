@@ -2,6 +2,10 @@ import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { parseAmount } from "@/lib/utils/format";
 import { type Result, failed } from "@/lib/query/result";
+import { getCapabilities } from "@/lib/db/capabilities";
+import { RETURN_REASONS, REASON_LABELS } from "./state";
+
+export { RETURN_REASONS, REASON_LABELS };
 
 /**
  * Vans, loads, returns and reconciliation.
@@ -360,5 +364,126 @@ export async function listAssignableDrivers(): Promise<Result<DriverOption[]>> {
       fullName: (p.full_name as string) ?? "Unnamed",
       role: p.role as string,
     })),
+  };
+}
+
+// ===================================================================
+// Returns that are not a van coming back
+// ===================================================================
+
+export interface StockReturnRow {
+  id: string;
+  returnNumber: string;
+  direction: "customer" | "supplier";
+  partyName: string;
+  partyCode: string;
+  warehouseName: string;
+  reason: string;
+  notes: string | null;
+  recordedBy: string | null;
+  createdAt: string;
+  lineCount: number;
+  totalQuantity: number;
+}
+
+
+
+/**
+ * A customer bringing goods back, or goods going back to a supplier.
+ *
+ * Separate from van returns, which are a round coming in at the end of
+ * the day. These two move stock in opposite directions and are recorded
+ * against a party rather than a load.
+ */
+export async function listStockReturns(
+  filters: { direction?: string; page?: number } = {},
+): Promise<Result<{ returns: StockReturnRow[]; total: number; page: number }>> {
+  const { supplierSubmissions } = await getCapabilities();
+  if (!supplierSubmissions) {
+    return {
+      ok: false,
+      message:
+        "Customer and supplier returns need database upgrade 0031. " +
+        "Run database/UPGRADE_0031_SUPPLIER_SUBMISSIONS.sql, then reload.",
+    };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const page = Math.max(1, Number(filters.page ?? 1));
+
+  let query = supabase
+    .from("stock_return_summary")
+    .select("*", { count: "exact" })
+    .order("created_at", { ascending: false })
+    .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
+
+  if (filters.direction === "customer" || filters.direction === "supplier") {
+    query = query.eq("direction", filters.direction);
+  }
+
+  const { data, error, count } = await query;
+  if (error) return failed("returns", error, "Returns could not be loaded.");
+
+  const returns = ((data ?? []) as unknown as Record<string, unknown>[]).map((r) => ({
+    id: r.id as string,
+    returnNumber: r.return_number as string,
+    direction: (r.direction as "customer" | "supplier") ?? "customer",
+    partyName: (r.party_name as string) ?? "Unknown",
+    partyCode: (r.party_code as string) ?? "",
+    warehouseName: (r.warehouse_name as string) ?? "",
+    reason: (r.reason as string) ?? "other",
+    notes: (r.notes as string) ?? null,
+    recordedBy: (r.recorded_by as string) ?? null,
+    createdAt: r.created_at as string,
+    lineCount: Number(r.line_count ?? 0),
+    totalQuantity: Number(r.total_quantity ?? 0),
+  }));
+
+  return { ok: true, data: { returns, total: count ?? returns.length, page } };
+}
+
+/** Warehouses, customers, suppliers and products, for recording one. */
+export async function getStockReturnOptions(): Promise<Result<{
+  warehouses: { id: string; label: string }[];
+  customers: { id: string; label: string }[];
+  suppliers: { id: string; label: string }[];
+  products: { id: string; label: string }[];
+}>> {
+  const supabase = await createSupabaseServerClient();
+
+  const [warehouses, customers, suppliers, products] = await Promise.all([
+    supabase.from("warehouses").select("id, code, name").eq("is_active", true).order("name"),
+    supabase.from("customers").select("id, code, name").eq("is_active", true).order("name"),
+    supabase.from("suppliers").select("id, code, name").eq("is_active", true).order("name"),
+    supabase.from("products").select("id, sku, name").eq("is_active", true).order("name"),
+  ]);
+
+  if (warehouses.error) {
+    return failed("returns", warehouses.error, "Warehouses could not be loaded.");
+  }
+
+  const label = (row: Record<string, unknown>, key: string) =>
+    `${row[key] ?? ""} · ${row.name ?? ""}`.replace(/^ · /, "");
+
+  return {
+    ok: true,
+    data: {
+      warehouses: (warehouses.data ?? []).map((w) => ({
+        id: w.id as string,
+        label: label(w as Record<string, unknown>, "code"),
+      })),
+      customers: (customers.data ?? []).map((c) => ({
+        id: c.id as string,
+        label: label(c as Record<string, unknown>, "code"),
+      })),
+      suppliers: (suppliers.data ?? []).map((s) => ({
+        id: s.id as string,
+        label: label(s as Record<string, unknown>, "code"),
+      })),
+      products: (products.data ?? []).map((p) => ({
+        id: p.id as string,
+        label: label(p as Record<string, unknown>, "sku"),
+      })),
+    },
   };
 }
