@@ -28,6 +28,8 @@ const UPGRADE = path.join("..", "..", "database", "UPGRADE_0022_OFFLINE_SYNC.sql
 const UPGRADE_COST = path.join("..", "..", "database", "UPGRADE_0023_COST_SECURITY.sql");
 const UPGRADE_EXPIRY = path.join("..", "..", "database", "UPGRADE_0024_BATCHES_AND_EXPIRY.sql");
 const UPGRADE_PAY = path.join("..", "..", "database", "UPGRADE_0025_PAYMENT_METHODS.sql");
+const UPGRADE_DOCS = path.join("..", "..", "database", "UPGRADE_0026_DOCUMENTS.sql");
+const UPGRADE_TRF = path.join("..", "..", "database", "UPGRADE_0027_TRANSFERS.sql");
 
 let pass = 0, fail = 0;
 const ok = (n, c, x = "") => { c ? (pass++, console.log(`  PASS  ${n} ${x}`)) : (fail++, console.log(`  FAIL  ${n} ${x}`)); };
@@ -44,7 +46,7 @@ for (const s of splitStatements(shim)) await c.query(s);
 
 // Everything up to but NOT including 0022.
 const files = fs.readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort()
-  .filter((f) => !["0022", "0023", "0024", "0025"].some((n) => f.startsWith(n)));
+  .filter((f) => !["0022", "0023", "0024", "0025", "0026", "0027"].some((n) => f.startsWith(n)));
 for (const f of files) {
   const sql = fs.readFileSync(path.join(MIGRATIONS, f), "utf8");
   for (const s of splitStatements(sql)) {
@@ -217,6 +219,79 @@ for (const [what, sql] of [
       select 1 from information_schema.role_table_grants
        where table_name='van_sale_payments' and grantee='authenticated'
          and privilege_type in ('INSERT','UPDATE','DELETE')) v`],
+]) {
+  const r = await c.query(sql);
+  ok(what, r.rows[0].v === true);
+}
+
+// ---- 0026, on top of 0025 -----------------------------------------
+console.log("\n=== UPGRADE_0026, then again ===");
+const docsSql = fs.readFileSync(UPGRADE_DOCS, "utf8");
+for (const attempt of ["runs on a 0025 database", "runs a second time"]) {
+  try {
+    await c.query(docsSql);
+    ok(`UPGRADE_0026 ${attempt}`, true);
+  } catch (e) {
+    ok(`UPGRADE_0026 ${attempt}`, false, `-> ${e.message}`);
+  }
+}
+
+for (const [what, sql] of [
+  ["invoices link to their sale", `select exists (select 1 from information_schema.columns
+      where table_name='invoices' and column_name='van_sale_id') v`],
+  ["one invoice per sale", `select exists (select 1 from pg_indexes
+      where schemaname='public' and indexname='invoices_one_per_sale') v`],
+  ["a credit sale raises its own", `select exists (select 1 from pg_trigger
+      where tgname='van_sales_raise_invoice') v`],
+  ["waybills exist", `select to_regclass('public.waybills') is not null v`],
+  ["printable views exist", `select to_regclass('public.invoice_detail') is not null
+      and to_regclass('public.receipt_detail') is not null v`],
+  ["no cost on a customer document", `select not exists (
+      select 1 from information_schema.columns
+       where table_name in ('invoice_detail','receipt_detail')
+         and column_name ilike '%cost%') v`],
+]) {
+  const r = await c.query(sql);
+  ok(what, r.rows[0].v === true);
+}
+
+// ---- 0027, on top of 0026 -----------------------------------------
+console.log("\n=== UPGRADE_0027, then again ===");
+const trfSql = fs.readFileSync(UPGRADE_TRF, "utf8");
+for (const attempt of ["runs on a 0026 database", "runs a second time"]) {
+  try {
+    await c.query(trfSql);
+    ok(`UPGRADE_0027 ${attempt}`, true);
+  } catch (e) {
+    ok(`UPGRADE_0027 ${attempt}`, false, `-> ${e.message}`);
+  }
+}
+
+for (const [what, sql] of [
+  ["the lifecycle has an approved state", `select exists (
+      select 1 from pg_constraint
+       where conrelid='public.stock_transfers'::regclass
+         and conname='stock_transfers_status_check'
+         and pg_get_constraintdef(oid) like '%approved%') v`],
+  ["all four transfer functions exist", `select (select count(*) from pg_proc p
+      join pg_namespace n on n.oid=p.pronamespace
+     where n.nspname='public' and p.proname in
+       ('approve_stock_transfer','dispatch_stock_transfer',
+        'receive_stock_transfer','cancel_stock_transfer')) = 4 v`],
+  ["what arrived is recorded", `select exists (select 1 from information_schema.columns
+      where table_name='stock_transfer_items' and column_name='qty_received') v`],
+  ["stock in transit is reportable", `select to_regclass('public.stock_in_transit') is not null v`],
+  ["a batch may be in two warehouses", `select (select indexdef from pg_indexes
+      where schemaname='public' and indexname='product_batches_unique')
+      like '%warehouse_id%' v`],
+  // The widened index leaves receive_purchase_batch() naming a conflict
+  // target that no longer exists. The upgrade has to carry the fix, or
+  // the next batch-tracked delivery fails outright.
+  ["receiving a purchase still names a real index", `select position(
+      'warehouse_id' in (select pg_get_functiondef(p.oid) from pg_proc p
+        join pg_namespace n on n.oid=p.pronamespace
+       where n.nspname='public' and p.proname='receive_purchase_batch'
+       limit 1)) > 0 v`],
 ]) {
   const r = await c.query(sql);
   ok(what, r.rows[0].v === true);

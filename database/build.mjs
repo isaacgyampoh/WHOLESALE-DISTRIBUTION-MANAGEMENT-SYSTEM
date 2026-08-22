@@ -394,6 +394,92 @@ select 'a driver cannot write a waybill',
                             and with_check like '%has_role%')
             then 'PASS' else 'FAIL' end;`,
   },
+  {
+    migration: "0027_warehouse_transfers.sql",
+    out: "UPGRADE_0027_TRANSFERS.sql",
+    title: "UPGRADE 0027 - moving stock between warehouses",
+    summary: `-- WHAT IT ADDS
+--
+-- stock_transfers has been in the schema since 0011 and nothing ever
+-- used it. Stock moved between depots as an adjustment out of one and
+-- an adjustment in to the other - which balances, and is wrong in every
+-- other way: no document joins the two, nothing is in transit, nobody
+-- is accountable for the gap, and the stock report shows two
+-- unexplained corrections instead of one movement.
+--
+-- A transfer becomes a lifecycle: draft, approved, in transit,
+-- received. Approving and dispatching are separate jobs, so a depot
+-- cannot move stock on its own say-so, and what arrives is counted
+-- rather than assumed.
+--
+--   approve_stock_transfer()   manager and above only
+--   dispatch_stock_transfer()  takes the goods off the source warehouse
+--   receive_stock_transfer()   books in what was actually counted
+--   cancel_stock_transfer()    while it has not yet left
+--   stock_transfer_summary     what left, what arrived, and the gap
+--   stock_in_transit           goods that belong to neither depot
+--
+-- Batches keep their expiry dates across the journey, and expired stock
+-- is refused: transferring it would only relocate the write-off.
+--
+-- ONE EXISTING RULE IS WIDENED. The uniqueness of a batch number was
+-- (organization, product); it is now (organization, product,
+-- warehouse). A delivery of 500 split 300 to one depot and 200 to
+-- another genuinely is the same batch in two places, and the old rule
+-- could not say so. This permits more than before, so nothing that was
+-- valid becomes invalid.
+--
+-- Existing data is untouched. Transfers recorded as adjustments stay as
+-- they are; the stock they moved is already where it should be.
+--
+-- AFTER RUNNING IT, redeploy. The transfer screens appear only once
+-- this is in place.`,
+    verify: `select 'transfer lifecycle' as check,
+       case when exists (
+              select 1 from pg_constraint
+               where conrelid = 'public.stock_transfers'::regclass
+                 and conname = 'stock_transfers_status_check'
+                 and pg_get_constraintdef(oid) like '%approved%')
+            then 'PASS' else 'FAIL' end as result
+union all
+select 'approve_stock_transfer function',
+       case when exists (select 1 from pg_proc p
+                           join pg_namespace n on n.oid = p.pronamespace
+                          where n.nspname = 'public' and p.proname = 'approve_stock_transfer')
+            then 'PASS' else 'FAIL' end
+union all
+select 'dispatch_stock_transfer function',
+       case when exists (select 1 from pg_proc p
+                           join pg_namespace n on n.oid = p.pronamespace
+                          where n.nspname = 'public' and p.proname = 'dispatch_stock_transfer')
+            then 'PASS' else 'FAIL' end
+union all
+select 'receive_stock_transfer function',
+       case when exists (select 1 from pg_proc p
+                           join pg_namespace n on n.oid = p.pronamespace
+                          where n.nspname = 'public' and p.proname = 'receive_stock_transfer')
+            then 'PASS' else 'FAIL' end
+union all
+select 'what arrived is recorded',
+       case when exists (select 1 from information_schema.columns
+                          where table_name = 'stock_transfer_items'
+                            and column_name = 'qty_received')
+            then 'PASS' else 'FAIL' end
+union all
+select 'stock_transfer_summary view',
+       case when to_regclass('public.stock_transfer_summary') is not null
+            then 'PASS' else 'FAIL' end
+union all
+select 'stock_in_transit view',
+       case when to_regclass('public.stock_in_transit') is not null
+            then 'PASS' else 'FAIL' end
+union all
+select 'a batch can be in two warehouses',
+       case when (select indexdef from pg_indexes
+                   where schemaname = 'public' and indexname = 'product_batches_unique')
+            like '%warehouse_id%'
+            then 'PASS' else 'FAIL' end;`,
+  },
 ];
 
 /** Final enum members, in the order `alter type ... add value` yields. */
