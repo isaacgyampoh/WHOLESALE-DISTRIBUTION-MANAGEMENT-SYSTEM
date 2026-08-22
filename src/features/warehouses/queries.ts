@@ -2,6 +2,7 @@ import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { parseAmount } from "@/lib/utils/format";
 import { type Result, failed } from "@/lib/query/result";
+import { getCapabilities } from "@/lib/db/capabilities";
 
 /**
  * Warehouses and inbound goods.
@@ -34,17 +35,23 @@ export interface WarehouseRow {
 export async function listWarehouses(): Promise<Result<WarehouseRow[]>> {
   const supabase = await createSupabaseServerClient();
 
+  const capabilities = await getCapabilities();
+
   const [warehouses, stock] = await Promise.all([
     supabase
       .from("warehouses")
       .select("id, code, name, city, address, is_default, is_active")
       .order("name"),
-    supabase
-      .from("inventory")
-      // products_priced masks cost per caller, so a warehouse's value
-      // comes back as zero for a role that may not see it rather than
-      // failing the whole page.
-      .select("warehouse_id, qty_on_hand, products_priced(cost_price)"),
+    // Cost is only ever read through the masking view. Without it the
+    // quantities still come back and the value reads zero - a warehouse
+    // page that works, showing nobody the margin.
+    capabilities.maskedProductPricing
+      ? supabase
+          .from("inventory")
+          .select("warehouse_id, qty_on_hand, products_priced(cost_price)")
+      : supabase
+          .from("inventory")
+          .select("warehouse_id, qty_on_hand"),
   ]);
 
   if (warehouses.error) {
@@ -273,6 +280,11 @@ export interface ExpirySummary {
 export async function listBatches(
   filters: { status?: string; search?: string } = {},
 ): Promise<Result<BatchRow[]>> {
+  const capabilities = await getCapabilities();
+  // Not an error: the database simply does not have batches yet. The
+  // screen says which script adds them.
+  if (!capabilities.batchesAndExpiry) return { ok: true, data: [] };
+
   const supabase = await createSupabaseServerClient();
 
   let query = supabase
@@ -314,6 +326,17 @@ export async function listBatches(
 }
 
 export async function getExpirySummary(): Promise<Result<ExpirySummary>> {
+  const capabilities = await getCapabilities();
+  if (!capabilities.batchesAndExpiry) {
+    return {
+      ok: true,
+      data: {
+        expiredBatches: 0, expiredUnits: 0,
+        expiringBatches: 0, expiringUnits: 0, goodBatches: 0,
+      },
+    };
+  }
+
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.from("expiry_summary").select("*").maybeSingle();
   if (error) return failed("expiry", error, "The expiry summary could not be loaded.");

@@ -19,12 +19,15 @@ import { Pencil, Scale } from "lucide-react";
  */
 export function ProductActions({
   product, categories, warehouses, canEdit, canAdjust,
+  /** False where the database has no batch columns to store the answer. */
+  canTrackBatches = true,
 }: {
   product: ProductRow;
   categories: CategoryRow[];
   warehouses: WarehouseOption[];
   canEdit: boolean;
   canAdjust: boolean;
+  canTrackBatches?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [adjusting, setAdjusting] = useState(false);
@@ -54,6 +57,7 @@ export function ProductActions({
         className="sm:max-w-lg"
       >
         <ProductForm
+          canTrackBatches={canTrackBatches}
           product={product}
           categories={categories}
           onDone={() => setEditing(false)}

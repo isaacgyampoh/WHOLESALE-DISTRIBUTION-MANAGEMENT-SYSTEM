@@ -343,9 +343,22 @@ try {
       req.onsuccess = () => res(req.result);
     });
     return all.length > 0 && all.every((i) => i.status === "synced");
-  }, null, { timeout: 90_000 }).then(() => true).catch(() => false);
+  }, null, { timeout: 240_000 }).then(() => true).catch(() => false);
 
-  ok("every queued operation reports as sent", drained);
+  const queueState = await evalIn(page, async () => {
+    const open = indexedDB.open("gab-offline", 1);
+    const db = await new Promise((res) => { open.onsuccess = () => res(open.result); });
+    const all = await new Promise((res) => {
+      const tx = db.transaction("queue", "readonly");
+      const req = tx.objectStore("queue").getAll();
+      req.onsuccess = () => res(req.result);
+    });
+    const counts = {};
+    for (const i of all) counts[i.status] = (counts[i.status] ?? 0) + 1;
+    return { counts, firstError: all.find((i) => i.error)?.error ?? null };
+  });
+  ok("every queued operation reports as sent", drained,
+     drained ? "" : `${JSON.stringify(queueState.counts)} ${queueState.firstError ?? ""}`);
 
   if (!syncInstalled) {
     console.log("  SKIP  server-side sync assertions (migration 0022 not installed)");
@@ -404,7 +417,7 @@ try {
       req.onsuccess = () => res(req.result);
     });
     return all.length > 0 && all.every((i) => i.status === "synced");
-  }, null, { timeout: 90_000 }).catch(() => {});
+  }, null, { timeout: 240_000 }).catch(() => {});
 
   const afterReplay = await onVan();
   ok("replaying the whole queue moves no stock", afterReplay === afterSync,

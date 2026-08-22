@@ -1,15 +1,17 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { requireUser } from "@/lib/auth/session";
 import { can } from "@/types/permissions";
 import { listProducts, listCategories, PAGE_SIZE } from "@/features/catalogue/queries";
 import { ProductList, CreateProductButton } from "@/features/catalogue/product-list";
 import { CatalogueFilters } from "@/features/catalogue/catalogue-filters";
 import { PageHeader } from "@/components/layout/page-header";
+import { getCapabilities } from "@/lib/db/capabilities";
 import { Forbidden } from "@/components/layout/forbidden";
 import { Pagination } from "@/components/ui/pagination";
 import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState, Alert } from "@/components/ui/states";
-import { Package, SearchX } from "lucide-react";
+import { Package, SearchX, Truck } from "lucide-react";
 
 export const metadata: Metadata = { title: "Products" };
 
@@ -21,7 +23,13 @@ export default async function ProductsPage({
   const user = await requireUser();
   if (!can(user.role, "products.view")) return <Forbidden />;
 
+  // A driver's view of the catalogue is scoped to their van by
+  // can_access_product(). Knowing that here is what lets the empty
+  // state say something true.
+  const sellsFromAVan = can(user.role, "loads.confirm") && !can(user.role, "products.edit");
+
   const filters = await searchParams;
+  const capabilities = await getCapabilities();
   const [result, categories] = await Promise.all([
     listProducts({
       search: filters.search,
@@ -44,14 +52,29 @@ export default async function ProductsPage({
     <>
       <PageHeader
         title="Products"
-        description="The catalogue, and what is on hand for each line."
+        description={sellsFromAVan
+          ? "The products you are carrying, and what you charge for them."
+          : "The catalogue, and what is on hand for each line."}
         breadcrumbs={[{ label: "Catalogue" }, { label: "Products" }]}
         actions={
           can(user.role, "products.create") && categories.ok
-            ? <CreateProductButton categories={categories.data} />
+            ? <CreateProductButton categories={categories.data}
+                                   canTrackBatches={capabilities.batchesAndExpiry} />
             : undefined
         }
       />
+
+      {!capabilities.maskedProductPricing && can(user.role, "products.edit") && (
+        <div className="mb-5">
+          <Alert tone="info" title="Cost prices are hidden on this database">
+            Cost is shown through a view that masks it per role, and this
+            database does not have it yet. Until{" "}
+            <code className="numeric">database/UPGRADE_0023_COST_SECURITY.sql</code>{" "}
+            has been run, nobody sees cost - which is the safe way round.
+            Everything else on this screen works.
+          </Alert>
+        </div>
+      )}
 
       {user.role === "manager" && (
         <div className="mb-5">
@@ -78,11 +101,46 @@ export default async function ProductsPage({
                   title="No products match those filters"
                   description="Try a different search, category or stock level."
                 />
-              ) : (
+              ) : sellsFromAVan ? (
+                /* A driver's catalogue is their van. can_access_product()
+                   scopes them to what they are carrying, so an empty
+                   list here means an empty van - not an empty business,
+                   and certainly not an invitation to add a product they
+                   have no permission to create. */
+                <EmptyState
+                  icon={Truck}
+                  title="Nothing on your van"
+                  description="You see the products you are carrying. Ask the depot to load your van, or check what is on it."
+                  action={
+                    <Link
+                      href="/driver/stock"
+                      className="inline-flex h-11 items-center rounded-[var(--radius-panel)] border border-[var(--border-strong)] px-4 text-sm font-medium"
+                    >
+                      My van stock
+                    </Link>
+                  }
+                />
+              ) : user.role === "manager" ? (
+                <EmptyState
+                  icon={Package}
+                  title="No products in your categories"
+                  description="You see the categories assigned to you. Ask an administrator if something is missing."
+                />
+              ) : can(user.role, "products.create") ? (
                 <EmptyState
                   icon={Package}
                   title="No products yet"
                   description="Add the first product to start tracking stock."
+                  action={categories.ok
+                    ? <CreateProductButton categories={categories.data}
+                                           canTrackBatches={capabilities.batchesAndExpiry} />
+                    : undefined}
+                />
+              ) : (
+                <EmptyState
+                  icon={Package}
+                  title="No products to show"
+                  description="Nothing in the catalogue is visible to your role."
                 />
               )}
             </Card>

@@ -2,6 +2,7 @@ import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { parseAmount } from "@/lib/utils/format";
 import { type Result, failed } from "@/lib/query/result";
+import { getCapabilities } from "@/lib/db/capabilities";
 
 /**
  * Reporting reads.
@@ -177,10 +178,20 @@ export interface InventoryValueRow {
 
 export async function inventoryValueReport(): Promise<Result<InventoryValueRow[]>> {
   const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("products_priced")
-    .select("id, categories(name), inventory(qty_on_hand), cost_price, is_active")
-    .eq("is_active", true);
+  const capabilities = await getCapabilities();
+
+  // Valuing stock means reading cost, and cost has one door. Without it
+  // the report still lists lines and units and leaves value at zero,
+  // which is honest: the figure is unavailable, not zero-valued.
+  const { data, error } = capabilities.maskedProductPricing
+    ? await supabase
+        .from("products_priced")
+        .select("id, categories(name), inventory(qty_on_hand), cost_price, is_active")
+        .eq("is_active", true)
+    : await supabase
+        .from("products")
+        .select("id, categories(name), inventory(qty_on_hand), is_active")
+        .eq("is_active", true);
 
   if (error) return failed("reports", error, "The inventory report could not be built.");
 

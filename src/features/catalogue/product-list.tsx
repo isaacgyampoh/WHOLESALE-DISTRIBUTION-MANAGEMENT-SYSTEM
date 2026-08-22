@@ -105,7 +105,13 @@ export function ProductList({ products }: { products: ProductRow[] }) {
   );
 }
 
-export function CreateProductButton({ categories }: { categories: CategoryRow[] }) {
+export function CreateProductButton({
+  categories,
+  canTrackBatches = true,
+}: {
+  categories: CategoryRow[];
+  canTrackBatches?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -120,7 +126,8 @@ export function CreateProductButton({ categories }: { categories: CategoryRow[] 
         description="Stock is added separately, so every quantity has a reason recorded."
         className="sm:max-w-lg"
       >
-        <ProductForm categories={categories} onDone={() => setOpen(false)} />
+        <ProductForm categories={categories} canTrackBatches={canTrackBatches}
+                     onDone={() => setOpen(false)} />
       </Dialog>
     </>
   );

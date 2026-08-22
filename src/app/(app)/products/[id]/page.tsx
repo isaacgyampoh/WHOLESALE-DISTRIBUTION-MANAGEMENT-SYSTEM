@@ -6,6 +6,7 @@ import {
   getProduct, listCategories, listWarehouses, listMovements
 } from "@/features/catalogue/queries";
 import { ProductActions } from "@/features/catalogue/product-detail";
+import { getCapabilities } from "@/lib/db/capabilities";
 import { StockBadge } from "@/features/catalogue/stock-badge";
 import { MovementList } from "@/features/catalogue/movement-list";
 import { PageHeader } from "@/components/layout/page-header";
@@ -28,6 +29,7 @@ export default async function ProductPage({
   if (!can(user.role, "products.view")) return <Forbidden />;
 
   const { id } = await params;
+  const capabilities = await getCapabilities();
   const result = await getProduct(id);
 
   if (!result.ok) {
@@ -62,6 +64,7 @@ export default async function ProductPage({
         ]}
         actions={
           <ProductActions
+            canTrackBatches={capabilities.batchesAndExpiry}
             product={product}
             categories={categories.ok ? categories.data : []}
             warehouses={warehouses.ok ? warehouses.data : []}

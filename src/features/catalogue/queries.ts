@@ -2,6 +2,7 @@ import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { parseAmount } from "@/lib/utils/format";
 import { stockState, type StockState } from "@/lib/catalogue/units";
+import { getCapabilities } from "@/lib/db/capabilities";
 
 /**
  * Catalogue and stock reads.
@@ -101,23 +102,46 @@ function toProduct(row: Record<string, unknown>): ProductRow {
   };
 }
 
-const PRODUCT_SELECT =
-  "id, sku, barcode, name, description, category_id, unit_of_measure, units_per_case, " +
-  "cost_price, list_price, tax_rate, reorder_point, reorder_qty, is_active, " +
-  "track_batches, track_expiry, shelf_life_days, " +
-  "created_at, updated_at, categories(name), inventory(qty_on_hand, qty_reserved)";
+/**
+ * The columns to ask for, given what this database has.
+ *
+ * Cost is only ever requested from `products_priced`, which masks it per
+ * role. Against a database without that view the column is not asked for
+ * at all - so a schema that is behind shows nobody the margin rather
+ * than falling back to the raw column and showing everybody.
+ */
+function productSelect(capabilities: {
+  maskedProductPricing: boolean; batchesAndExpiry: boolean;
+}): string {
+  const columns = [
+    "id", "sku", "barcode", "name", "description", "category_id",
+    "unit_of_measure", "units_per_case", "list_price", "tax_rate",
+    "reorder_point", "reorder_qty", "is_active", "created_at", "updated_at",
+  ];
+  if (capabilities.maskedProductPricing) columns.push("cost_price");
+  if (capabilities.batchesAndExpiry) {
+    columns.push("track_batches", "track_expiry", "shelf_life_days");
+  }
+  return `${columns.join(", ")}, categories(name), inventory(qty_on_hand, qty_reserved)`;
+}
+
+/** The view where cost is masked, or the table where it is not asked for. */
+function productSource(capabilities: { maskedProductPricing: boolean }): string {
+  return capabilities.maskedProductPricing ? "products_priced" : "products";
+}
 
 export async function listProducts(
   filters: ProductFilters = {},
 ): Promise<Result<{ products: ProductRow[]; total: number; page: number }>> {
   const supabase = await createSupabaseServerClient();
+  const capabilities = await getCapabilities();
   const page = Math.max(1, Number(filters.page ?? 1));
 
   let query = supabase
-    .from("products_priced")
+    .from(productSource(capabilities))
     // One request with the category and stock embedded, rather than a
     // query per row.
-    .select(PRODUCT_SELECT, { count: "exact" })
+    .select(productSelect(capabilities), { count: "exact" })
     .order("name", { ascending: true });
 
   if (filters.category && filters.category !== "all") {
@@ -161,8 +185,12 @@ export async function listProducts(
 
 export async function getProduct(id: string): Promise<Result<ProductRow | null>> {
   const supabase = await createSupabaseServerClient();
+  const capabilities = await getCapabilities();
   const { data, error } = await supabase
-    .from("products_priced").select(PRODUCT_SELECT).eq("id", id).maybeSingle();
+    .from(productSource(capabilities))
+    .select(productSelect(capabilities))
+    .eq("id", id)
+    .maybeSingle();
 
   if (error) {
     console.error("[catalogue] product detail failed", error);

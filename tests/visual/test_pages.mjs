@@ -149,7 +149,35 @@ try {
          !shows ? `missing "${expect}"` : "");
     }
 
-    for (const route of REFUSED[role] ?? []) {
+    // A screen that renders is not the same as a screen that works. The
+  // products page failed for every role after the catalogue queries were
+  // repointed at a view the database did not have yet, and it failed as
+  // a generic error rather than as anything diagnosable. These assert
+  // what it must actually contain.
+  if (["admin", "manager", "accountant"].includes(role)) {
+    await page.goto(`${BASE}/products`, { waitUntil: "domcontentloaded" });
+    await page.waitForLoadState("load");
+    const body = await page.content();
+    ok(`${role} /products loads real rows`,
+       /DEMO-SKU-/.test(body) && !/could not be loaded/i.test(body),
+       /could not be loaded/i.test(body) ? "error state" : "");
+    ok(`${role} /products is not silently empty`,
+       !/No products yet/.test(body));
+  }
+
+  if (role === "driver") {
+    await page.goto(`${BASE}/products`, { waitUntil: "domcontentloaded" });
+    await page.waitForLoadState("load");
+    const body = await page.content();
+    // A driver sees what is on their van. An empty list must say so
+    // rather than claiming the catalogue is empty.
+    ok("driver /products does not claim the catalogue is empty",
+       !/No products yet/.test(body));
+    ok("driver /products shows no cost figure",
+       !/GH₵|₵\d/.test((body.split(/COST/i)[1] ?? "").slice(0, 400)));
+  }
+
+  for (const route of REFUSED[role] ?? []) {
       await page.goto(`${BASE}${route}`, { waitUntil: "domcontentloaded" });
       const body = await page.content();
       // Refused means refused - by the server, not by a hidden link.

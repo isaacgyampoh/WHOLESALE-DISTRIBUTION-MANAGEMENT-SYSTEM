@@ -23,10 +23,13 @@ export function ProductForm({
   product,
   categories,
   onDone,
+  /** False where the database has no batch columns to store the answer. */
+  canTrackBatches = true,
 }: {
   product?: ProductRow;
   categories: CategoryRow[];
   onDone?: () => void;
+  canTrackBatches?: boolean;
 }) {
   const router = useRouter();
   const [state, submit, pending] = useActionState(
@@ -141,8 +144,11 @@ export function ProductForm({
 
         {/* Not everything expires. A crate does not, and forcing a date
             onto one would put a meaningless number in the warehouse's
-            way at every delivery. */}
-        <fieldset className="space-y-2 rounded-[var(--radius-panel)] border border-[var(--border-subtle)] p-3">
+            way at every delivery.
+
+            Hidden entirely where the database cannot store the answer:
+            a control that silently does nothing is worse than none. */}
+        {canTrackBatches && <fieldset className="space-y-2 rounded-[var(--radius-panel)] border border-[var(--border-subtle)] p-3">
           <legend className="px-1 text-sm font-medium text-[var(--text-primary)]">
             Batches and shelf life
           </legend>
@@ -187,7 +193,7 @@ export function ProductForm({
               className="numeric"
             />
           </Field>
-        </fieldset>
+        </fieldset>}
       </div>
 
       <Field label="Description" htmlFor="description">
