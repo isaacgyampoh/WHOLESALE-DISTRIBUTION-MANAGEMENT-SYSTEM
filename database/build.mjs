@@ -298,6 +298,102 @@ select 'nobody writes a payment by hand',
                  and privilege_type in ('INSERT','UPDATE','DELETE'))
             then 'PASS' else 'FAIL' end;`,
   },
+  {
+    migration: "0026_invoices_receipts_waybills.sql",
+    out: "UPGRADE_0026_DOCUMENTS.sql",
+    title: "UPGRADE 0026 - invoices, receipts and waybills",
+    summary: `-- WHAT IT ADDS
+--
+-- The invoices and payments tables have been in this schema since the
+-- beginning and nothing has ever written to them. That is why the
+-- Credit screen, which reads invoice_ageing, has always been empty
+-- however much the business was owed.
+--
+-- This connects them to the sales that are already happening:
+--
+--   a credit sale now raises an invoice by itself, on completion, with
+--   a due date taken from that customer's own payment terms. By
+--   trigger, so it cannot be forgotten and offline sales get one too.
+--
+--   a collection now settles invoices oldest first and writes a payment
+--   against each, which is what a receipt is printed from. Money beyond
+--   what is owed stays on account rather than being forced onto an
+--   invoice that does not exist yet.
+--
+--   waybills / waybill_items    the document that travels with the
+--                               goods, and issue_waybill_for_load() to
+--                               raise one for a dispatched van.
+--
+--   invoice_detail, receipt_detail   everything a printed copy needs.
+--                                    Neither carries cost price.
+--
+-- Existing data is left alone. Credit sales completed before this runs
+-- have no invoice; their debt is still on the customer ledger exactly
+-- as before, and the ageing report covers sales from here on. Nothing
+-- is double counted: credit_transactions stays the running balance the
+-- credit limit is checked against, and invoices are the documents.
+--
+-- AFTER RUNNING IT, redeploy. Invoices, receipts and waybills appear in
+-- the application only once this is in place.`,
+    verify: `select 'invoices linked to van sales' as check,
+       case when exists (select 1 from information_schema.columns
+                          where table_name = 'invoices' and column_name = 'van_sale_id')
+            then 'PASS' else 'FAIL' end as result
+union all
+select 'one invoice per sale',
+       case when exists (select 1 from pg_indexes
+                          where schemaname = 'public' and indexname = 'invoices_one_per_sale')
+            then 'PASS' else 'FAIL' end
+union all
+select 'a completed credit sale raises one',
+       case when exists (select 1 from pg_trigger
+                          where tgname = 'van_sales_raise_invoice')
+            then 'PASS' else 'FAIL' end
+union all
+select 'issue_invoice_for_sale function',
+       case when exists (select 1 from pg_proc p
+                           join pg_namespace n on n.oid = p.pronamespace
+                          where n.nspname = 'public' and p.proname = 'issue_invoice_for_sale')
+            then 'PASS' else 'FAIL' end
+union all
+select 'waybills table',
+       case when to_regclass('public.waybills') is not null
+            then 'PASS' else 'FAIL' end
+union all
+select 'waybill_items table',
+       case when to_regclass('public.waybill_items') is not null
+            then 'PASS' else 'FAIL' end
+union all
+select 'issue_waybill_for_load function',
+       case when exists (select 1 from pg_proc p
+                           join pg_namespace n on n.oid = p.pronamespace
+                          where n.nspname = 'public' and p.proname = 'issue_waybill_for_load')
+            then 'PASS' else 'FAIL' end
+union all
+select 'row level security on the paperwork',
+       case when (select bool_and(relrowsecurity) from pg_class
+                   where oid in ('public.waybills'::regclass,
+                                 'public.waybill_items'::regclass))
+            then 'PASS' else 'FAIL' end
+union all
+select 'printable views',
+       case when to_regclass('public.invoice_detail') is not null
+             and to_regclass('public.receipt_detail') is not null
+            then 'PASS' else 'FAIL' end
+union all
+select 'no cost price on a customer document',
+       case when not exists (
+              select 1 from information_schema.columns
+               where table_name in ('invoice_detail','receipt_detail')
+                 and column_name ilike '%cost%')
+            then 'PASS' else 'FAIL' end
+union all
+select 'a driver cannot write a waybill',
+       case when exists (select 1 from pg_policies
+                          where tablename = 'waybills' and policyname = 'waybills_write'
+                            and with_check like '%has_role%')
+            then 'PASS' else 'FAIL' end;`,
+  },
 ];
 
 /** Final enum members, in the order `alter type ... add value` yields. */

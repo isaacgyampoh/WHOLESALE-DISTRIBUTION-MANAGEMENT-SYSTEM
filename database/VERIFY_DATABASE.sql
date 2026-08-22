@@ -126,7 +126,8 @@ expected_enums (typname, members) as (
     -- 0022. The duplicated label that broke an upgrade script was in
     -- sync_status, so its members are pinned here by name and order.
     ('sync_status',           'applied,failed,conflict'),
-    ('sync_operation',        'van_sale,collection,van_return,reconciliation')
+    ('sync_operation',        'van_sale,collection,van_return,reconciliation'),
+    ('waybill_status',         'draft,issued,delivered,cancelled')
 ),
 actual_enums as (
   select t.typname::text as typname,
@@ -160,7 +161,8 @@ missing_tables as (
     'van_assignments','van_inventory','van_load_items','van_loads',
     'van_reconciliations','van_return_items','van_returns','van_sale_items',
     'van_sales','vans','warehouses','auth_pin_attempts','audit_log',
-    'sync_operations','product_batches','van_sale_payments'
+    'sync_operations','product_batches','van_sale_payments',
+    'waybills','waybill_items'
   ]) as t
   where not exists (
     select 1 from information_schema.tables
@@ -173,7 +175,8 @@ missing_views as (
     'customer_balances','customer_credit_position','customer_statement',
     'invoice_ageing','reconciliation_variances','stock_summary',
     'van_load_summary','van_stock_summary','products_priced',
-    'batch_expiry_status','expiry_summary','load_takings'
+    'batch_expiry_status','expiry_summary','load_takings',
+    'invoice_detail','receipt_detail'
   ]) as v
   where not exists (
     select 1 from information_schema.views
@@ -182,41 +185,41 @@ missing_views as (
 ),
 report as (
   select  1 as ord, 'Tables' as check_name,
-          '34'::text as expected, c.tables::text as actual,
-          case when c.tables = 34 then 'OK' else 'CHECK' end as status,
+          '36'::text as expected, c.tables::text as actual,
+          case when c.tables = 36 then 'OK' else 'CHECK' end as status,
           ''::text as detail
   from counts c
   union all select  2, 'Expected tables all present', 'none missing',
           case when m.names = '' then 'none missing' else 'MISSING' end,
           case when m.names = '' then 'OK' else 'FAIL' end, m.names
   from missing_tables m
-  union all select  3, 'Views', '12', c.views::text,
-          case when c.views = 12 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  3, 'Views', '14', c.views::text,
+          case when c.views = 14 then 'OK' else 'CHECK' end, '' from counts c
   union all select  4, 'Expected views all present', 'none missing',
           case when v.names = '' then 'none missing' else 'MISSING' end,
           case when v.names = '' then 'OK' else 'FAIL' end, v.names
   from missing_views v
-  union all select  5, 'Enum types', '14', c.enums::text,
-          case when c.enums = 14 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  6, 'Enum members and order', '14 matching', e.n::text,
-          case when e.n = 14 then 'OK' else 'FAIL' end,
+  union all select  5, 'Enum types', '15', c.enums::text,
+          case when c.enums = 15 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  6, 'Enum members and order', '15 matching', e.n::text,
+          case when e.n = 15 then 'OK' else 'FAIL' end,
           (select names from enum_bad)
   from enum_match e
-  union all select  7, 'Functions', '45', c.functions::text,
-          case when c.functions = 45 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  8, 'Triggers', '70', c.triggers::text,
-          case when c.triggers = 70 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  9, 'RLS policies', '72', c.policies::text,
-          case when c.policies = 72 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  7, 'Functions', '48', c.functions::text,
+          case when c.functions = 48 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  8, 'Triggers', '72', c.triggers::text,
+          case when c.triggers = 72 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  9, 'RLS policies', '76', c.policies::text,
+          case when c.policies = 76 then 'OK' else 'CHECK' end, '' from counts c
   union all select 10, 'RLS enabled on every table',
           c.all_tables::text, c.rls_tables::text,
           case when c.rls_tables = c.all_tables then 'OK' else 'FAIL' end, '' from counts c
   union all select 11, 'Generated columns', '13', c.generated_cols::text,
           case when c.generated_cols = 13 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 12, 'Indexes', '134', c.indexes::text,
-          case when c.indexes = 134 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 13, 'Constraints', '230', c.constraints::text,
-          case when c.constraints = 230 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 12, 'Indexes', '141', c.indexes::text,
+          case when c.indexes = 141 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 13, 'Constraints', '244', c.constraints::text,
+          case when c.constraints = 244 then 'OK' else 'CHECK' end, '' from counts c
   union all select 14, 'Security functions present', '8', s.n::text,
           case when s.n = 8 then 'OK' else 'FAIL' end, '' from security_fns s
   union all select 15, 'Business functions present', '7', b.n::text,
@@ -424,6 +427,63 @@ report as (
                and privilege_type in ('INSERT','UPDATE','DELETE'))
                then 'OK' else 'FAIL' end,
           'Rows are written only by sync_submit()'
+
+  -- ---- invoices, receipts and waybills (migration 0026) ------------
+  union all select 43, 'Documents: a credit sale raises its own invoice', 'automatic',
+          case when exists (select 1 from pg_trigger
+                             where tgname = 'van_sales_raise_invoice')
+               then 'automatic' else 'MANUAL' end,
+          case when exists (select 1 from pg_trigger
+                             where tgname = 'van_sales_raise_invoice')
+               then 'OK' else 'FAIL' end,
+          'An invoice somebody has to remember to raise is a debt nobody chases'
+  union all select 44, 'Documents: one invoice per sale', 'enforced',
+          case when exists (select 1 from pg_indexes
+                             where schemaname = 'public'
+                               and indexname = 'invoices_one_per_sale')
+               then 'enforced' else 'UNENFORCED' end,
+          case when exists (select 1 from pg_indexes
+                             where schemaname = 'public'
+                               and indexname = 'invoices_one_per_sale')
+               then 'OK' else 'FAIL' end, ''
+  union all select 45, 'Documents: a receipt is a payment row', 'present',
+          case when to_regclass('public.receipt_detail') is not null
+               then 'present' else 'MISSING' end,
+          case when to_regclass('public.receipt_detail') is not null
+               then 'OK' else 'FAIL' end, ''
+  union all select 46, 'Documents: no cost price on a customer document', 'none',
+          case when not exists (
+            select 1 from information_schema.columns
+             where table_schema = 'public'
+               and table_name in ('invoice_detail','receipt_detail')
+               and column_name ilike '%cost%')
+               then 'none' else 'EXPOSED' end,
+          case when not exists (
+            select 1 from information_schema.columns
+             where table_schema = 'public'
+               and table_name in ('invoice_detail','receipt_detail')
+               and column_name ilike '%cost%')
+               then 'OK' else 'FAIL' end,
+          'A customer document shows what they were charged, not the margin'
+  union all select 47, 'Documents: waybills are behind row level security', 'enabled',
+          case when (select bool_and(relrowsecurity) from pg_class
+                      where oid in ('public.waybills'::regclass,
+                                    'public.waybill_items'::regclass))
+               then 'enabled' else 'OFF' end,
+          case when (select bool_and(relrowsecurity) from pg_class
+                      where oid in ('public.waybills'::regclass,
+                                    'public.waybill_items'::regclass))
+               then 'OK' else 'FAIL' end, ''
+  union all select 48, 'Documents: a driver cannot write their own waybill', 'role-gated',
+          case when exists (select 1 from pg_policies
+                             where tablename = 'waybills' and policyname = 'waybills_write'
+                               and with_check like '%has_role%')
+               then 'role-gated' else 'OPEN' end,
+          case when exists (select 1 from pg_policies
+                             where tablename = 'waybills' and policyname = 'waybills_write'
+                               and with_check like '%has_role%')
+               then 'OK' else 'FAIL' end,
+          'Goods are signed out by the warehouse, not by whoever carries them'
 )
 select ord as "#", check_name as "check", expected, actual, status, detail
 from report
