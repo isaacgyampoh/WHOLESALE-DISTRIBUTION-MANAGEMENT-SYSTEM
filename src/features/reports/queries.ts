@@ -209,3 +209,372 @@ export async function inventoryValueReport(): Promise<Result<InventoryValueRow[]
 
   return { ok: true, data: [...by.values()].sort((a, b) => b.value - a.value) };
 }
+
+// ===================================================================
+// Sales, cut the other ways
+// ===================================================================
+
+export interface SalesByPeriodRow {
+  /** The bucket, already formatted: 2026-08-22, 2026-W34, 2026-08. */
+  period: string;
+  label: string;
+  saleCount: number;
+  revenue: number;
+  cash: number;
+  credit: number;
+}
+
+/**
+ * Trading over time.
+ *
+ * Bucketed here rather than in SQL because the three groupings differ
+ * only in how a date is truncated, and three near-identical database
+ * functions would be three places for the same rule to drift.
+ */
+export async function salesByPeriod(
+  grouping: "day" | "week" | "month" = "day",
+  periodDays = 30,
+): Promise<Result<SalesByPeriodRow[]>> {
+  const supabase = await createSupabaseServerClient();
+  const since = new Date(Date.now() - periodDays * 86_400_000).toISOString();
+
+  const { data, error } = await supabase
+    .from("van_sales")
+    .select("sold_at, sale_type, total, status")
+    .gte("sold_at", since)
+    .neq("status", "void");
+
+  if (error) return failed("reports", error, "The sales report could not be built.");
+
+  const by = new Map<string, SalesByPeriodRow>();
+
+  for (const row of (data ?? []) as unknown as Record<string, unknown>[]) {
+    const at = new Date(row.sold_at as string);
+    let period: string;
+    let label: string;
+
+    if (grouping === "month") {
+      period = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}`;
+      label = at.toLocaleDateString("en-GH", { month: "long", year: "numeric" });
+    } else if (grouping === "week") {
+      // The Monday that starts the week. Naming a week by its first day
+      // is what a person can act on; an ISO week number is not.
+      const monday = new Date(at);
+      const weekday = (monday.getDay() + 6) % 7;
+      monday.setDate(monday.getDate() - weekday);
+      monday.setHours(0, 0, 0, 0);
+      period = monday.toISOString().slice(0, 10);
+      label = `Week of ${monday.toLocaleDateString("en-GH", { day: "numeric", month: "short" })}`;
+    } else {
+      period = at.toISOString().slice(0, 10);
+      label = at.toLocaleDateString("en-GH", { weekday: "short", day: "numeric", month: "short" });
+    }
+
+    const entry = by.get(period)
+      ?? { period, label, saleCount: 0, revenue: 0, cash: 0, credit: 0 };
+    const total = parseAmount(row.total as string);
+    entry.saleCount += 1;
+    entry.revenue += total;
+    if (row.sale_type === "cash") entry.cash += total; else entry.credit += total;
+    by.set(period, entry);
+  }
+
+  // Newest first: the question is almost always about recent trading.
+  return {
+    ok: true,
+    data: [...by.values()].sort((a, b) => b.period.localeCompare(a.period)),
+  };
+}
+
+export interface SalesByCustomerRow {
+  customerId: string;
+  code: string;
+  name: string;
+  saleCount: number;
+  revenue: number;
+  outstanding: number;
+  lastBought: string | null;
+}
+
+export async function salesByCustomer(periodDays = 30): Promise<Result<SalesByCustomerRow[]>> {
+  const supabase = await createSupabaseServerClient();
+  const since = new Date(Date.now() - periodDays * 86_400_000).toISOString();
+
+  const { data, error } = await supabase
+    .from("van_sales")
+    .select("customer_id, total, balance, sold_at, status, customers(code, name)")
+    .gte("sold_at", since)
+    .neq("status", "void");
+
+  if (error) return failed("reports", error, "The customer report could not be built.");
+
+  const by = new Map<string, SalesByCustomerRow>();
+  for (const row of (data ?? []) as unknown as Record<string, unknown>[]) {
+    const id = row.customer_id as string;
+    const customer = row.customers as { code?: string; name?: string } | null;
+    const entry = by.get(id) ?? {
+      customerId: id,
+      code: customer?.code ?? "",
+      name: customer?.name ?? "Unknown customer",
+      saleCount: 0, revenue: 0, outstanding: 0, lastBought: null,
+    };
+    entry.saleCount += 1;
+    entry.revenue += parseAmount(row.total as string);
+    entry.outstanding += parseAmount(row.balance as string);
+    const at = row.sold_at as string;
+    if (!entry.lastBought || at > entry.lastBought) entry.lastBought = at;
+    by.set(id, entry);
+  }
+
+  return { ok: true, data: [...by.values()].sort((a, b) => b.revenue - a.revenue) };
+}
+
+export interface SalesByVanRow {
+  vanId: string;
+  vanCode: string;
+  registration: string;
+  saleCount: number;
+  revenue: number;
+  cash: number;
+  credit: number;
+}
+
+export async function salesByVan(periodDays = 30): Promise<Result<SalesByVanRow[]>> {
+  const supabase = await createSupabaseServerClient();
+  const since = new Date(Date.now() - periodDays * 86_400_000).toISOString();
+
+  const { data, error } = await supabase
+    .from("van_sales")
+    .select("van_id, total, sale_type, status, vans(code, registration_no)")
+    .gte("sold_at", since)
+    .neq("status", "void");
+
+  if (error) return failed("reports", error, "The van report could not be built.");
+
+  const by = new Map<string, SalesByVanRow>();
+  for (const row of (data ?? []) as unknown as Record<string, unknown>[]) {
+    const id = row.van_id as string;
+    const van = row.vans as { code?: string; registration_no?: string } | null;
+    const entry = by.get(id) ?? {
+      vanId: id,
+      vanCode: van?.code ?? "Van",
+      registration: van?.registration_no ?? "",
+      saleCount: 0, revenue: 0, cash: 0, credit: 0,
+    };
+    const total = parseAmount(row.total as string);
+    entry.saleCount += 1;
+    entry.revenue += total;
+    if (row.sale_type === "cash") entry.cash += total; else entry.credit += total;
+    by.set(id, entry);
+  }
+
+  return { ok: true, data: [...by.values()].sort((a, b) => b.revenue - a.revenue) };
+}
+
+export interface SalesByMethodRow {
+  method: string;
+  label: string;
+  count: number;
+  amount: number;
+}
+
+const METHOD_WORDS: Record<string, string> = {
+  cash: "Cash",
+  mobile_money: "Mobile money",
+  bank_transfer: "Bank transfer",
+  cheque: "Cheque",
+  card: "Card",
+};
+
+/**
+ * How the money actually came in.
+ *
+ * Needs the payment breakdown from 0025. Without it every sale looks
+ * like cash, which was the assumption before that migration - so rather
+ * than reporting a number that is wrong, the report says it is
+ * unavailable.
+ */
+export async function salesByMethod(periodDays = 30): Promise<Result<SalesByMethodRow[]>> {
+  const { salePaymentMethods } = await getCapabilities();
+  if (!salePaymentMethods) {
+    return {
+      ok: false,
+      message:
+        "Payment methods need database upgrade 0025. Before it, every sale was " +
+        "recorded as cash, so this report would be misleading rather than empty.",
+    };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const since = new Date(Date.now() - periodDays * 86_400_000).toISOString();
+
+  const { data, error } = await supabase
+    .from("van_sale_payments")
+    .select("method, amount")
+    .gte("created_at", since);
+
+  if (error) return failed("reports", error, "The payment method report could not be built.");
+
+  const by = new Map<string, SalesByMethodRow>();
+  for (const row of (data ?? []) as unknown as Record<string, unknown>[]) {
+    const method = (row.method as string) ?? "cash";
+    const entry = by.get(method)
+      ?? { method, label: METHOD_WORDS[method] ?? method, count: 0, amount: 0 };
+    entry.count += 1;
+    entry.amount += parseAmount(row.amount as string);
+    by.set(method, entry);
+  }
+
+  return { ok: true, data: [...by.values()].sort((a, b) => b.amount - a.amount) };
+}
+
+// ===================================================================
+// Stock that is going off
+// ===================================================================
+
+export interface ExpiryReportRow {
+  batchNumber: string;
+  sku: string;
+  productName: string;
+  warehouseName: string;
+  expiresOn: string | null;
+  daysToExpiry: number | null;
+  qtyRemaining: number;
+  status: string;
+}
+
+export async function expiryReport(): Promise<Result<ExpiryReportRow[]>> {
+  const { batchesAndExpiry } = await getCapabilities();
+  if (!batchesAndExpiry) {
+    return {
+      ok: false,
+      message:
+        "Expiry tracking needs database upgrade 0024. " +
+        "Run database/UPGRADE_0024_BATCHES_AND_EXPIRY.sql, then reload.",
+    };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("batch_expiry_status")
+    .select("*")
+    .gt("qty_remaining", 0)
+    .in("status", ["expired", "expiring"])
+    .order("expires_on", { ascending: true });
+
+  if (error) return failed("reports", error, "The expiry report could not be built.");
+
+  return {
+    ok: true,
+    data: ((data ?? []) as unknown as Record<string, unknown>[]).map((b) => ({
+      batchNumber: b.batch_number as string,
+      sku: b.sku as string,
+      productName: b.product_name as string,
+      warehouseName: (b.warehouse_name as string) ?? "",
+      expiresOn: (b.expires_on as string) ?? null,
+      daysToExpiry: b.days_to_expiry === null || b.days_to_expiry === undefined
+        ? null
+        : Number(b.days_to_expiry),
+      qtyRemaining: Number(b.qty_remaining ?? 0),
+      status: (b.status as string) ?? "good",
+    })),
+  };
+}
+
+// ===================================================================
+// Purchasing
+// ===================================================================
+
+export interface PurchasesBySupplierRow {
+  supplierId: string;
+  code: string;
+  name: string;
+  orderCount: number;
+  ordered: number;
+  received: number;
+  invoiced: number;
+  awaitingReview: number;
+}
+
+export async function purchasesBySupplier(): Promise<Result<PurchasesBySupplierRow[]>> {
+  const { supplierSubmissions } = await getCapabilities();
+  if (!supplierSubmissions) {
+    return {
+      ok: false,
+      message:
+        "Supplier payables need database upgrade 0031. " +
+        "Run database/UPGRADE_0031_SUPPLIER_SUBMISSIONS.sql, then reload.",
+    };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("supplier_payables")
+    .select("*")
+    .order("received_value", { ascending: false });
+
+  if (error) return failed("reports", error, "The supplier report could not be built.");
+
+  return {
+    ok: true,
+    data: ((data ?? []) as unknown as Record<string, unknown>[]).map((s) => ({
+      supplierId: s.supplier_id as string,
+      code: (s.supplier_code as string) ?? "",
+      name: (s.supplier_name as string) ?? "Supplier",
+      orderCount: Number(s.open_orders ?? 0),
+      ordered: parseAmount(s.on_order_value as string),
+      received: parseAmount(s.received_value as string),
+      invoiced: parseAmount(s.invoiced_value as string),
+      awaitingReview: Number(s.invoices_awaiting_review ?? 0),
+    })),
+  };
+}
+
+// ===================================================================
+// The van round
+// ===================================================================
+
+export interface ReconciliationReportRow {
+  reconNumber: string;
+  vanCode: string;
+  driverName: string;
+  status: string;
+  expectedCash: number;
+  actualCash: number;
+  cashVariance: number;
+  expectedMomo: number;
+  stockVariance: number;
+  submittedAt: string | null;
+}
+
+export async function reconciliationReport(
+  periodDays = 30,
+): Promise<Result<ReconciliationReportRow[]>> {
+  const supabase = await createSupabaseServerClient();
+  const since = new Date(Date.now() - periodDays * 86_400_000).toISOString();
+
+  const { data, error } = await supabase
+    .from("reconciliation_variances")
+    .select("*")
+    .gte("submitted_at", since)
+    .order("submitted_at", { ascending: false });
+
+  if (error) return failed("reports", error, "The reconciliation report could not be built.");
+
+  return {
+    ok: true,
+    data: ((data ?? []) as unknown as Record<string, unknown>[]).map((r) => ({
+      reconNumber: r.recon_number as string,
+      vanCode: (r.van_code as string) ?? "",
+      driverName: (r.driver_name as string) ?? "",
+      status: (r.status as string) ?? "submitted",
+      expectedCash: parseAmount(r.expected_cash as string),
+      actualCash: parseAmount(r.actual_cash as string),
+      cashVariance: parseAmount(r.cash_variance as string),
+      // expected_momo arrived in 0025; older rows simply have none.
+      expectedMomo: parseAmount(r.expected_momo as string),
+      stockVariance: parseAmount(r.stock_variance as string),
+      submittedAt: (r.submitted_at as string) ?? null,
+    })),
+  };
+}
