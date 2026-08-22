@@ -1,153 +1,166 @@
-# Wholesale Distribution Management System
+# GAB Premium Ent
 
-Supabase (PostgreSQL) backend for a wholesale distribution business, covering
-inventory, sales orders and invoicing, customers and suppliers, and role-based
-access control.
+Wholesale distribution management. Goods come in from suppliers, go out
+on vans, and the cash and credit come back — with every movement
+traceable to a person and a reason.
 
-## Status
+Built as a Next.js application on Supabase (PostgreSQL), with an
+installable driver app that keeps working when the signal does not.
 
-| Layer | State |
-|---|---|
-| Database schema, triggers, views, RLS | Executed and verified against PostgreSQL 17.10 |
-| Business rule test suite | 118 assertions, all passing |
-| Real Supabase project | Not yet connected (no credentials supplied) |
-| Next.js application | Not started |
+---
 
-The migrations have been run end to end against a real PostgreSQL 17.10
-instance, not merely checked for syntax. They have **not** yet been run
-against a hosted Supabase project. See "Verifying" below.
+## What it does
 
-## Modules
+**Warehouse** — products and categories, stock held per warehouse,
+suppliers, purchase orders and receiving. Stock is never edited: every
+change is an append-only movement, and quantities are derived from that
+ledger.
 
-**Auth & roles** — `profiles` extends `auth.users` with a `user_role` enum
-(`admin`, `manager`, `sales_rep`, `warehouse`, `accountant`). A trigger on
-`auth.users` creates the profile on signup. Every RLS policy keys off
-`has_role()`, and a guard trigger blocks self-promotion.
+**Distribution** — vans and their drivers, loads dispatched from a
+warehouse, sales made from the van, returns when it comes back, and an
+end-of-day reconciliation of both the cash and the stock.
 
-**Inventory** — `categories`, `products`, `warehouses`, `inventory`,
-`stock_movements`. Stock levels are never written directly: each change is an
-append-only row in `stock_movements`, folded into `inventory` by trigger. The
-ledger rejects UPDATE and DELETE — correct mistakes with a reversing movement.
+**Commercial** — customers with credit limits and terms, cash and credit
+sales, invoice ageing, and collections against customer accounts.
 
-**Sales** — `sales_orders` → `sales_order_items` → `invoices` → `payments`.
-Line and header totals are generated columns and triggers. Confirming an order
-reserves stock, shipping issues it, cancelling releases the reservation.
+**Insight** — role-specific dashboards, reports on sales, stock,
+purchasing, drivers, credit and reconciliation, and an append-only audit
+trail of every administrative action.
 
-**Purchasing** — `purchase_orders` / `purchase_order_items`, received through
-`receive_purchase_line(item_id, quantity)`, which posts a receipt movement,
-updates the line, refreshes standard cost, and advances PO status.
+**The driver app** — installable on a phone, and usable with no
+connection: the round, the customers, the stock on board, and the ability
+to sell, collect, return and reconcile. Work is queued on the device and
+uploaded when the signal returns, with duplicate submission prevented by
+the database rather than by hope.
 
-**Van operations** — `vans`, `van_assignments`, `van_inventory`, `van_loads`
-and `van_load_items`. `dispatch_van_load()` moves stock from warehouse to van
-as two ledger legs, and refuses to run until the driver has signed for the
-load. One open load per van, one active driver per van.
+---
 
-**Van sales** — `van_sales` / `van_sale_items`, cash or credit.
-`complete_van_sale()` verifies the stock is physically on the van, requires
-full payment for cash sales, and checks the customer's remaining credit
-before allowing a credit sale.
+## How it is put together
 
-**Credit** — `credit_transactions` is the customer ledger; positive amounts
-increase what is owed. `record_credit_payment()` books collections taken in
-the field.
+Three rules shape most of the code.
 
-**Returns** — `van_returns` / `van_return_items` capture expected, good and
-damaged quantities; `qty_missing` is derived. `approve_van_return()` restocks
-good units, writes off damage, and books shortages against the van.
+**The database is the security boundary.** Row level security is on for
+every table. Every policy narrows by the caller's own organization, taken
+from their profile and never from anything the browser sent. The
+interface asks `can(role, permission)` to decide what to *offer*; hiding
+a button is a courtesy, not a control.
 
-**Reconciliation** — `build_reconciliation()` computes expected cash
-(float + cash sales + collections) and expected stock from the ledger.
-`cash_variance` and `stock_variance` are generated columns. A driver cannot
-approve their own reconciliation: enforced by check constraint, by RLS, and
-by `approve_reconciliation()`.
+**Business rules live in the database, once.** Dispatching a load,
+completing a sale, receiving goods, approving a return, building a
+reconciliation — each is a function in PostgreSQL that owns its rule. The
+application assembles the rows and calls it. The offline sync path calls
+the same functions, so a sale made in a tunnel and one made at a desk go
+through identical logic.
 
-**Manager scopes** — `manager_category_scopes` limits a `manager` to named
-product categories. `senior_manager` is unrestricted. Enforced in RLS via
-`can_access_product()`, so it holds regardless of what the frontend does.
+**Stock is derived, never set.** All changes go through
+`stock_movements`, which is append-only. Corrections are reversing
+movements, not edits.
 
-**Multi-tenancy** — every business table carries `org_id`, business keys are
-unique per organization, and cross-organization foreign key references are
-rejected by trigger.
-
-**Reporting views** — `customer_balances`, `stock_summary`, `invoice_ageing`,
-`customer_statement` (running balance), `customer_credit_position`,
-`van_stock_summary`, `van_load_summary`, `reconciliation_variances`.
-
-## Setup
-
-1. Create a project at [supabase.com](https://supabase.com).
-2. Open **SQL Editor** and run the files in `supabase/migrations/` **in
-   filename order**, 0001 through 0014, **one file per run**. Order matters,
-   and 0010 must be its own run: PostgreSQL forbids using a new enum value in
-   the transaction that created it.
-3. Create your user under **Authentication → Users**.
-4. Promote it to admin:
-   ```sql
-   update public.profiles set role = 'admin' where email = 'you@example.com';
-   ```
-5. Copy the project URL and anon key from **Project Settings → API** for the
-   app layer.
-
-3. Copy `.env.example` to `.env.local` and fill in the project URL and keys.
-
-`0008_seed.sql` loads demo warehouses, categories, suppliers, customers,
-products, and opening stock. Skip it for a production project.
-
-The service role key bypasses every policy in this schema. Keep it server
-side only.
-
-## Role permissions
-
-| | Catalogue | Customers | Warehouse stock | Van | Sales | Credit | Approvals |
-|---|---|---|---|---|---|---|---|
-| admin | full | full | full | full | full | full | yes |
-| senior_manager | full | full | full | full | full | full | yes |
-| manager | scoped categories | full | full | full | full | read | yes |
-| sales_rep | read | write | read | – | own orders | – | no |
-| warehouse | read | read | write | load / receive | fulfil | – | returns |
-| accountant | read | read | read | read | read | full | no |
-| driver | own van only | create | none | own van only | own sales | collect | no |
-
-A `manager` with no rows in `manager_category_scopes` sees no products.
-Migration 0013 grants existing managers every category so behaviour is
-unchanged on upgrade; managers created afterwards need explicit grants.
-
-## Verifying
-
-`tests/db` runs the migrations against a real PostgreSQL 17 instance
-downloaded via npm, then asserts the business rules. No Docker required.
-
-```bash
-cd tests/db
-npm install
-npm run pg:start
-npm test          # 118 assertions
-npm run pg:stop
+```
+src/
+  app/(app)/          the screens, one directory per route
+  features/           queries, server actions and components, by domain
+  lib/
+    auth/             sessions, PIN handling
+    offline/          the device queue and the sync engine
+    supabase/         the only place the provider is named
+  types/              domain vocabulary and the permission map
+supabase/migrations/  the schema, in order
+database/            the consolidated installer and upgrade scripts
+docs/                deployment, security, PWA, offline sync
+tests/               database, browser, offline and visual suites
 ```
 
-`npm run inspect` dumps the resulting tables, constraints, triggers,
-policies and seed data.
+---
 
-What the suite covers: stock derivation and ledger immutability; order
-status driving reservations and issues; per-role authorization; tenant
-isolation between two organizations; the full van cycle from loading
-through cash and credit sales, returns with damage and shortage, to
-reconciliation and approval; driver restrictions and manager category
-scopes.
+## Running it locally
 
-The suite emulates Supabase's `auth.users`, `auth.uid()` and the
-`anon`/`authenticated`/`service_role` roles (`tests/db/shim.sql`). It is a
-close approximation, not the hosted platform: PostgREST behaviour, Auth
-email flows, storage and realtime are not covered.
+```bash
+npm install
+cp .env.example .env.local     # then fill in the four values
+npm run dev
+```
 
-## Notes
+`.env.local` needs a Supabase project. See `docs/SUPABASE_SETUP.md` — it
+takes about ten minutes and is all done from the SQL editor.
 
-- Views use `security_invoker = on`, so RLS still applies through them.
-- `mark_overdue_invoices()` flips due invoices to `overdue`; schedule it with
-  pg_cron or call it from the app.
-- `SECURITY DEFINER` functions bypass RLS by design, so each one re-checks
-  authorization through `require_role()`. Any new function of that kind must
-  do the same.
-- The stock ledger is append-only. Migration 0009 has to suspend that guard
-  to backfill `org_id`; any future migration touching historical movements
-  must do so deliberately and restore the guard.
+### Demonstration data
+
+```bash
+npm run demo:seed     # a complete, coherent business day
+npm run demo:clean    # removes only the demo organization
+```
+
+The seed creates a company, staff, products with deliberately varied
+stock, customers, a supplier, a part-received purchase order, a
+dispatched van load, cash and credit sales, a collection, a return with
+damage and shortage, and a reconciliation with a real variance. Every
+stage runs through the same functions the application uses, so a broken
+workflow fails the seed rather than producing tidy numbers.
+
+It prints the PINs it issued. It is idempotent, and it will not reset a
+PIN somebody has already changed.
+
+---
+
+## Checks
+
+```bash
+npm run verify        # lint, typecheck, build
+
+npm run db:start      # a local PostgreSQL for the schema suites
+npm run db:test       # 279 assertions across 13 suites
+npm run test:unit
+
+npm start             # then, in another shell:
+npm run hosted:pages      # every route, every role, direct URL access
+npm run hosted:workflow   # PIN sign-in and a stock adjustment, in a browser
+npm run hosted:offline    # the driver app with the network genuinely cut
+npm run visual:audit      # every screen at six viewports
+```
+
+The database suites run against a local PostgreSQL that is rebuilt from
+the migrations each time, so they are fast and safe to run repeatedly.
+The browser suites need the application running and write to whichever
+Supabase project `.env.local` points at.
+
+---
+
+## Deploying
+
+The application and the database are deployed separately and
+deliberately: a migration is never applied by a code deploy.
+
+1. `docs/SUPABASE_SETUP.md` — create the project, run the installer, verify.
+2. `docs/VERCEL_DEPLOYMENT.md` — push, import, set four environment
+   variables, deploy.
+3. `docs/DEMO_TO_PRODUCTION.md` — turning a demonstration into a client's
+   live system without rebuilding anything.
+
+---
+
+## Documentation
+
+| | |
+|---|---|
+| `docs/SUPABASE_SETUP.md` | The database, from an empty project |
+| `docs/VERCEL_DEPLOYMENT.md` | Getting it online |
+| `docs/DEMO_TO_PRODUCTION.md` | Demonstration → real client |
+| `docs/PWA.md` | The driver app |
+| `docs/OFFLINE_SYNC.md` | The queue, idempotency and conflicts |
+| `docs/SECURITY.md` | What is enforced, where, and how to test it |
+| `ROADMAP.md` | What is built, what is not, and the open risks |
+
+---
+
+## Authentication
+
+Sign-in is a four-digit PIN against an account an administrator created.
+There is no self-registration — the schema refuses it.
+
+The PIN itself is never stored. What is stored is an HMAC of it under a
+server-side pepper, so a copy of the database does not yield anybody's
+PIN. Repeated wrong PINs trip a cooldown, and an inactive account reaches
+nothing even with a valid session.
+
+PINs cannot be recovered, only reset by an administrator.

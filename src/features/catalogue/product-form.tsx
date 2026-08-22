@@ -1,0 +1,166 @@
+"use client";
+
+import { useActionState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
+import { createProductAction, updateProductAction  } from "./actions";
+import { INITIAL_CATALOGUE_STATE } from "@/features/catalogue/state";
+import { Button } from "@/components/ui/button";
+import { Input, Select, Textarea, Field } from "@/components/ui/field";
+import { Alert } from "@/components/ui/states";
+import { UNITS, unitLabel } from "@/lib/catalogue/units";
+import type { ProductRow, CategoryRow } from "./queries";
+
+/**
+ * One form for creating and editing.
+ *
+ * Values typed by the person are echoed back when the server rejects
+ * something, so a validation error never costs them the work. Stock is
+ * absent on purpose: quantities move through an adjustment, which
+ * records why.
+ */
+export function ProductForm({
+  product,
+  categories,
+  onDone,
+}: {
+  product?: ProductRow;
+  categories: CategoryRow[];
+  onDone?: () => void;
+}) {
+  const router = useRouter();
+  const [state, submit, pending] = useActionState(
+    product ? updateProductAction : createProductAction,
+    INITIAL_CATALOGUE_STATE,
+  );
+
+  useEffect(() => {
+    if (state.status !== "done") return;
+    if (state.createdId) router.push(`/products/${state.createdId}`);
+    else { router.refresh(); onDone?.(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.status, state.createdId]);
+
+  const v = state.values;
+  const err = state.fieldErrors ?? {};
+  const active = categories.filter((c) => c.isActive || c.id === product?.categoryId);
+
+  return (
+    <form action={submit} className="space-y-4">
+      {product && <input type="hidden" name="productId" value={product.id} />}
+      {state.status === "error" && !Object.keys(err).length && (
+        <Alert tone="danger">{state.message}</Alert>
+      )}
+
+      <Field label="Product name" htmlFor="name" required error={err.name}>
+        <Input
+          id="name" name="name" required autoComplete="off"
+          defaultValue={v?.name ?? product?.name ?? ""}
+          aria-invalid={Boolean(err.name)}
+          placeholder="Sparkling Water 500ml"
+        />
+      </Field>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field
+          label="Product code" htmlFor="sku" required error={err.sku}
+          hint={product ? "A code cannot be changed once history refers to it." : undefined}
+        >
+          <Input
+            id="sku" name="sku" required autoComplete="off"
+            defaultValue={v?.sku ?? product?.sku ?? ""}
+            readOnly={Boolean(product)}
+            aria-invalid={Boolean(err.sku)}
+            className={product ? "opacity-60" : undefined}
+            placeholder="SKU-1001"
+          />
+        </Field>
+
+        <Field label="Unit" htmlFor="unit" required error={err.unit}>
+          <Select id="unit" name="unit" defaultValue={v?.unit ?? product?.unit ?? "piece"}>
+            {UNITS.map((unit) => (
+              <option key={unit} value={unit}>{unitLabel(unit)}</option>
+            ))}
+          </Select>
+        </Field>
+      </div>
+
+      <Field label="Category" htmlFor="categoryId" error={err.categoryId}>
+        <Select
+          id="categoryId" name="categoryId"
+          defaultValue={v?.categoryId ?? product?.categoryId ?? ""}
+        >
+          <option value="">No category</option>
+          {active.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}{c.isActive ? "" : " (retired)"}
+            </option>
+          ))}
+        </Select>
+      </Field>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Cost price" htmlFor="costPrice" required error={err.costPrice} hint="In cedis">
+          <Input
+            id="costPrice" name="costPrice" required inputMode="decimal"
+            defaultValue={v?.costPrice ?? product?.costPrice?.toFixed(2) ?? ""}
+            aria-invalid={Boolean(err.costPrice)}
+            placeholder="42.00"
+          />
+        </Field>
+        <Field label="Selling price" htmlFor="listPrice" required error={err.listPrice} hint="In cedis">
+          <Input
+            id="listPrice" name="listPrice" required inputMode="decimal"
+            defaultValue={v?.listPrice ?? product?.listPrice?.toFixed(2) ?? ""}
+            aria-invalid={Boolean(err.listPrice)}
+            placeholder="58.00"
+          />
+        </Field>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field
+          label="Low stock threshold" htmlFor="reorderPoint" error={err.reorderPoint}
+          hint="Flagged when available stock falls to this"
+        >
+          <Input
+            id="reorderPoint" name="reorderPoint" inputMode="numeric"
+            defaultValue={v?.reorderPoint ?? String(product?.reorderPoint ?? 0)}
+            aria-invalid={Boolean(err.reorderPoint)}
+          />
+        </Field>
+        <Field
+          label="Suggested reorder quantity" htmlFor="reorderQty" error={err.reorderQty}
+        >
+          <Input
+            id="reorderQty" name="reorderQty" inputMode="numeric"
+            defaultValue={v?.reorderQty ?? String(product?.reorderQty ?? 0)}
+            aria-invalid={Boolean(err.reorderQty)}
+          />
+        </Field>
+      </div>
+
+      <Field label="Description" htmlFor="description">
+        <Textarea
+          id="description" name="description"
+          defaultValue={v?.description ?? product?.description ?? ""}
+          placeholder="Anything worth knowing when picking or selling this."
+        />
+      </Field>
+
+      <Field label="Status" htmlFor="isActive">
+        <Select
+          id="isActive" name="isActive"
+          defaultValue={v?.isActive ?? String(product?.isActive ?? true)}
+        >
+          <option value="true">Active</option>
+          <option value="false">Inactive</option>
+        </Select>
+      </Field>
+
+      <Button type="submit" size="lg" loading={pending} className="w-full">
+        {product ? "Save changes" : "Create product"}
+      </Button>
+    </form>
+  );
+}

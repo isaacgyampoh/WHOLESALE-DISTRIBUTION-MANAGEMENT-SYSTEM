@@ -69,6 +69,13 @@ export async function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     // Everything except static assets and image optimisation.
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    //
+    // sw.js and the manifest are excluded deliberately. A browser
+    // refuses to register a service worker whose script came back via a
+    // redirect, so sending an unauthenticated request for /sw.js to the
+    // sign-in page does not just fail the redirect - it permanently
+    // fails registration, and with it the whole offline app. Neither
+    // file carries anything private.
+    "/((?!_next/static|_next/image|favicon.ico|sw\\.js|manifest\\.webmanifest|icons/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };

@@ -50,6 +50,8 @@ const STATUS_TONES: Record<string, Tone> = {
   // Invoices
   issued: "info", partially_paid: "caution", paid: "positive",
   overdue: "critical", void: "neutral",
+  // Van sales and purchase orders
+  completed: "positive", partially_received: "caution", received: "positive",
 };
 
 const LABELS: Record<string, string> = {

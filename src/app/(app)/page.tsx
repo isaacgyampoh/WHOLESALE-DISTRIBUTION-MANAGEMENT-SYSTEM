@@ -5,7 +5,7 @@ import { can } from "@/types/permissions";
 import { getDashboardMetrics, getOpenVariances, getLowStock } from "@/features/dashboard/queries";
 import { getDriverSummary } from "@/features/dashboard/driver-queries";
 import { DriverDashboard } from "@/features/dashboard/driver-dashboard";
-import { StatTile } from "@/features/dashboard/stat-tile";
+import { StatTile } from "@/components/ui/stat-tile";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardHeader } from "@/components/ui/card";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/table";

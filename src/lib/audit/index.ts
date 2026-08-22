@@ -23,11 +23,55 @@ export type AuditAction =
   | "user.role_changed"
   | "user.pin_reset"
   | "user.pin_changed"
-  | "user.categories_changed";
+  | "user.categories_changed"
+  | "product.created"
+  | "product.updated"
+  | "product.activated"
+  | "product.deactivated"
+  | "category.created"
+  | "category.updated"
+  | "category.activated"
+  | "category.deactivated"
+  | "stock.adjusted"
+  | "payment.recorded"
+  | "load.created"
+  | "load.dispatched"
+  | "load.cancelled"
+  | "return.submitted"
+  | "return.approved"
+  | "reconciliation.submitted"
+  | "reconciliation.approved"
+  | "reconciliation.rejected"
+  | "van.created"
+  | "van.updated"
+  | "van.activated"
+  | "van.deactivated"
+  | "van.driver_assigned"
+  | "customer.created"
+  | "customer.updated"
+  | "customer.activated"
+  | "customer.deactivated"
+  | "warehouse.created"
+  | "warehouse.updated"
+  | "warehouse.activated"
+  | "warehouse.deactivated"
+  | "supplier.created"
+  | "supplier.updated"
+  | "supplier.activated"
+  | "supplier.deactivated"
+  | "purchase.created"
+  | "purchase.submitted"
+  | "purchase.received"
+  | "purchase.cancelled"
+  | "sale.recorded"
+  | "sale.synced";
 
 export interface AuditEntry {
   action: AuditAction;
-  targetType: "profile";
+  targetType:
+    | "profile" | "product" | "category" | "customer"
+    | "van" | "van_load" | "van_return" | "reconciliation"
+    | "warehouse" | "supplier" | "purchase_order" | "van_sale";
   targetId?: string;
   targetLabel?: string;
   before?: Record<string, unknown>;

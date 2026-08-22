@@ -13,29 +13,50 @@ Tracks the phases in the master development prompt. Updated as work lands.
 | Phase 2 — Next.js foundation | Done | `npm run verify` passes |
 | Phase 3 — Design system (core) | Partial | Tokens, primitives, shell built |
 | Phase 5A — Auth & application shell | Done | 44 assertions against hosted Supabase |
+| Phase 5B — Staff, roles, permissions, audit trail | Done | 26 database assertions; screens audited at 6 viewports |
+| Phase 6 — Catalogue: products, categories, stock, movements | Done | 27 database assertions; 15 end-to-end assertions through the browser |
+| Phase 7 — Every remaining screen: warehouses, purchasing, vans, loads, returns, reconciliation, customers, sales, credit, collections, reports, settings | Done | 103 route assertions across 4 roles |
+| Phase 8 — Write workflows: purchase orders and receiving, van loads and dispatch, returns, reconciliation, customers, vans, warehouses, suppliers | Done | Server actions over the database functions that own each rule |
+| Phase 9 — Driver PWA and offline synchronisation | Done | 30 database assertions; 16 browser assertions with the network genuinely cut |
 | Phase 4 — Hosted gate (part 1) | Partial | GitHub pushed; hosted CLI path abandoned |
 | Consolidated SQL installer | Done | Installed into a fresh database and compared object-by-object |
 
 ## Verified database state
 
-29 tables · 8 views · 5 enums · RLS on all 29 tables.
-**152 assertions across 8 suites, 0 failures** (`npm run db:test`).
+32 tables · 8 views · 14 enums · 40 functions · RLS on all 32 tables.
+**279 assertions across 13 suites, 0 failures** (`npm run db:test`).
 Migration 0015 adds Data API grants and closes an anonymous
 authorization bypass; policy and trigger counts change accordingly.
+Migration 0019 adds the audit trail, 0020 adds category status and
+withdraws the privilege to write `inventory` directly, so quantity can
+only move through the ledger. 0021 lets a trusted server-side role
+delete audit rows so a tenant can be removed at all; rewriting an entry
+stays impossible for every caller. 0022 adds the offline sync engine:
+`sync_operations` keyed on a device-generated uuid, so a retried upload
+cannot apply the same sale twice.
 
 ## Not started
 
-Phases 5B-5K: authentication hardening, products, warehouses, inventory,
-vans, drivers, van loading, customers, cash sales, credit sales, payments,
-van returns, reconciliation, manager scopes UI, reports, driver PWA,
-offline sync, security hardening, production deployment.
+Production deployment, which is the owner's to perform:
+`docs/SUPABASE_SETUP.md`, `docs/VERCEL_DEPLOYMENT.md`.
+
+Every navigation destination resolves to a real screen backed by real
+queries, and every workflow can be driven from the interface.
+`npm run hosted:pages` asserts the first for each role.
+
+Business rules stay in the database. The screens assemble rows and call
+the function that owns the rule — `dispatch_van_load`,
+`complete_van_sale`, `receive_purchase_line`, `approve_van_return`,
+`build_reconciliation`, `record_credit_payment`. The offline sync path
+calls the same functions, so a sale made in a tunnel and one made at a
+desk go through identical logic.
 
 ## Open risks
 
 | Risk | Impact | Status |
 |---|---|---|
-| Nothing pushed to GitHub; remote has zero branches | — | RESOLVED: `main` pushed, 9 commits, 15 migrations on remote |
-| Migrations never run against hosted Supabase | Platform behaviour (PostgREST, Auth, storage) unproven | Blocked on project credentials |
+| Nothing pushed to GitHub; remote has zero branches | — | RESOLVED: `main` pushed, 20 migrations in the tree |
+| Migrations never run against hosted Supabase | — | RESOLVED: 0001-0020 installed and verified on the hosted project |
 | No `supabase/config.toml` | — | RESOLVED: added, parses, `db push` idempotent |
 | Auth flow untested end to end | — | RESOLVED: 20 auth + 24 shell assertions against the hosted project |
 | Hosted gate suite never executed | 60+ assertions written, none run | Superseded: deployment is now by SQL installer |
@@ -44,9 +65,21 @@ offline sync, security hardening, production deployment.
 ## Technical debt
 
 - `tests/db` is excluded from the Next ESLint config; it has no linter of its own.
-- No unit/integration test runner for application code yet (Vitest/Playwright not installed).
-- Design system covers the primitives in use; modal, drawer, tabs, toast and
-  pagination are not built yet.
+- No unit/integration test runner for application code yet (Vitest not installed).
+  Playwright drives the browser suites in `tests/visual`, but nothing covers
+  server actions or query modules in isolation.
+- Design system covers the primitives in use; dialog and pagination are now
+  built, drawer, tabs and toast are not.
+- The end-to-end suites (`hosted:workflow`, `hosted:pages`, `visual:audit`)
+  need the application running and write to the hosted project. They are not
+  part of `npm run verify`.
+- Stock transfers between warehouses exist in the schema
+  (`stock_transfers`) but have no screen. Movement between warehouses is
+  currently done as an adjustment out and an adjustment in, which is
+  auditable but does not link the two halves.
+- The offline snapshot persists in IndexedDB until browser data is
+  cleared. The shell cache is emptied at sign-in; the queue deliberately
+  is not, because unsent work must survive a sign-out.
 
 ## Architectural rules established
 

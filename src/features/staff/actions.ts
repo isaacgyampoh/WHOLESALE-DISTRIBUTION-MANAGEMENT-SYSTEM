@@ -8,6 +8,7 @@ import { isValidPinFormat, PIN_LENGTH } from "@/lib/auth/pin";
 import { recordAudit } from "@/lib/audit";
 import { USER_ROLES, type UserRole } from "@/types/domain";
 import type { AuthenticatedUser } from "@/types/domain";
+import type { StaffActionState } from "./state";
 
 /**
  * Administrative changes to staff.
@@ -18,17 +19,6 @@ import type { AuthenticatedUser } from "@/types/domain";
  * to, or what they are allowed to do: a hidden button is a courtesy, not
  * a control.
  */
-
-export interface StaffActionState {
-  status: "idle" | "error" | "done";
-  message?: string;
-  /** Shown once after creation or reset, never retrievable later. */
-  revealedPin?: string;
-  staffName?: string;
-}
-
-const IDLE: StaffActionState = { status: "idle" };
-export const INITIAL_STAFF_STATE = IDLE;
 
 /**
  * Fetch the target and confirm it belongs to the actor's organization.

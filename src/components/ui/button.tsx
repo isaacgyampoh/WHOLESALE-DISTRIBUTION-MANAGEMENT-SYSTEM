@@ -18,7 +18,11 @@ const VARIANTS: Record<Variant, string> = {
 
 const SIZES: Record<Size, string> = {
   // Finger-sized on touch, compact where there is a real pointer.
-  sm: "h-9 px-3 text-xs gap-1.5 pointer-fine:h-8",
+  // 44px under a finger, compact where there is a real pointer. A small
+  // button is still a button somebody has to hit: table row actions -
+  // approve, receive, dispatch - are mostly used on a phone, and 36px
+  // was below the minimum on every one of them.
+  sm: "h-11 px-3 text-xs gap-1.5 pointer-fine:h-8",
   md: "h-11 px-4 text-sm gap-2 pointer-fine:h-9.5",
   lg: "h-11 px-5 text-sm gap-2",
   // Driver PWA: thumb-sized targets, used one-handed in a van.

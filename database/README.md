@@ -12,6 +12,7 @@ CLI tools.
 | `UPGRADE_0017_SIGNUP_GUARD.sql` | Upgrade for a database installed before migration 0017. |
 | `UPGRADE_0018_PIN_AUTH.sql` | Upgrade for a database installed before migration 0018. Adds PIN sign-in. |
 | `UPGRADE_0019_AUDIT_LOG.sql` | Upgrade for a database installed before migration 0019. Adds the audit trail. |
+| `UPGRADE_0020_CATALOGUE.sql` | Upgrade for a database installed before migration 0020. Adds category status and locks stock to the ledger. |
 | `build.mjs` | Regenerates the installer from `supabase/migrations`. You do not need to run this. |
 
 ---

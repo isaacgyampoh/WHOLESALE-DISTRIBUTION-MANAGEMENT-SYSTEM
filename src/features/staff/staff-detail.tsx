@@ -3,8 +3,9 @@
 import { useActionState, useState } from "react";
 import {
   setStaffActiveAction, changeRoleAction, setManagerCategoriesAction,
-  resetStaffPinAction, INITIAL_STAFF_STATE,
+  resetStaffPinAction,
 } from "./actions";
+import { INITIAL_STAFF_STATE } from "./state";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";

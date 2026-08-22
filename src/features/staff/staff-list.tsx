@@ -2,7 +2,8 @@
 
 import { useActionState, useState } from "react";
 import Link from "next/link";
-import { createStaffAction, resetStaffPinAction, INITIAL_STAFF_STATE } from "./actions";
+import { createStaffAction, resetStaffPinAction } from "./actions";
+import { INITIAL_STAFF_STATE } from "./state";
 import { DigitInput } from "@/components/ui/digit-input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";

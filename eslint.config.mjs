@@ -16,6 +16,7 @@ const eslintConfig = defineConfig([
     // and is linted by its own conventions.
     "tests/db/**",
     "tests/hosted/**",
+    "tests/visual/**",
   ]),
 ]);
 

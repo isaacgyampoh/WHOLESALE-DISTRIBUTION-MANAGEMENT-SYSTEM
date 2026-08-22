@@ -1,4 +1,4 @@
-import { StatTile } from "./stat-tile";
+import { StatTile } from "@/components/ui/stat-tile";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
 import { EmptyState, Alert } from "@/components/ui/states";
 import { StatusBadge } from "@/components/ui/badge";

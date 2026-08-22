@@ -37,6 +37,11 @@ const TABLES = [
   "stock_movements", "inventory",
   "manager_category_scopes", "products", "categories",
   "customers", "suppliers", "warehouses",
+  // Last, and only reachable because this runs as a trusted role:
+  // audit_log refuses every other caller, and its organization
+  // reference is ON DELETE RESTRICT, so the tenant cannot go until its
+  // history does. See migration 0021.
+  "audit_log",
 ];
 
 for (const table of TABLES) {

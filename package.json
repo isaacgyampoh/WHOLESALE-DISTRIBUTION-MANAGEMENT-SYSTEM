@@ -22,7 +22,12 @@
     "visual": "npm --prefix tests/visual run shots",
     "test:unit": "node --test tests/unit/*.test.ts",
     "demo:seed": "node scripts/demo/seed.mjs",
-    "demo:clean": "node scripts/demo/clean.mjs"
+    "demo:clean": "node scripts/demo/clean.mjs",
+    "hosted:workflow": "node tests/visual/test_workflow.mjs",
+    "hosted:pages": "node tests/visual/test_pages.mjs",
+    "hosted:offline": "node tests/visual/test_offline.mjs",
+    "icons": "node scripts/icons/generate.mjs",
+    "visual:audit": "node tests/visual/audit.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",

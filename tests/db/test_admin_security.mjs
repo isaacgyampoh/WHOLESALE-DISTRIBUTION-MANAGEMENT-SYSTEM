@@ -115,6 +115,46 @@ ok("a PIN digest is stripped too", !("pin_hash" in (stored.after ?? {})),
    JSON.stringify(stored.after));
 ok("the rest of the change is kept", stored.after?.role === "admin");
 
+console.log("\n=== the append-only rule, after migration 0021 ===");
+// 0021 lets a trusted role DELETE so a tenant can be removed. What must
+// not have changed is anything a signed-in user can do, or anyone's
+// ability to rewrite an entry.
+r = await as(admin, `update audit_log set action='tampered' returning id`);
+ok("an admin still cannot rewrite an entry", !r.ok, r.error?.slice(0, 46));
+r = await as(admin, `delete from audit_log returning id`);
+ok("an admin still cannot delete an entry", !r.ok, r.error?.slice(0, 46));
+
+const grants = (await c.query(
+  `select privilege_type from information_schema.role_table_grants
+    where table_name='audit_log' and grantee='authenticated'`)).rows.map((x) => x.privilege_type);
+ok("authenticated is granted SELECT and nothing else",
+   grants.length === 1 && grants[0] === "SELECT", grants.join(", "));
+
+// A trusted role may now clear a tenant's history, which is what makes
+// removing that tenant possible at all. It still may not rewrite one.
+const purgeOrg = (await c.query(
+  `insert into organizations (name, slug) values ('Purge Co','purge-co') returning id`)).rows[0].id;
+await c.query(
+  `insert into audit_log (org_id, actor_name, action, target_type)
+   values ($1,'Someone','user.created','profile')`, [purgeOrg]);
+
+// The guard is a row trigger, so this has to match a row to prove
+// anything: an UPDATE that hits nothing succeeds without firing it.
+try {
+  await c.query(`update audit_log set action='tampered' where org_id=$1`, [purgeOrg]);
+  ok("a trusted role cannot rewrite history either", false, "the update was allowed");
+} catch (e) {
+  ok("a trusted role cannot rewrite history either", true, e.message.slice(0, 40));
+}
+
+try {
+  await c.query(`delete from audit_log where org_id=$1`, [purgeOrg]);
+  await c.query(`delete from organizations where id=$1`, [purgeOrg]);
+  ok("a tenant with history can be removed", true);
+} catch (e) {
+  ok("a tenant with history can be removed", false, e.message.slice(0, 60));
+}
+
 console.log("\n=== an inactive account reaches nothing ===");
 await c.query(`update profiles set is_active=false where id=$1`, [manager]);
 for (const table of ["products", "customers", "profiles", "audit_log"]) {

@@ -36,6 +36,12 @@ export const NAV_SECTIONS: readonly NavSection[] = [
         label: "Dashboard", href: "/", permissions: ["dashboard.view"],
         icon: "LayoutDashboard", mobilePriority: 0,
       },
+      // The offline-capable round. Anyone who can record a sale can use
+      // it; for a driver it is the whole application.
+      {
+        label: "My round", href: "/driver", permissions: ["sales.create"],
+        icon: "Truck", mobilePriority: 1,
+      },
     ],
   },
   {
@@ -43,7 +49,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     items: [
       {
         label: "Products", href: "/products", permissions: ["products.view"],
-        icon: "Package", mobilePriority: 4,
+        icon: "Package", mobilePriority: 5,
       },
       // Category maintenance is a management screen, not something a
       // driver or a sales rep has any use for.
@@ -56,9 +62,12 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       { label: "Warehouses", href: "/warehouses", permissions: ["inventory.view"], icon: "Warehouse" },
       {
         label: "Stock", href: "/inventory", permissions: ["inventory.view"],
-        icon: "Boxes", mobilePriority: 3,
+        icon: "Boxes", mobilePriority: 4,
       },
-      { label: "Movements", href: "/movements", permissions: ["inventory.view"], icon: "ArrowLeftRight" },
+      {
+        label: "Movements", href: "/inventory/movements",
+        permissions: ["inventory.view"], icon: "ArrowLeftRight",
+      },
       { label: "Purchasing", href: "/purchasing", permissions: ["inventory.transfer"], icon: "Truck" },
     ],
   },
@@ -68,7 +77,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       { label: "Vans", href: "/vans", permissions: ["vans.view"], icon: "Van" },
       {
         label: "Van loads", href: "/loads", permissions: ["loads.view"],
-        icon: "ClipboardList", mobilePriority: 5,
+        icon: "ClipboardList", mobilePriority: 6,
       },
       { label: "Returns", href: "/returns", permissions: ["returns.view"], icon: "Undo2" },
       { label: "Reconciliation", href: "/reconciliation", permissions: ["reconciliation.view"], icon: "Scale" },
@@ -79,16 +88,16 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     items: [
       {
         label: "Customers", href: "/customers", permissions: ["customers.view"],
-        icon: "Store", mobilePriority: 2,
+        icon: "Store", mobilePriority: 3,
       },
       {
         label: "Sales", href: "/sales", permissions: ["sales.view"],
-        icon: "Receipt", mobilePriority: 1,
+        icon: "Receipt", mobilePriority: 2,
       },
       { label: "Credit", href: "/credit", permissions: ["credit.view"], icon: "CreditCard" },
       {
-        label: "Payments", href: "/payments", permissions: ["payments.view"],
-        icon: "Banknote", mobilePriority: 6,
+        label: "Collections", href: "/payments", permissions: ["payments.view"],
+        icon: "Banknote", mobilePriority: 7,
       },
     ],
   },
@@ -99,6 +108,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       { label: "Staff", href: "/users", permissions: ["users.manage"], icon: "Users" },
       { label: "Permissions", href: "/permissions", permissions: ["users.manage"], icon: "ShieldCheck" },
       { label: "Audit trail", href: "/audit", permissions: ["users.manage"], icon: "History" },
+      { label: "Settings", href: "/settings", permissions: ["users.manage"], icon: "Settings" },
     ],
   },
 ];

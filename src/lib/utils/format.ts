@@ -15,12 +15,18 @@ export function formatMoney(
   currency = "GHS",
   locale = "en-GH",
 ): string {
-  return new Intl.NumberFormat(locale, {
+  const formatted = new Intl.NumberFormat(locale, {
     style: "currency",
     currency,
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(parseAmount(value));
+
+  // Intl writes the cedi as "GH\u20b5". The business writes it "\u20b5", and on a
+  // phone the two extra characters are the difference between a figure
+  // that fits its card and one that truncates. Only the cedi is
+  // rewritten; any other currency keeps whatever Intl chose for it.
+  return currency === "GHS" ? formatted.replace("GH\u20b5", "\u20b5") : formatted;
 }
 
 /** Signed money, for variances where direction is the point. */

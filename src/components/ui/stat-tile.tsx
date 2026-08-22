@@ -1,4 +1,5 @@
 import * as React from "react";
+import Link from "next/link";
 import { cn } from "@/lib/utils/cn";
 
 /**
@@ -53,10 +54,15 @@ export function StatTile({
   );
 
   return href ? (
-    <a href={href} className={className}>
+    <Link href={href} className={className}>
       {body}
-    </a>
+    </Link>
   ) : (
     <div className={className}>{body}</div>
   );
+}
+
+/** A row of tiles. Two across on a phone, four where there is room. */
+export function StatGrid({ children }: { children: React.ReactNode }) {
+  return <div className="mb-5 grid grid-cols-2 gap-3 xl:grid-cols-4">{children}</div>;
 }

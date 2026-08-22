@@ -30,6 +30,15 @@ export function SessionWatcher() {
         if (event === "INITIAL_SESSION") return;
       }
 
+      // With no connection, a token refresh fails and the client
+      // reports SIGNED_OUT. Acting on that would throw a driver out of
+      // the app in the middle of a round, onto a sign-in screen that
+      // cannot load either - and their queued sales with it. A genuine
+      // sign-out cannot happen offline: it is a server action. So while
+      // the device is offline these events are ignored, and the next
+      // real request re-resolves identity on the server anyway.
+      if (typeof navigator !== "undefined" && !navigator.onLine) return;
+
       if (event === "SIGNED_OUT") {
         router.replace("/sign-in");
         return;

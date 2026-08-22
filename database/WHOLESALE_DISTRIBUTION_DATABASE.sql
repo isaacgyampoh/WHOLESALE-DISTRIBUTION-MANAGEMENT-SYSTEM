@@ -4105,3 +4105,612 @@ create policy audit_log_read on public.audit_log
 -- No insert, update or delete policy for authenticated. Even with a
 -- privilege granted by mistake, row level security would refuse.
 
+
+-- ====================================================================
+-- 0020_category_status.sql
+-- ====================================================================
+-- =====================================================================
+-- 0020_category_status.sql
+--
+-- Lets a category be retired without being destroyed.
+--
+-- Categories are referenced by products, and products by stock
+-- movements, sales and van loads. Deleting one would either fail on a
+-- foreign key or, worse, orphan history. Retiring it keeps every past
+-- record readable while removing the category from future use.
+--
+-- Products already work this way (products.is_active). This brings
+-- categories into line.
+--
+-- Nothing else changes: the manager category scopes from 0011, the
+-- can_access_category() helper and every policy that depends on them
+-- are untouched.
+-- =====================================================================
+
+alter table public.categories
+  add column is_active boolean not null default true;
+
+comment on column public.categories.is_active is
+  'A retired category keeps its products and their history but is not '
+  'offered when creating or reassigning a product.';
+
+-- Category lists are almost always filtered by status within one
+-- organization.
+create index categories_org_active_idx
+  on public.categories (org_id, is_active);
+
+-- The reporting view gains the two columns the product screens filter
+-- on, so a product list does not have to join twice to show stock.
+-- Appended at the end: CREATE OR REPLACE VIEW cannot reorder columns.
+create or replace view public.stock_summary
+with (security_invoker = on) as
+  select
+    p.id            as product_id,
+    p.sku,
+    p.name,
+    p.reorder_point,
+    p.reorder_qty,
+    p.cost_price,
+    p.list_price,
+    coalesce(sum(inv.qty_on_hand), 0)   as qty_on_hand,
+    coalesce(sum(inv.qty_reserved), 0)  as qty_reserved,
+    coalesce(sum(inv.qty_available), 0) as qty_available,
+    coalesce(sum(inv.qty_on_hand), 0) * p.cost_price as stock_value,
+    coalesce(sum(inv.qty_available), 0) <= p.reorder_point as needs_reorder,
+    p.org_id,
+    p.category_id,
+    p.unit_of_measure,
+    p.is_active
+  from public.products p
+  left join public.inventory inv on inv.product_id = p.id
+  where p.is_active
+  group by p.id, p.sku, p.name, p.reorder_point, p.reorder_qty,
+           p.cost_price, p.list_price, p.org_id, p.category_id,
+           p.unit_of_measure, p.is_active;
+
+-- ------------------------------------------------- stock stays derived
+-- The whole inventory design rests on quantities coming from the ledger,
+-- yet inventory was directly writable by an administrator, a manager or
+-- a warehouse controller. The application never does it, but a principle
+-- the database does not enforce is a principle that will eventually be
+-- broken.
+--
+-- Quantities are now written only by the triggers and functions that
+-- post movements, which run as their owner and are unaffected by this.
+-- bin_location stays editable: it describes where stock sits, not how
+-- much there is.
+revoke insert, update, delete on public.inventory from authenticated;
+grant select on public.inventory to authenticated;
+grant update (bin_location) on public.inventory to authenticated;
+
+comment on table public.inventory is
+  'Derived stock levels. Written only by the movement triggers; a '
+  'signed-in user may read it and set a bin location, nothing more.';
+
+
+-- ====================================================================
+-- 0021_audit_tenant_purge.sql
+-- ====================================================================
+-- ===================================================================
+-- 0021  Removing a tenant must remain possible
+-- ===================================================================
+--
+-- audit_log is append-only, enforced two ways: `authenticated` is
+-- granted SELECT and nothing else, and a trigger refuses UPDATE and
+-- DELETE for everyone including the service role.
+--
+-- That second guard was absolute, and it made a whole class of
+-- operation impossible. audit_log.org_id references organizations with
+-- ON DELETE RESTRICT, so once an organization had a single audited
+-- action its row could never be removed: the audit entries could not be
+-- deleted, and the organization could not be deleted while they existed.
+-- `npm run demo:clean` hit exactly this and left the demo tenant behind.
+--
+-- The rule worth keeping is that history is never *rewritten*, and that
+-- nobody reaching the database through the Data API can touch it at all.
+-- Neither is weakened here:
+--
+--   * UPDATE stays refused for every caller, without exception. An
+--     audit entry that says something other than what happened is the
+--     failure this table exists to prevent.
+--   * DELETE stays refused for every caller that is not a trusted
+--     server-side role. anon and authenticated are not trusted, and
+--     `authenticated` has no DELETE privilege to begin with, so for a
+--     signed-in user nothing changes.
+--   * DELETE by a trusted role is now permitted, which is what removing
+--     a tenant and honouring a retention policy both require.
+--
+-- A caller holding the service role could already read every row in
+-- every table and write to any of them; this does not widen what such a
+-- key can reach.
+
+create or replace function public.block_audit_mutation()
+returns trigger
+language plpgsql
+as $$
+begin
+  if tg_op = 'DELETE' and public.is_trusted_context() then
+    -- Removing a tenant, or ageing out history under a retention
+    -- policy. Never reachable from the Data API.
+    return old;
+  end if;
+
+  raise exception 'audit_log is append-only; history cannot be altered'
+    using errcode = '42501';
+end;
+$$;
+
+comment on function public.block_audit_mutation is
+  'Refuses every UPDATE, and every DELETE except from a trusted '
+  'server-side role. Rewriting history is never allowed; removing a '
+  'tenant wholesale is.';
+
+
+-- ====================================================================
+-- 0022_offline_sync.sql
+-- ====================================================================
+-- ===================================================================
+-- 0022  Offline operation and synchronisation
+-- ===================================================================
+--
+-- A driver in a van loses signal. They must keep selling, collecting
+-- and recording returns, and none of it may be lost or duplicated when
+-- the phone reconnects.
+--
+-- The rule that makes this safe is that the *client* names the
+-- operation. Every offline mutation carries a uuid generated on the
+-- device before the work is queued. That uuid is the primary key here,
+-- so a retry - a flaky upload, a killed browser, a user pressing
+-- refresh - collides on insert and returns the original outcome rather
+-- than performing the work twice. Idempotency is a database
+-- constraint, not a convention the client is trusted to honour.
+--
+-- What the queue may never carry is a credential. It holds an
+-- operation, a payload and a device id. Authorization is re-derived on
+-- the server from the session presenting the row, never read from the
+-- payload: a device that has been offline may be holding a role that
+-- was revoked while it was away.
+
+-- ------------------------------------------------------------------
+-- The queue
+-- ------------------------------------------------------------------
+create type public.sync_status as enum (
+  'applied',      -- done; the result is recorded
+  'failed',       -- rejected for good reason, and will not be retried
+  'conflict'      -- the world moved: stock gone, product retired
+);
+
+create type public.sync_operation as enum (
+  'van_sale',
+  'collection',
+  'van_return',
+  'reconciliation'
+);
+
+create table public.sync_operations (
+  -- Generated on the device. This is what makes a retry safe.
+  id            uuid primary key,
+  org_id        uuid not null references public.organizations(id) on delete cascade,
+  profile_id    uuid not null references public.profiles(id) on delete cascade,
+  device_id     text not null,
+  operation     public.sync_operation not null,
+  payload       jsonb not null,
+  status        public.sync_status not null,
+  result        jsonb,
+  error         text,
+  attempts      integer not null default 1,
+  -- When the driver performed it, as the device saw it. Kept apart
+  -- from received_at: the gap between them is how long the round was
+  -- offline, and it is the first thing anyone investigating a
+  -- discrepancy wants to see.
+  occurred_at   timestamptz not null,
+  received_at   timestamptz not null default now(),
+  constraint sync_operations_device_not_blank check (length(trim(device_id)) > 0),
+  constraint sync_operations_attempts_sane check (attempts between 1 and 1000)
+);
+
+comment on table public.sync_operations is
+  'One row per offline mutation, keyed by a client-generated uuid so a '
+  'retried upload cannot apply the same work twice. Never holds a '
+  'credential.';
+comment on column public.sync_operations.id is
+  'Idempotency key, generated on the device before queueing.';
+
+create index sync_operations_org_time on public.sync_operations (org_id, received_at desc);
+create index sync_operations_profile on public.sync_operations (profile_id, received_at desc);
+create index sync_operations_status on public.sync_operations (org_id, status, received_at desc);
+
+alter table public.sync_operations enable row level security;
+
+-- A person sees their own sync history. A supervisor sees the
+-- organization's, because a failed sale that never arrived is an
+-- operational problem, not a private one.
+create policy sync_operations_select on public.sync_operations
+  for select using (
+    org_id = public.auth_org_id()
+    and (
+      profile_id = auth.uid()
+      or public.has_role('admin', 'senior_manager', 'manager', 'accountant')
+    )
+  );
+
+-- Nothing writes here through the Data API. Rows are written by
+-- sync_submit(), which is SECURITY DEFINER and re-checks authorization.
+revoke all on public.sync_operations from anon, authenticated;
+grant select on public.sync_operations to authenticated;
+grant all on public.sync_operations to service_role;
+
+-- History of what a device did is not editable, for the same reason the
+-- audit trail is not.
+create or replace function public.block_sync_mutation()
+returns trigger
+language plpgsql
+as $$
+begin
+  if public.is_trusted_context() then
+    return case tg_op when 'DELETE' then old else new end;
+  end if;
+  raise exception 'sync history cannot be altered'
+    using errcode = '42501';
+end;
+$$;
+
+create trigger sync_operations_no_edit
+  before update or delete on public.sync_operations
+  for each row execute function public.block_sync_mutation();
+
+-- ------------------------------------------------------------------
+-- Applying a queued operation
+-- ------------------------------------------------------------------
+--
+-- One entry point for every offline mutation. It is deliberately the
+-- only way a queued operation reaches the business functions, so the
+-- idempotency check cannot be skipped by calling the underlying
+-- function directly from the client.
+create or replace function public.sync_submit(
+  p_id           uuid,
+  p_device_id    text,
+  p_operation    public.sync_operation,
+  p_payload      jsonb,
+  p_occurred_at  timestamptz
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  existing   public.sync_operations;
+  actor      uuid := auth.uid();
+  org        uuid;
+  outcome    jsonb;
+  line       jsonb;
+  sale       public.van_sales;
+  ret        public.van_returns;
+  recon      public.van_reconciliations;
+  load_row   public.van_loads;
+  v_customer uuid;
+  v_van      uuid;
+  v_avail    integer;
+begin
+  -- Authorization is re-derived here, from the session doing the
+  -- syncing. Anything the payload says about who the driver is or what
+  -- they may do is ignored.
+  perform public.require_role(
+    'admin', 'senior_manager', 'manager', 'accountant', 'sales_rep', 'driver');
+
+  if actor is null then
+    raise exception 'Authentication required' using errcode = '42501';
+  end if;
+
+  select org_id into org from public.profiles where id = actor;
+  if org is null then
+    raise exception 'No profile for the calling user' using errcode = '42501';
+  end if;
+
+  -- Already seen? Hand back exactly what happened the first time. This
+  -- is the whole point: a retry is free and cannot double-apply.
+  select * into existing from public.sync_operations where id = p_id;
+  if found then
+    -- A key belonging to somebody else is not a replay, it is a
+    -- collision or an attack. Say nothing about the original.
+    if existing.profile_id <> actor then
+      raise exception 'Operation % is not yours', p_id using errcode = '42501';
+    end if;
+    return jsonb_build_object(
+      'id', existing.id,
+      'status', existing.status,
+      'result', existing.result,
+      'error', existing.error,
+      'replayed', true
+    );
+  end if;
+
+  begin
+    case p_operation
+
+      -- ---------------------------------------------------------- sale
+      when 'van_sale' then
+        v_customer := (p_payload ->> 'customer_id')::uuid;
+        select * into load_row from public.van_loads
+         where id = (p_payload ->> 'load_id')::uuid;
+
+        if load_row.id is null then
+          raise exception 'That load no longer exists';
+        end if;
+        if load_row.org_id <> org then
+          raise exception 'That load belongs to another organization';
+        end if;
+        if load_row.status not in ('dispatched', 'loaded') then
+          raise exception 'Load % is % and cannot take further sales',
+            load_row.load_number, load_row.status;
+        end if;
+        if not exists (select 1 from public.customers
+                        where id = v_customer and org_id = org and is_active) then
+          raise exception 'That customer is no longer active';
+        end if;
+
+        v_van := load_row.van_id;
+
+        insert into public.van_sales (
+          org_id, load_id, van_id, driver_id, customer_id,
+          sale_type, status, sold_at, due_date, notes,
+          latitude, longitude
+        ) values (
+          org, load_row.id, v_van, load_row.driver_id, v_customer,
+          (p_payload ->> 'sale_type')::public.van_sale_type, 'draft',
+          p_occurred_at,
+          nullif(p_payload ->> 'due_date', '')::date,
+          nullif(p_payload ->> 'notes', ''),
+          nullif(p_payload ->> 'latitude', '')::numeric,
+          nullif(p_payload ->> 'longitude', '')::numeric
+        ) returning * into sale;
+
+        for line in select * from jsonb_array_elements(p_payload -> 'lines') loop
+          -- The van must actually be carrying it. A sale made offline
+          -- against stock that was never on board is a conflict, not a
+          -- sale, and it is caught here rather than going through.
+          select qty_on_hand into v_avail from public.van_inventory
+           where van_id = v_van and product_id = (line ->> 'product_id')::uuid;
+
+          if coalesce(v_avail, 0) < (line ->> 'quantity')::integer then
+            raise exception 'Only % of that product on the van, % were sold',
+              coalesce(v_avail, 0), (line ->> 'quantity')::integer;
+          end if;
+
+          insert into public.van_sale_items (
+            org_id, sale_id, product_id, quantity, unit_price, discount_pct, tax_rate
+          ) values (
+            org, sale.id, (line ->> 'product_id')::uuid,
+            (line ->> 'quantity')::integer,
+            (line ->> 'unit_price')::numeric,
+            coalesce((line ->> 'discount_pct')::numeric, 0),
+            coalesce((line ->> 'tax_rate')::numeric, 0)
+          );
+        end loop;
+
+        -- The existing business function moves the stock and puts a
+        -- credit sale on the customer ledger. None of that is
+        -- reimplemented here.
+        sale := public.complete_van_sale(
+          sale.id, nullif(p_payload ->> 'amount_paid', '')::numeric);
+
+        outcome := jsonb_build_object(
+          'sale_id', sale.id, 'sale_number', sale.sale_number,
+          'total', sale.total, 'balance', sale.balance);
+
+      -- ---------------------------------------------------- collection
+      when 'collection' then
+        v_customer := (p_payload ->> 'customer_id')::uuid;
+        if not exists (select 1 from public.customers where id = v_customer and org_id = org) then
+          raise exception 'That customer no longer exists';
+        end if;
+
+        perform public.record_credit_payment(
+          v_customer,
+          (p_payload ->> 'amount')::numeric,
+          coalesce((p_payload ->> 'method')::public.payment_method, 'cash'),
+          nullif(p_payload ->> 'notes', ''));
+
+        outcome := jsonb_build_object(
+          'customer_id', v_customer, 'amount', (p_payload ->> 'amount')::numeric);
+
+      -- -------------------------------------------------------- return
+      when 'van_return' then
+        select * into load_row from public.van_loads
+         where id = (p_payload ->> 'load_id')::uuid;
+        if load_row.id is null or load_row.org_id <> org then
+          raise exception 'That load no longer exists';
+        end if;
+
+        insert into public.van_returns (
+          org_id, load_id, van_id, driver_id, warehouse_id,
+          status, returned_at, notes
+        ) values (
+          org, load_row.id, load_row.van_id, load_row.driver_id,
+          load_row.warehouse_id, 'draft', p_occurred_at,
+          nullif(p_payload ->> 'notes', '')
+        ) returning * into ret;
+
+        for line in select * from jsonb_array_elements(p_payload -> 'lines') loop
+          insert into public.van_return_items (
+            org_id, return_id, product_id,
+            qty_expected, qty_returned_good, qty_damaged, damage_reason
+          ) values (
+            org, ret.id, (line ->> 'product_id')::uuid,
+            (line ->> 'qty_expected')::integer,
+            (line ->> 'qty_returned_good')::integer,
+            coalesce((line ->> 'qty_damaged')::integer, 0),
+            nullif(line ->> 'damage_reason', '')
+          );
+        end loop;
+
+        update public.van_returns set status = 'submitted' where id = ret.id;
+
+        outcome := jsonb_build_object(
+          'return_id', ret.id, 'return_number', ret.return_number);
+
+      -- ------------------------------------------------ reconciliation
+      when 'reconciliation' then
+        select * into recon from public.van_reconciliations
+         where id = (p_payload ->> 'reconciliation_id')::uuid;
+
+        if recon.id is null then
+          recon := public.build_reconciliation((p_payload ->> 'load_id')::uuid);
+        end if;
+        if recon.org_id <> org then
+          raise exception 'That reconciliation belongs to another organization';
+        end if;
+        if recon.status <> 'draft' then
+          raise exception 'Reconciliation % has already been submitted', recon.recon_number;
+        end if;
+
+        update public.van_reconciliations set
+          status        = 'submitted',
+          actual_cash   = (p_payload ->> 'actual_cash')::numeric,
+          explanation   = nullif(p_payload ->> 'explanation', ''),
+          submitted_by  = actor,
+          submitted_at  = p_occurred_at
+        where id = recon.id
+        returning * into recon;
+
+        outcome := jsonb_build_object(
+          'reconciliation_id', recon.id, 'recon_number', recon.recon_number,
+          'cash_variance', recon.cash_variance);
+    end case;
+
+    insert into public.sync_operations (
+      id, org_id, profile_id, device_id, operation, payload,
+      status, result, occurred_at
+    ) values (
+      p_id, org, actor, p_device_id, p_operation, p_payload,
+      'applied', outcome, p_occurred_at
+    );
+
+    return jsonb_build_object(
+      'id', p_id, 'status', 'applied', 'result', outcome, 'replayed', false);
+
+  exception when others then
+    -- The work is rolled back to the savepoint this block opened, but
+    -- the verdict is kept: the driver is told what went wrong, and the
+    -- same key is never retried into the same failure. A message about
+    -- stock or a retired product is a conflict the driver has to see;
+    -- anything else is a plain failure.
+    insert into public.sync_operations (
+      id, org_id, profile_id, device_id, operation, payload,
+      status, error, occurred_at
+    ) values (
+      p_id, org, actor, p_device_id, p_operation, p_payload,
+      case
+        when sqlerrm ilike '%on the van%'
+          or sqlerrm ilike '%no longer%'
+          or sqlerrm ilike '%already been%'
+          or sqlerrm ilike '%cannot take further%'
+        then 'conflict'::public.sync_status
+        else 'failed'::public.sync_status
+      end,
+      sqlerrm, p_occurred_at
+    );
+
+    return jsonb_build_object(
+      'id', p_id,
+      'status', case
+        when sqlerrm ilike '%on the van%'
+          or sqlerrm ilike '%no longer%'
+          or sqlerrm ilike '%already been%'
+          or sqlerrm ilike '%cannot take further%'
+        then 'conflict' else 'failed' end,
+      'error', sqlerrm,
+      'replayed', false);
+  end;
+end;
+$$;
+
+comment on function public.sync_submit is
+  'The single entry point for a queued offline mutation. Idempotent on '
+  'the client-generated id; re-derives authorization from the calling '
+  'session and never from the payload.';
+
+revoke all on function public.sync_submit(uuid, text, public.sync_operation, jsonb, timestamptz) from public, anon;
+grant execute on function public.sync_submit(uuid, text, public.sync_operation, jsonb, timestamptz) to authenticated, service_role;
+
+-- ------------------------------------------------------------------
+-- What a device needs cached to work offline
+-- ------------------------------------------------------------------
+create or replace function public.sync_bootstrap()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  actor uuid := auth.uid();
+  org   uuid;
+  van   uuid;
+  out   jsonb;
+begin
+  perform public.require_role(
+    'admin', 'senior_manager', 'manager', 'accountant', 'sales_rep', 'driver');
+  if actor is null then
+    raise exception 'Authentication required' using errcode = '42501';
+  end if;
+
+  select org_id into org from public.profiles where id = actor;
+  van := public.my_van_id();
+
+  -- Deliberately narrow: what a driver needs to sell from the van they
+  -- are on, and nothing else. A phone that is lost should not be
+  -- carrying the whole customer book or the cost price of every line.
+  select jsonb_build_object(
+    'cached_at', now(),
+    'van', (
+      select jsonb_build_object('id', v.id, 'code', v.code, 'registration_no', v.registration_no)
+        from public.vans v where v.id = van
+    ),
+    'load', (
+      select jsonb_build_object(
+               'id', l.id, 'load_number', l.load_number,
+               'status', l.status, 'opening_float', l.opening_float)
+        from public.van_loads l
+       where l.van_id = van and l.status in ('loaded', 'dispatched')
+       order by l.load_date desc limit 1
+    ),
+    'stock', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'product_id', s.product_id, 'sku', s.sku, 'name', s.product_name,
+               'qty_on_hand', s.qty_on_hand))
+        from public.van_stock_summary s where s.van_id = van
+    ), '[]'::jsonb),
+    'prices', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'product_id', i.product_id, 'unit_price', i.unit_price,
+               'tax_rate', p.tax_rate))
+        from public.van_load_items i
+        join public.products p on p.id = i.product_id
+       where i.load_id = (
+         select l.id from public.van_loads l
+          where l.van_id = van and l.status in ('loaded', 'dispatched')
+          order by l.load_date desc limit 1)
+    ), '[]'::jsonb),
+    'customers', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'id', c.id, 'code', c.code, 'name', c.name, 'phone', c.phone,
+               'balance', coalesce(cp.ledger_balance, 0),
+               'credit_available', coalesce(cp.credit_available, c.credit_limit)))
+        from public.customers c
+        left join public.customer_credit_position cp on cp.customer_id = c.id
+       where c.org_id = org and c.is_active
+    ), '[]'::jsonb)
+  ) into out;
+
+  return out;
+end;
+$$;
+
+comment on function public.sync_bootstrap is
+  'The snapshot a device caches to keep working without a connection: '
+  'the van, its load, what is on board, and the active customers.';
+
+revoke all on function public.sync_bootstrap() from public, anon;
+grant execute on function public.sync_bootstrap() to authenticated, service_role;
+
