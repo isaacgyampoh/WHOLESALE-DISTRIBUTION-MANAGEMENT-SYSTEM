@@ -30,6 +30,7 @@ const UPGRADE_EXPIRY = path.join("..", "..", "database", "UPGRADE_0024_BATCHES_A
 const UPGRADE_PAY = path.join("..", "..", "database", "UPGRADE_0025_PAYMENT_METHODS.sql");
 const UPGRADE_DOCS = path.join("..", "..", "database", "UPGRADE_0026_DOCUMENTS.sql");
 const UPGRADE_TRF = path.join("..", "..", "database", "UPGRADE_0027_TRANSFERS.sql");
+const UPGRADE_NTF = path.join("..", "..", "database", "UPGRADE_0028_NOTIFICATIONS.sql");
 
 let pass = 0, fail = 0;
 const ok = (n, c, x = "") => { c ? (pass++, console.log(`  PASS  ${n} ${x}`)) : (fail++, console.log(`  FAIL  ${n} ${x}`)); };
@@ -46,7 +47,8 @@ for (const s of splitStatements(shim)) await c.query(s);
 
 // Everything up to but NOT including 0022.
 const files = fs.readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort()
-  .filter((f) => !["0022", "0023", "0024", "0025", "0026", "0027"].some((n) => f.startsWith(n)));
+  .filter((f) => !["0022", "0023", "0024", "0025", "0026", "0027", "0028"]
+    .some((n) => f.startsWith(n)));
 for (const f of files) {
   const sql = fs.readFileSync(path.join(MIGRATIONS, f), "utf8");
   for (const s of splitStatements(sql)) {
@@ -292,6 +294,41 @@ for (const [what, sql] of [
         join pg_namespace n on n.oid=p.pronamespace
        where n.nspname='public' and p.proname='receive_purchase_batch'
        limit 1)) > 0 v`],
+]) {
+  const r = await c.query(sql);
+  ok(what, r.rows[0].v === true);
+}
+
+// ---- 0028, on top of 0027 -----------------------------------------
+console.log("\n=== UPGRADE_0028, then again ===");
+const ntfSql = fs.readFileSync(UPGRADE_NTF, "utf8");
+for (const attempt of ["runs on a 0027 database", "runs a second time"]) {
+  try {
+    await c.query(ntfSql);
+    ok(`UPGRADE_0028 ${attempt}`, true);
+  } catch (e) {
+    ok(`UPGRADE_0028 ${attempt}`, false, `-> ${e.message}`);
+  }
+}
+
+for (const [what, sql] of [
+  ["notifications exist", `select to_regclass('public.notifications') is not null v`],
+  ["a condition is one row, not one a day", `select exists (select 1 from pg_indexes
+      where schemaname='public' and indexname='notifications_standing_unique') v`],
+  ["refresh_standing_alerts exists", `select exists (select 1 from pg_proc p
+      join pg_namespace n on n.oid=p.pronamespace
+     where n.nspname='public' and p.proname='refresh_standing_alerts') v`],
+  ["events are written by trigger", `select (select count(*) from pg_trigger
+      where tgname in ('reconciliations_notify','van_returns_notify',
+                       'stock_transfers_notify','stock_transfers_notify_short')) = 4 v`],
+  ["nobody writes their own", `select not exists (
+      select 1 from information_schema.role_table_grants
+       where table_name='notifications' and grantee='authenticated'
+         and privilege_type in ('INSERT','DELETE')) v`],
+  // Running it against an organization's real data is the part that
+  // cannot be checked by looking at the schema.
+  ["refreshing conditions works on live data", `select refresh_standing_alerts(
+      (select id from public.organizations limit 1)) >= 0 v`],
 ]) {
   const r = await c.query(sql);
   ok(what, r.rows[0].v === true);

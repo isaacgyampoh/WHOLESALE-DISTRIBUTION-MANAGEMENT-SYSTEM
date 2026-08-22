@@ -54,6 +54,7 @@ const PAGES = [
   ["/invoices", "Invoices", ["admin", "manager", "driver", "accountant"]],
   ["/credit", "Credit", ["admin", "manager", "driver", "accountant"]],
   ["/payments", "Collections", ["admin", "manager", "driver", "accountant"]],
+  ["/notifications", "Notifications", ["admin", "manager", "driver", "accountant"]],
   ["/reports", "Reports", ["admin", "manager", "accountant"]],
   ["/users", "Staff", ["admin"]],
   ["/permissions", "Permissions", ["admin"]],

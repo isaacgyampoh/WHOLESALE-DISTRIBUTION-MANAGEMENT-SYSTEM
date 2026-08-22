@@ -1,5 +1,7 @@
 import type { AuthenticatedUser } from "@/types/domain";
 import { Badge } from "@/components/ui/badge";
+import { getInbox } from "@/features/notifications/queries";
+import { NotificationBell } from "@/features/notifications/bell";
 import { BRAND } from "@/lib/brand";
 import { LogOut, UserCog } from "lucide-react";
 import Link from "next/link";
@@ -19,7 +21,11 @@ const ROLE_LABELS: Record<string, string> = {
  * it, so when a category manager cannot find a product, the reason is on
  * screen rather than a mystery.
  */
-export function Header({ user }: { user: AuthenticatedUser }) {
+export async function Header({ user }: { user: AuthenticatedUser }) {
+  // Absent rather than empty when the database is behind: a bell that
+  // never has anything in it is worse than no bell.
+  const inbox = await getInbox();
+
   const initials = user.fullName
     .split(" ")
     .filter(Boolean)
@@ -38,6 +44,9 @@ export function Header({ user }: { user: AuthenticatedUser }) {
       <Badge tone="brand" className="hidden min-[400px]:inline-flex">
         {ROLE_LABELS[user.role] ?? user.role}
       </Badge>
+      {inbox.available && (
+        <NotificationBell notifications={inbox.notifications} unread={inbox.unread} />
+      )}
       <div className="flex items-center gap-2.5 border-l border-[var(--border-subtle)] pl-3">
         <div className="grid size-8 place-items-center rounded-full bg-[var(--surface-sunken)] text-xs font-semibold text-[var(--text-secondary)]">
           {initials}

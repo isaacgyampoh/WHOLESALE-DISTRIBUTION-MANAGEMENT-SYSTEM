@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/auth/session";
 import { can } from "@/types/permissions";
 import { getDashboardMetrics, getOpenVariances, getLowStock } from "@/features/dashboard/queries";
 import { getDriverSummary } from "@/features/dashboard/driver-queries";
+import { refreshStandingAlerts } from "@/features/notifications/queries";
 import { DriverDashboard } from "@/features/dashboard/driver-dashboard";
 import { StatTile } from "@/components/ui/stat-tile";
 import { getExpirySummary } from "@/features/warehouses/queries";
@@ -20,6 +21,13 @@ export const metadata: Metadata = { title: "Dashboard" };
 
 export default async function DashboardPage() {
   const user = await requireUser();
+
+  // Recompute the standing conditions - low stock, money past due,
+  // goods still on the road - while somebody is here to read them.
+  // Doing it on the dashboard rather than on a schedule means
+  // notifications work on a database with no cron installed, and the
+  // conditions are recomputed in place so this cannot pile up.
+  await refreshStandingAlerts();
 
   // A driver sees their own round. The management tiles below query
   // company-wide views a driver cannot read, so they would render as a

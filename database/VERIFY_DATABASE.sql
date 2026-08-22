@@ -127,7 +127,8 @@ expected_enums (typname, members) as (
     -- sync_status, so its members are pinned here by name and order.
     ('sync_status',           'applied,failed,conflict'),
     ('sync_operation',        'van_sale,collection,van_return,reconciliation'),
-    ('waybill_status',         'draft,issued,delivered,cancelled')
+    ('waybill_status',         'draft,issued,delivered,cancelled'),
+    ('notification_severity',  'info,warning,critical')
 ),
 actual_enums as (
   select t.typname::text as typname,
@@ -162,7 +163,7 @@ missing_tables as (
     'van_reconciliations','van_return_items','van_returns','van_sale_items',
     'van_sales','vans','warehouses','auth_pin_attempts','audit_log',
     'sync_operations','product_batches','van_sale_payments',
-    'waybills','waybill_items'
+    'waybills','waybill_items','notifications'
   ]) as t
   where not exists (
     select 1 from information_schema.tables
@@ -186,8 +187,8 @@ missing_views as (
 ),
 report as (
   select  1 as ord, 'Tables' as check_name,
-          '36'::text as expected, c.tables::text as actual,
-          case when c.tables = 36 then 'OK' else 'CHECK' end as status,
+          '37'::text as expected, c.tables::text as actual,
+          case when c.tables = 37 then 'OK' else 'CHECK' end as status,
           ''::text as detail
   from counts c
   union all select  2, 'Expected tables all present', 'none missing',
@@ -200,27 +201,27 @@ report as (
           case when v.names = '' then 'none missing' else 'MISSING' end,
           case when v.names = '' then 'OK' else 'FAIL' end, v.names
   from missing_views v
-  union all select  5, 'Enum types', '15', c.enums::text,
-          case when c.enums = 15 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  6, 'Enum members and order', '15 matching', e.n::text,
-          case when e.n = 15 then 'OK' else 'FAIL' end,
+  union all select  5, 'Enum types', '16', c.enums::text,
+          case when c.enums = 16 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  6, 'Enum members and order', '16 matching', e.n::text,
+          case when e.n = 16 then 'OK' else 'FAIL' end,
           (select names from enum_bad)
   from enum_match e
-  union all select  7, 'Functions', '53', c.functions::text,
-          case when c.functions = 53 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  8, 'Triggers', '72', c.triggers::text,
-          case when c.triggers = 72 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  9, 'RLS policies', '76', c.policies::text,
-          case when c.policies = 76 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  7, 'Functions', '60', c.functions::text,
+          case when c.functions = 60 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  8, 'Triggers', '77', c.triggers::text,
+          case when c.triggers = 77 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  9, 'RLS policies', '78', c.policies::text,
+          case when c.policies = 78 then 'OK' else 'CHECK' end, '' from counts c
   union all select 10, 'RLS enabled on every table',
           c.all_tables::text, c.rls_tables::text,
           case when c.rls_tables = c.all_tables then 'OK' else 'FAIL' end, '' from counts c
   union all select 11, 'Generated columns', '13', c.generated_cols::text,
           case when c.generated_cols = 13 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 12, 'Indexes', '142', c.indexes::text,
-          case when c.indexes = 142 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 13, 'Constraints', '247', c.constraints::text,
-          case when c.constraints = 247 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 12, 'Indexes', '146', c.indexes::text,
+          case when c.indexes = 146 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 13, 'Constraints', '252', c.constraints::text,
+          case when c.constraints = 252 then 'OK' else 'CHECK' end, '' from counts c
   union all select 14, 'Security functions present', '8', s.n::text,
           case when s.n = 8 then 'OK' else 'FAIL' end, '' from security_fns s
   union all select 15, 'Business functions present', '7', b.n::text,
@@ -536,6 +537,38 @@ report as (
                       where schemaname = 'public' and indexname = 'product_batches_unique')
                like '%warehouse_id%' then 'OK' else 'FAIL' end,
           'A delivery split across depots really is the same batch in two places'
+
+  -- ---- notifications (migration 0028) ------------------------------
+  union all select 54, 'Notifications: a condition is one row, not one a day', 'enforced',
+          case when exists (select 1 from pg_indexes
+                             where schemaname = 'public'
+                               and indexname = 'notifications_standing_unique')
+               then 'enforced' else 'MISSING' end,
+          case when exists (select 1 from pg_indexes
+                             where schemaname = 'public'
+                               and indexname = 'notifications_standing_unique')
+               then 'OK' else 'FAIL' end,
+          'Otherwise the bell fills with repeats of the same fact'
+  union all select 55, 'Notifications: events are written by trigger', '4 triggers',
+          (select count(*)::text from pg_trigger
+            where tgname in ('reconciliations_notify','van_returns_notify',
+                             'stock_transfers_notify','stock_transfers_notify_short')),
+          case when (select count(*) from pg_trigger
+                      where tgname in ('reconciliations_notify','van_returns_notify',
+                                       'stock_transfers_notify','stock_transfers_notify_short')) = 4
+               then 'OK' else 'FAIL' end, ''
+  union all select 56, 'Notifications: nobody writes their own', 'read and mark only',
+          case when not exists (
+            select 1 from information_schema.role_table_grants
+             where table_name = 'notifications' and grantee = 'authenticated'
+               and privilege_type in ('INSERT','DELETE'))
+               then 'read and mark only' else 'TOO MUCH' end,
+          case when not exists (
+            select 1 from information_schema.role_table_grants
+             where table_name = 'notifications' and grantee = 'authenticated'
+               and privilege_type in ('INSERT','DELETE'))
+               then 'OK' else 'FAIL' end,
+          'One a browser could insert reports something that did not happen'
 )
 select ord as "#", check_name as "check", expected, actual, status, detail
 from report

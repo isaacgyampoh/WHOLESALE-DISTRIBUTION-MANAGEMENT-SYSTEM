@@ -34,6 +34,8 @@ export interface DatabaseCapabilities {
   documents: boolean;
   /** Migration 0027: warehouse transfers with a real lifecycle. */
   warehouseTransfers: boolean;
+  /** Migration 0028: in-app notifications, per role. */
+  notifications: boolean;
 }
 
 let cached: DatabaseCapabilities | null = null;
@@ -49,13 +51,15 @@ let inFlight: Promise<DatabaseCapabilities> | null = null;
 async function probe(): Promise<DatabaseCapabilities> {
   const admin = createSupabaseAdminClient();
 
-  const [priced, batches, sync, payments, documents, transfers] = await Promise.all([
+  const [priced, batches, sync, payments, documents, transfers, alerts] =
+    await Promise.all([
     admin.from("products_priced").select("id").limit(1),
     admin.from("products").select("track_expiry").limit(1),
     admin.from("sync_operations").select("id").limit(1),
     admin.from("van_sale_payments").select("id").limit(1),
     admin.from("waybills").select("id").limit(1),
     admin.from("stock_transfer_summary").select("id").limit(1),
+    admin.from("notifications").select("id").limit(1),
   ]);
 
   const capabilities: DatabaseCapabilities = {
@@ -65,6 +69,7 @@ async function probe(): Promise<DatabaseCapabilities> {
     salePaymentMethods: !payments.error,
     documents: !documents.error,
     warehouseTransfers: !transfers.error,
+    notifications: !alerts.error,
   };
 
   const missing = Object.entries(capabilities)
@@ -99,7 +104,7 @@ export async function getCapabilities(): Promise<DatabaseCapabilities> {
     return {
       maskedProductPricing: false, batchesAndExpiry: false,
       offlineSync: false, salePaymentMethods: false, documents: false,
-      warehouseTransfers: false,
+      warehouseTransfers: false, notifications: false,
     };
   });
   return inFlight;

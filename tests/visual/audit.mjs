@@ -310,6 +310,7 @@ try {
           ["/invoices", "invoices"],
           ["/credit", "credit"],
           ["/payments", "collections"],
+          ["/notifications", "notifications"],
           ["/reports", "reports"],
           ["/settings", "settings"],
           ["/permissions", "permissions"], ["/audit", "audit"], ["/account", "account"],

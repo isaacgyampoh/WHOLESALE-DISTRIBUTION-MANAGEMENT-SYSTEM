@@ -480,6 +480,76 @@ select 'a batch can be in two warehouses',
             like '%warehouse_id%'
             then 'PASS' else 'FAIL' end;`,
   },
+  {
+    migration: "0028_notifications.sql",
+    out: "UPGRADE_0028_NOTIFICATIONS.sql",
+    title: "UPGRADE 0028 - telling people what needs them",
+    summary: `-- WHAT IT ADDS
+--
+-- Everything the system knows was already on a screen somewhere, which
+-- is the problem: a reconciliation submitted at seven in the evening
+-- sits on the reconciliation screen, and nobody opens that screen
+-- unless they already suspect something is on it.
+--
+-- Two things get called a notification and they behave differently, so
+-- both are here rather than one pretending to be the other:
+--
+--   an EVENT happened once and stays true - a driver closed their day,
+--   a transfer is waiting for approval. Written by trigger when it
+--   happens, and marked read by a person.
+--
+--   a CONDITION is true until it is not - stock below reorder, an
+--   invoice past due. Nobody reads one of these away; it ends when the
+--   stock is replenished or the invoice is paid.
+--
+-- Conditions are refreshed rather than appended: one row per subject,
+-- updated in place and cleared when the condition stops. So there is no
+-- scheduler to install - refresh_standing_alerts() is called by the
+-- dashboard, which is where somebody is about to read the answer.
+--
+-- Notifications are addressed to a job rather than to a person, because
+-- 'a transfer needs approving' is for whoever is managing today and not
+-- for one named manager who might be on leave. Each role sees only what
+-- is addressed to it, and nobody can write one: a notification a
+-- browser could insert is a way to report something that did not
+-- happen.
+--
+-- AFTER RUNNING IT, redeploy. The bell appears only once this is in
+-- place.`,
+    verify: `select 'notifications table' as check,
+       case when to_regclass('public.notifications') is not null
+            then 'PASS' else 'FAIL' end as result
+union all
+select 'a condition is one row, not one a day',
+       case when exists (select 1 from pg_indexes
+                          where schemaname = 'public'
+                            and indexname = 'notifications_standing_unique')
+            then 'PASS' else 'FAIL' end
+union all
+select 'refresh_standing_alerts function',
+       case when exists (select 1 from pg_proc p
+                           join pg_namespace n on n.oid = p.pronamespace
+                          where n.nspname = 'public' and p.proname = 'refresh_standing_alerts')
+            then 'PASS' else 'FAIL' end
+union all
+select 'events are written by trigger',
+       case when (select count(*) from pg_trigger
+                   where tgname in ('reconciliations_notify','van_returns_notify',
+                                    'stock_transfers_notify','stock_transfers_notify_short')) = 4
+            then 'PASS' else 'FAIL' end
+union all
+select 'row level security on',
+       case when (select relrowsecurity from pg_class
+                   where oid = 'public.notifications'::regclass)
+            then 'PASS' else 'FAIL' end
+union all
+select 'nobody writes their own',
+       case when not exists (
+              select 1 from information_schema.role_table_grants
+               where table_name = 'notifications' and grantee = 'authenticated'
+                 and privilege_type in ('INSERT','DELETE'))
+            then 'PASS' else 'FAIL' end;`,
+  },
 ];
 
 /** Final enum members, in the order `alter type ... add value` yields. */
