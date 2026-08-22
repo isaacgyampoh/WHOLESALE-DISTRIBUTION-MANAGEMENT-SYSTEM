@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { formatMoney, formatDate } from "@/lib/utils/format";
@@ -37,7 +38,11 @@ export function CreditList({ invoices }: { invoices: InvoiceRow[] }) {
           <tbody>
             {invoices.map((i) => (
               <Tr key={i.id}>
-                <Td className="numeric font-medium">{i.invoiceNumber}</Td>
+                <Td className="numeric font-medium">
+                  <Link href={`/invoices/${i.id}`} className="hover:underline">
+                    {i.invoiceNumber}
+                  </Link>
+                </Td>
                 <Td>{i.customerName}</Td>
                 <Td className="numeric whitespace-nowrap text-[var(--text-secondary)]">
                   {formatDate(i.dueDate)}
@@ -59,7 +64,8 @@ export function CreditList({ invoices }: { invoices: InvoiceRow[] }) {
 
       <ul className="divide-y divide-[var(--border-subtle)] pointer-fine:hidden">
         {invoices.map((i) => (
-          <li key={i.id} className="px-5 py-3.5">
+          <li key={i.id}>
+            <Link href={`/invoices/${i.id}`} className="block px-5 py-3.5">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-sm font-medium text-[var(--text-primary)]">{i.customerName}</p>
@@ -77,6 +83,7 @@ export function CreditList({ invoices }: { invoices: InvoiceRow[] }) {
                 Due {formatDate(i.dueDate)}
               </span>
             </div>
+            </Link>
           </li>
         ))}
       </ul>

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { formatMoney, formatDateTime } from "@/lib/utils/format";
@@ -38,7 +39,9 @@ export function PaymentList({ payments }: { payments: PaymentRow[] }) {
             {payments.map((p) => (
               <Tr key={p.id}>
                 <Td>
-                  <span className="numeric block font-medium">{p.paymentNumber}</span>
+                  <Link href={`/payments/${p.id}`} className="numeric block font-medium hover:underline">
+                    {p.paymentNumber}
+                  </Link>
                   {p.reference && (
                     <span className="numeric text-xs text-[var(--text-muted)]">{p.reference}</span>
                   )}

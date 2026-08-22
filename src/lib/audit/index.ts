@@ -64,14 +64,17 @@ export type AuditAction =
   | "purchase.received"
   | "purchase.cancelled"
   | "sale.recorded"
-  | "sale.synced";
+  | "sale.synced"
+  | "waybill.issued"
+  | "waybill.delivered";
 
 export interface AuditEntry {
   action: AuditAction;
   targetType:
     | "profile" | "product" | "category" | "customer"
     | "van" | "van_load" | "van_return" | "reconciliation"
-    | "warehouse" | "supplier" | "purchase_order" | "van_sale";
+    | "warehouse" | "supplier" | "purchase_order" | "van_sale"
+    | "waybill";
   targetId?: string;
   targetLabel?: string;
   before?: Record<string, unknown>;

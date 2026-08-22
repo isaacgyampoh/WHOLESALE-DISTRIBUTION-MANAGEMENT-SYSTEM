@@ -80,6 +80,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
         label: "Van loads", href: "/loads", permissions: ["loads.view"],
         icon: "ClipboardList", mobilePriority: 6,
       },
+      { label: "Waybills", href: "/waybills", permissions: ["documents.view"], icon: "FileOutput" },
       { label: "Returns", href: "/returns", permissions: ["returns.view"], icon: "Undo2" },
       { label: "Reconciliation", href: "/reconciliation", permissions: ["reconciliation.view"], icon: "Scale" },
     ],
@@ -95,6 +96,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
         label: "Sales", href: "/sales", permissions: ["sales.view"],
         icon: "Receipt", mobilePriority: 2,
       },
+      { label: "Invoices", href: "/invoices", permissions: ["documents.view"], icon: "FileText" },
       { label: "Credit", href: "/credit", permissions: ["credit.view"], icon: "CreditCard" },
       {
         label: "Collections", href: "/payments", permissions: ["payments.view"],

@@ -300,12 +300,25 @@ if (existingCycle) {
   if (dispatched.error) throw new Error(`dispatching the load: ${dispatched.error.message}`);
   say(`dispatched ${load.load_number} to the demo van`);
 
+  // The document that travels with the goods. Skipped rather than fatal
+  // when the database has not had upgrade 0026 yet: the rest of the
+  // demo is still worth seeding.
+  const waybill = await admin.rpc("issue_waybill_for_load", { p_load_id: load.id });
+  if (waybill.error) {
+    say(`no waybill issued (${waybill.error.message}) - apply UPGRADE_0026 for waybills`);
+  } else {
+    say(`issued a waybill for ${load.load_number}`);
+  }
+
   // ---- Selling from the van ---------------------------------------
   const sales = [
     { customer: 0, type: "cash",   lines: [["SKU-101", 12], ["SKU-201", 6]] },
     { customer: 1, type: "credit", lines: [["SKU-102", 10], ["SKU-301", 5]] },
     { customer: 0, type: "cash",   lines: [["SKU-101", 8]] },
-    { customer: 2, type: "credit", lines: [["SKU-201", 9], ["SKU-102", 6]] },
+    // Already past its terms. A credit screen where everything is
+    // current shows nothing about how ageing actually works, and this
+    // is the case the business most needs to see.
+    { customer: 2, type: "credit", lines: [["SKU-201", 9], ["SKU-102", 6]], overdueBy: 45 },
   ];
 
   let soldCount = 0;
@@ -317,7 +330,9 @@ if (existingCycle) {
       org_id: org.id, load_id: load.id, van_id: van, driver_id: driverId,
       customer_id: customer.id, sale_type: spec.type, status: "draft",
       sold_at: hoursAgo(20 - index * 3),
-      due_date: spec.type === "credit" ? daysAhead(14) : null,
+      due_date: spec.type === "credit"
+        ? (spec.overdueBy ? daysAgo(spec.overdueBy) : daysAhead(14))
+        : null,
     }).select("id").single()).data;
 
     for (const [code, quantity] of spec.lines) {

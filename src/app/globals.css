@@ -126,3 +126,53 @@
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum";
 }
+
+/* -------------------------------------------------------------------
+   Printing a document
+
+   An invoice, receipt or waybill ends up on paper or as a PDF through
+   the browser's own print dialog - which is what every wholesaler here
+   already uses, needs no font licence and no server-side renderer.
+
+   The rules are about getting out of the way: drop the shell, force
+   light ink on white regardless of the reader's theme, and never let a
+   line item be split across a page break.
+   ------------------------------------------------------------------- */
+@media print {
+  /* The application chrome is not part of the document. */
+  .print-hide { display: none !important; }
+
+  :root, :root[data-theme="dark"] {
+    --surface-page: #ffffff;
+    --surface-raised: #ffffff;
+    --surface-sunken: #ffffff;
+    --border-subtle: #d4d4d8;
+    --border-strong: #71717a;
+    --text-primary: #000000;
+    --text-secondary: #27272a;
+    --text-muted: #52525b;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* Toner is expensive and a tinted table reads worse on paper. */
+  * {
+    background-image: none !important;
+    box-shadow: none !important;
+  }
+
+  .print-sheet {
+    margin: 0 !important;
+    padding: 0 !important;
+    max-width: none !important;
+    border: 0 !important;
+  }
+
+  tr, .print-keep { break-inside: avoid; }
+  thead { display: table-header-group; }
+
+  @page { margin: 14mm; }
+}

@@ -30,6 +30,8 @@ export interface DatabaseCapabilities {
   offlineSync: boolean;
   /** Migration 0025: cash, mobile money and split payments on a sale. */
   salePaymentMethods: boolean;
+  /** Migration 0026: invoices, receipts and waybills. */
+  documents: boolean;
 }
 
 let cached: DatabaseCapabilities | null = null;
@@ -45,11 +47,12 @@ let inFlight: Promise<DatabaseCapabilities> | null = null;
 async function probe(): Promise<DatabaseCapabilities> {
   const admin = createSupabaseAdminClient();
 
-  const [priced, batches, sync, payments] = await Promise.all([
+  const [priced, batches, sync, payments, documents] = await Promise.all([
     admin.from("products_priced").select("id").limit(1),
     admin.from("products").select("track_expiry").limit(1),
     admin.from("sync_operations").select("id").limit(1),
     admin.from("van_sale_payments").select("id").limit(1),
+    admin.from("waybills").select("id").limit(1),
   ]);
 
   const capabilities: DatabaseCapabilities = {
@@ -57,6 +60,7 @@ async function probe(): Promise<DatabaseCapabilities> {
     batchesAndExpiry: !batches.error,
     offlineSync: !sync.error,
     salePaymentMethods: !payments.error,
+    documents: !documents.error,
   };
 
   const missing = Object.entries(capabilities)
@@ -90,7 +94,7 @@ export async function getCapabilities(): Promise<DatabaseCapabilities> {
     // Assume the oldest schema. Everything degrades; nothing leaks.
     return {
       maskedProductPricing: false, batchesAndExpiry: false,
-      offlineSync: false, salePaymentMethods: false,
+      offlineSync: false, salePaymentMethods: false, documents: false,
     };
   });
   return inFlight;
