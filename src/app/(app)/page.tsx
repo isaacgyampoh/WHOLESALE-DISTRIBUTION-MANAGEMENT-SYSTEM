@@ -5,6 +5,12 @@ import { can } from "@/types/permissions";
 import { getDashboardMetrics, getOpenVariances, getLowStock } from "@/features/dashboard/queries";
 import { getDriverSummary } from "@/features/dashboard/driver-queries";
 import { refreshStandingAlerts } from "@/features/notifications/queries";
+import {
+  getAccountantView, getWarehouseView, getAdminView,
+} from "@/features/dashboard/role-queries";
+import { AccountantDashboard } from "@/features/dashboard/accountant-dashboard";
+import { WarehouseDashboard } from "@/features/dashboard/warehouse-dashboard";
+import { AdminPanel } from "@/features/dashboard/admin-panel";
 import { DriverDashboard } from "@/features/dashboard/driver-dashboard";
 import { StatTile } from "@/components/ui/stat-tile";
 import { getExpirySummary } from "@/features/warehouses/queries";
@@ -51,9 +57,49 @@ export default async function DashboardPage() {
     );
   }
 
+
+  // Each job gets the numbers it is accountable for. One dashboard for
+  // everybody is a dashboard for nobody: the accountant opens it to find
+  // out what is owed and the warehouse to find out what has to move, and
+  // neither should have to read past the other's figures to get there.
+  if (user.role === "accountant") {
+    const view = await guard(getAccountantView);
+    return (
+      <>
+        <PageHeader
+          title={`Good day, ${user.fullName.split(" ")[0]}`}
+          description="What is owed, how old it is, and what came in."
+        />
+        {view.ok ? (
+          <AccountantDashboard view={view.data} />
+        ) : (
+          <Card><ErrorState title="The dashboard could not be loaded" message={view.message} /></Card>
+        )}
+      </>
+    );
+  }
+
+  if (user.role === "warehouse") {
+    const view = await guard(getWarehouseView);
+    return (
+      <>
+        <PageHeader
+          title={`Good day, ${user.fullName.split(" ")[0]}`}
+          description="What has to move today, and what is holding something else up."
+        />
+        {view.ok ? (
+          <WarehouseDashboard view={view.data} />
+        ) : (
+          <Card><ErrorState title="The dashboard could not be loaded" message={view.message} /></Card>
+        )}
+      </>
+    );
+  }
+
   // Only the data fetch is guarded here. Wrapping the JSX in try/catch
   // would not catch render errors anyway - error.tsx handles those.
   const result = await loadDashboard(user.role);
+  const admin = can(user.role, "users.manage") ? await guard(getAdminView) : null;
 
   if (!result.ok) {
     return (
@@ -270,8 +316,26 @@ export default async function DashboardPage() {
           </Card>
         )}
       </div>
+
+      {admin?.ok && (
+        <div className="mt-5">
+          <AdminPanel view={admin.data} />
+        </div>
+      )}
   </>
   );
+}
+
+/** Turns a throwing read into a value, so one dead panel is not a dead page. */
+async function guard<T>(load: () => Promise<T>): Promise<
+  { ok: true; data: T } | { ok: false; message: string }
+> {
+  try {
+    return { ok: true, data: await load() };
+  } catch (error) {
+    console.error("[dashboard]", error);
+    return { ok: false, message: toAppError(error).userMessage };
+  }
 }
 
 interface DashboardData {
