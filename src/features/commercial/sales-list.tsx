@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/table";
 import { StatusBadge, Badge } from "@/components/ui/badge";
 import { formatMoney, formatDateTime } from "@/lib/utils/format";
@@ -31,7 +32,12 @@ export function SalesList({ sales }: { sales: SaleRow[] }) {
             {sales.map((s) => (
               <Tr key={s.id}>
                 <Td>
-                  <span className="numeric block font-medium">{s.saleNumber}</span>
+                  <Link
+                    href={`/sales/${s.id}`}
+                    className="numeric block font-medium hover:underline"
+                  >
+                    {s.saleNumber}
+                  </Link>
                   <span className="text-xs text-[var(--text-muted)]">
                     {s.lineCount} {s.lineCount === 1 ? "line" : "lines"}
                   </span>
@@ -62,7 +68,8 @@ export function SalesList({ sales }: { sales: SaleRow[] }) {
 
       <ul className="divide-y divide-[var(--border-subtle)] pointer-fine:hidden">
         {sales.map((s) => (
-          <li key={s.id} className="px-5 py-3.5">
+          <li key={s.id}>
+            <Link href={`/sales/${s.id}`} className="block px-5 py-3.5">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-sm font-medium text-[var(--text-primary)]">{s.customerName}</p>
@@ -86,6 +93,7 @@ export function SalesList({ sales }: { sales: SaleRow[] }) {
             <p className="numeric mt-1 text-xs text-[var(--text-muted)]">
               {formatDateTime(s.soldAt)} · {s.driverName}
             </p>
+            </Link>
           </li>
         ))}
       </ul>

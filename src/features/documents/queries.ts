@@ -125,6 +125,7 @@ export interface InvoiceDocument extends InvoiceSummaryRow {
   customerPhone: string | null;
   customerAddress: string | null;
   subtotal: number;
+  discount: number;
   taxTotal: number;
   soldAt: string | null;
   soldBy: string | null;
@@ -177,6 +178,9 @@ export async function getInvoice(id: string): Promise<Result<InvoiceDocument | n
       customerPhone: (row.customer_phone as string) ?? null,
       customerAddress: (row.customer_address as string) ?? null,
       subtotal: parseAmount(row.subtotal as string),
+      // Absent before migration 0031, where it reads as no discount -
+      // which is what it was.
+      discount: parseAmount(row.discount as string),
       taxTotal: parseAmount(row.tax_total as string),
       soldAt: (row.sold_at as string) ?? null,
       soldBy: (row.sold_by as string) ?? null,
@@ -485,5 +489,131 @@ export async function listLoadsAwaitingWaybill(): Promise<Result<
           loadDate: l.load_date as string,
         };
       }),
+  };
+}
+
+// ===================================================================
+// The receipt for a sale
+// ===================================================================
+//
+// Distinct from the receipt for a collection. A collection settles an
+// invoice, so its receipt is evidence against a specific debt. A sale
+// receipt is evidence the goods were paid for at the door - which is
+// most of what a van does, and had no document at all.
+
+export interface SaleReceiptLine {
+  productName: string;
+  sku: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+}
+
+export interface SaleReceiptPayment {
+  method: string;
+  amount: number;
+  reference: string | null;
+}
+
+export interface SaleReceipt {
+  id: string;
+  saleNumber: string;
+  saleType: string;
+  status: string;
+  soldAt: string;
+  subtotal: number;
+  taxTotal: number;
+  total: number;
+  amountPaid: number;
+  balance: number;
+  dueDate: string | null;
+  customerId: string;
+  customerCode: string;
+  customerName: string;
+  customerPhone: string | null;
+  soldBy: string | null;
+  vanCode: string | null;
+  lines: SaleReceiptLine[];
+  /** Empty before migration 0025, when a sale had no breakdown at all. */
+  payments: SaleReceiptPayment[];
+  invoiceId: string | null;
+  invoiceNumber: string | null;
+}
+
+export async function getSaleReceipt(id: string): Promise<Result<SaleReceipt | null>> {
+  const supabase = await createSupabaseServerClient();
+  const { salePaymentMethods, documents } = await getCapabilities();
+
+  const { data, error } = await supabase
+    .from("van_sales")
+    .select(
+      "id, sale_number, sale_type, status, sold_at, subtotal, tax_total, total, " +
+      "amount_paid, balance, due_date, customer_id, " +
+      "customers(code, name, phone), profiles(full_name), vans(code)",
+    )
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) return failed("documents", error, "This receipt could not be loaded.");
+  if (!data) return { ok: true, data: null };
+
+  const row = data as unknown as Record<string, unknown>;
+  const customer = row.customers as { code?: string; name?: string; phone?: string } | null;
+  const driver = row.profiles as { full_name?: string } | null;
+  const van = row.vans as { code?: string } | null;
+
+  const [items, payments, invoice] = await Promise.all([
+    supabase
+      .from("van_sale_items")
+      .select("quantity, unit_price, line_total, products(name, sku)")
+      .eq("sale_id", id),
+    salePaymentMethods
+      ? supabase.from("van_sale_payments").select("method, amount, reference").eq("sale_id", id)
+      : Promise.resolve({ data: [], error: null }),
+    documents
+      ? supabase.from("invoices").select("id, invoice_number").eq("van_sale_id", id).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+  ]);
+
+  if (items.error) console.error("[documents] sale lines", items.error);
+
+  return {
+    ok: true,
+    data: {
+      id: row.id as string,
+      saleNumber: row.sale_number as string,
+      saleType: (row.sale_type as string) ?? "cash",
+      status: (row.status as string) ?? "completed",
+      soldAt: row.sold_at as string,
+      subtotal: parseAmount(row.subtotal as string),
+      taxTotal: parseAmount(row.tax_total as string),
+      total: parseAmount(row.total as string),
+      amountPaid: parseAmount(row.amount_paid as string),
+      balance: parseAmount(row.balance as string),
+      dueDate: (row.due_date as string) ?? null,
+      customerId: row.customer_id as string,
+      customerCode: customer?.code ?? "",
+      customerName: customer?.name ?? "Customer",
+      customerPhone: customer?.phone ?? null,
+      soldBy: driver?.full_name ?? null,
+      vanCode: van?.code ?? null,
+      lines: ((items.data ?? []) as unknown as Record<string, unknown>[]).map((l) => {
+        const product = l.products as { name?: string; sku?: string } | null;
+        return {
+          productName: product?.name ?? "Item",
+          sku: product?.sku ?? "",
+          quantity: Number(l.quantity ?? 0),
+          unitPrice: parseAmount(l.unit_price as string),
+          lineTotal: parseAmount(l.line_total as string),
+        };
+      }),
+      payments: ((payments.data ?? []) as unknown as Record<string, unknown>[]).map((p) => ({
+        method: (p.method as string) ?? "cash",
+        amount: parseAmount(p.amount as string),
+        reference: (p.reference as string) ?? null,
+      })),
+      invoiceId: (invoice.data?.id as string) ?? null,
+      invoiceNumber: (invoice.data?.invoice_number as string) ?? null,
+    },
   };
 }

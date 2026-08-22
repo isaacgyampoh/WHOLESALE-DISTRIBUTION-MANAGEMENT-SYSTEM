@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { ErrorState } from "@/components/ui/states";
 import { formatMoney, formatDateTime } from "@/lib/utils/format";
 import { METHOD_LABELS } from "@/features/commercial/payment-list";
+import { ShareButton } from "@/features/documents/share-button";
 
 export const metadata: Metadata = { title: "Receipt" };
 
@@ -48,9 +49,12 @@ export default async function ReceiptPage({
       backHref="/payments"
       backLabel="All collections"
       status={
-        <Badge tone={settled ? "positive" : "caution"}>
-          {settled ? "Invoice settled" : "Balance remaining"}
-        </Badge>
+        <>
+          <Badge tone={settled ? "positive" : "caution"}>
+            {settled ? "Invoice settled" : "Balance remaining"}
+          </Badge>
+          <ShareButton title={`Receipt ${receipt.paymentNumber}`} />
+        </>
       }
       parties={[
         {

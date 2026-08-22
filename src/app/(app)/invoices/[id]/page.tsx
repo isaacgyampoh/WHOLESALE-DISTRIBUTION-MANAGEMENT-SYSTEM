@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { ErrorState } from "@/components/ui/states";
 import { formatMoney, formatDate, formatQuantity } from "@/lib/utils/format";
 import { METHOD_LABELS } from "@/features/commercial/payment-list";
+import { ShareButton } from "@/features/documents/share-button";
 
 export const metadata: Metadata = { title: "Invoice" };
 
@@ -44,9 +45,12 @@ export default async function InvoicePage({
       backHref="/invoices"
       backLabel="All invoices"
       status={
-        <Badge tone={status === "paid" ? "positive" : overdue ? "critical" : "caution"}>
-          {INVOICE_STATUS_LABELS[status] ?? status}
-        </Badge>
+        <>
+          <Badge tone={status === "paid" ? "positive" : overdue ? "critical" : "caution"}>
+            {INVOICE_STATUS_LABELS[status] ?? status}
+          </Badge>
+          <ShareButton title={`Invoice ${invoice.invoiceNumber}`} />
+        </>
       }
       parties={[
         {
@@ -117,6 +121,12 @@ export default async function InvoicePage({
       <DocumentTotals
         rows={[
           { label: "Subtotal", value: formatMoney(invoice.subtotal) },
+          // Shown as its own line rather than folded into the total: a
+          // customer who was given a discount should be able to see it,
+          // and so should whoever gave it.
+          ...(invoice.discount > 0
+            ? [{ label: "Discount", value: `-${formatMoney(invoice.discount)}` }]
+            : []),
           ...(invoice.taxTotal > 0
             ? [{ label: "Tax", value: formatMoney(invoice.taxTotal) }]
             : []),
