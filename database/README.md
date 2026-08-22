@@ -22,10 +22,11 @@ CLI tools.
 | `UPGRADE_0028_NOTIFICATIONS.sql` | In-app notifications, per role. |
 | `UPGRADE_0029_SUPPLIER_DOCUMENTS.sql` | Supplier paperwork in a private storage bucket. |
 | `UPGRADE_0030_SUPPLIER_PORTAL.sql` | Expiring, revocable links suppliers use to see their own orders. |
+| `UPGRADE_0031_SUPPLIER_SUBMISSIONS.sql` | Suppliers submit their own invoices for review; invoice discounts, waybill shortages, customer and supplier returns. |
 | `build.mjs` | Regenerates the installer from `supabase/migrations`. You do not need to run this. |
 
 **A new project needs none of these.** The installer already contains
-everything up to and including 0030. The upgrade scripts are for a
+everything up to and including 0031. The upgrade scripts are for a
 database that was installed before a given change; run them in number
 order, and re-running one is safe.
 

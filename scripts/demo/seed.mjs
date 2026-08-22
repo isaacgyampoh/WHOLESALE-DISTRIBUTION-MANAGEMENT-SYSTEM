@@ -418,6 +418,103 @@ if (existingCycle) {
     }).eq("id", reconRow.id);
     say("submitted the end of day reconciliation, left awaiting approval");
   }
+
+  // ---- A transfer between the two depots, waiting on a manager ------
+  //
+  // Left at draft on purpose. The approval step is the point of the
+  // feature, and a demo where everything is already approved shows none
+  // of it.
+  const depots = (await admin
+    .from("warehouses").select("id, name").eq("org_id", org.id).limit(2)).data ?? [];
+
+  if (depots.length === 2) {
+    const transfer = await admin.from("stock_transfers").insert({
+      org_id: org.id,
+      from_warehouse_id: depots[0].id,
+      to_warehouse_id: depots[1].id,
+      notes: "Topping up the second depot before the weekend.",
+    }).select("id, transfer_number").maybeSingle();
+
+    if (transfer.error) {
+      say(`no transfer raised (${transfer.error.message}) - apply UPGRADE_0027 for transfers`);
+    } else if (transfer.data) {
+      const movable = (await admin
+        .from("inventory")
+        .select("product_id, qty_available")
+        .eq("warehouse_id", depots[0].id)
+        .gt("qty_available", 20)
+        .limit(2)).data ?? [];
+
+      for (const line of movable) {
+        await admin.from("stock_transfer_items").insert({
+          org_id: org.id,
+          transfer_id: transfer.data.id,
+          product_id: line.product_id,
+          quantity: 10,
+        });
+      }
+      say(`raised ${transfer.data.transfer_number}, waiting on a manager to approve it`);
+    }
+  }
+
+  // ---- A customer bringing something back ---------------------------
+  const returningCustomer = customerRows[0];
+  const homeDepot = depots[0];
+  const returnable = homeDepot
+    ? (await admin
+        .from("inventory").select("product_id")
+        .eq("warehouse_id", homeDepot.id).limit(1)).data ?? []
+    : [];
+
+  if (returningCustomer && homeDepot && returnable.length) {
+    const returned = await admin.rpc("record_stock_return", {
+      p_warehouse_id: homeDepot.id,
+      p_reason: "wrong_item",
+      p_lines: [{ product_id: returnable[0].product_id, quantity: 3 }],
+      p_customer_id: returningCustomer.id,
+      p_supplier_id: null,
+      p_notes: "Ordered the 500ml, delivered the 300ml.",
+    });
+    if (returned.error) {
+      say(`no customer return (${returned.error.message}) - apply UPGRADE_0031`);
+    } else {
+      say("recorded a customer return, stock back on the warehouse");
+    }
+  }
+
+  // ---- A supplier invoice waiting to be checked ---------------------
+  //
+  // Written directly rather than through the portal function: seeding
+  // has no link to redeem, and the point is that the review queue has
+  // something in it when the demo opens.
+  const supplierRow = (await admin
+    .from("suppliers").select("id, name").eq("org_id", org.id).limit(1).maybeSingle()).data;
+
+  if (supplierRow) {
+    const submitted = await admin.from("supplier_documents").insert({
+      org_id: org.id,
+      supplier_id: supplierRow.id,
+      kind: "invoice",
+      title: "Invoice GT-20841",
+      reference: "GT-20841",
+      document_date: daysAgo(2),
+      amount: 8450,
+      storage_path: `${org.id}/${supplierRow.id}/demo-invoice`,
+      file_name: "invoice-GT-20841.pdf",
+      mime_type: "application/pdf",
+      size_bytes: 148_000,
+      status: "received",
+      submitted_company: `${supplierRow.name} Limited`,
+      submitted_by_name: "Ama Boateng",
+      submitted_at: hoursAgo(6),
+    });
+
+    if (submitted.error) {
+      say(`no supplier invoice (${submitted.error.message}) - apply UPGRADE_0031`);
+    } else {
+      say("a supplier invoice is waiting in the review queue");
+    }
+  }
 }
 
 // ===================================================================

@@ -105,6 +105,23 @@ export function CreatePurchaseOrderButton({
                      defaultValue={state.values?.expectedDate} />
             </Field>
 
+            {/* Optional, and usually blank at this point: most suppliers
+                quote a reference only once they invoice. Having somewhere
+                to put it is what lets their invoice be matched to this
+                order later. */}
+            <Field label="Their reference" htmlFor="supplierInvoiceNumber"
+                   hint="The supplier's own number, if they have quoted one.">
+              <Input id="supplierInvoiceNumber" name="supplierInvoiceNumber"
+                     placeholder="GT-20841"
+                     defaultValue={state.values?.supplierInvoiceNumber} />
+            </Field>
+
+            <Field label="Their invoice date" htmlFor="supplierInvoiceDate"
+                   hint="Optional.">
+              <Input id="supplierInvoiceDate" name="supplierInvoiceDate" type="date"
+                     defaultValue={state.values?.supplierInvoiceDate} />
+            </Field>
+
             <fieldset className="space-y-2">
               <legend className="text-sm font-medium text-[var(--text-primary)]">
                 What is being ordered

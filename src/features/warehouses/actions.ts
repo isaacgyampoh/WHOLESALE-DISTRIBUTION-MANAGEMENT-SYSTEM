@@ -270,7 +270,15 @@ export async function createPurchaseOrderAction(
   const warehouseId = String(formData.get("warehouseId") ?? "");
   const expectedDate = String(formData.get("expectedDate") ?? "").trim();
   const notes = String(formData.get("notes") ?? "").trim();
-  const values = { supplierId, warehouseId, expectedDate, notes };
+  // The supplier's own reference, if they have already quoted one. It is
+  // what they say on the phone when they ring about payment, and having
+  // it on the order is what lets an invoice be matched to it later.
+  const supplierInvoiceNumber = String(formData.get("supplierInvoiceNumber") ?? "").trim();
+  const supplierInvoiceDate = String(formData.get("supplierInvoiceDate") ?? "").trim();
+  const values = {
+    supplierId, warehouseId, expectedDate, notes,
+    supplierInvoiceNumber, supplierInvoiceDate,
+  };
   const fieldErrors: Record<string, string> = {};
 
   if (!supplierId) fieldErrors.supplierId = "Choose a supplier.";
@@ -309,6 +317,8 @@ export async function createPurchaseOrderAction(
       org_id: actor.organizationId, supplier_id: supplierId, warehouse_id: warehouseId,
       status: "draft", order_date: new Date().toISOString().slice(0, 10),
       expected_date: expectedDate || null, notes: notes || null, created_by: actor.id,
+      supplier_invoice_number: supplierInvoiceNumber || null,
+      supplier_invoice_date: supplierInvoiceDate || null,
     })
     .select("id, po_number").single();
 

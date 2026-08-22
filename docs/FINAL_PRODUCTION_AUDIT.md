@@ -384,3 +384,21 @@ then run `npm run hosted:offline` and watch a real queue drain before
 relying on offline selling in front of a customer.
 
 Everything else in this document is complete and verified.
+
+---
+
+## Totals at the close of this audit
+
+| | |
+|---|---|
+| Database assertions | 699 across 22 suites |
+| Unit assertions | 27 |
+| Migrations | 31, each with an idempotent upgrade script |
+| Upgrade path | 0022 → 0031 applied in order and re-applied, `VERIFY_DATABASE.sql` clean after both |
+| Schema | 42 tables, 19 views, 19 enums, 73 functions, 80 triggers, 85 row level security policies |
+| Lint / typecheck / build | Clean |
+
+The browser suites (`npm run hosted:pages`, `npm run visual:audit`) have
+the new routes in their matrices but were not run here: they connect to
+the hosted Supabase project, which this work was explicitly not to touch.
+Run them yourself once the SQL is applied.

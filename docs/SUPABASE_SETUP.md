@@ -55,6 +55,7 @@ what is installed, in order:
 | `database/UPGRADE_0028_NOTIFICATIONS.sql` | In-app notifications, addressed by role |
 | `database/UPGRADE_0029_SUPPLIER_DOCUMENTS.sql` | Supplier paperwork in a private storage bucket |
 | `database/UPGRADE_0030_SUPPLIER_PORTAL.sql` | Expiring, revocable supplier links |
+| `database/UPGRADE_0031_SUPPLIER_SUBMISSIONS.sql` | Suppliers send their own invoices; invoice discounts, waybill shortages, customer and supplier returns |
 
 Every upgrade file is idempotent: running one twice is harmless, and
 each ends with a `PASS`/`FAIL` check of its own work.

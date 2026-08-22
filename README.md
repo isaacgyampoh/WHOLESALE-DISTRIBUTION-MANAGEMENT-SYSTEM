@@ -134,7 +134,9 @@ deliberately: a migration is never applied by a code deploy.
 1. `docs/SUPABASE_SETUP.md` — create the project, run the installer, verify.
 2. `docs/VERCEL_DEPLOYMENT.md` — push, import, set four environment
    variables, deploy.
-3. `docs/DEMO_TO_PRODUCTION.md` — turning a demonstration into a client's
+3. `docs/PRODUCTION_CHECKLIST.md` — the whole sequence, with a box to tick
+   against each step.
+4. `docs/DEMO_TO_PRODUCTION.md` — turning a demonstration into a client's
    live system without rebuilding anything.
 
 ---
@@ -149,6 +151,12 @@ deliberately: a migration is never applied by a code deploy.
 | `docs/PWA.md` | The driver app |
 | `docs/OFFLINE_SYNC.md` | The queue, idempotency and conflicts |
 | `docs/SECURITY.md` | What is enforced, where, and how to test it |
+| `docs/PRODUCTION_CHECKLIST.md` | Every step from an empty project to real use, in order |
+| `docs/ROLE_GUIDE.md` | Who can do what, and the separations that stop one person completing a loop |
+| `docs/DRIVER_GUIDE.md` | For whoever runs a van |
+| `docs/ADMIN_GUIDE.md` | For whoever administers it |
+| `docs/SUPPLIER_PORTAL.md` | The link you give a supplier, and what protects it |
+| `docs/FINAL_PRODUCTION_AUDIT.md` | Every area, traced end to end, with what was fixed |
 | `ROADMAP.md` | What is built, what is not, and the open risks |
 
 ---
