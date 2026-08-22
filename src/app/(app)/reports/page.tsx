@@ -12,6 +12,7 @@ import { ListFilters } from "@/components/ui/list-filters";
 import { Badge } from "@/components/ui/badge";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/table";
 import { EmptyState, ErrorState } from "@/components/ui/states";
+import { ExportLink } from "@/features/reports/export-link";
 import { formatMoney, formatQuantity } from "@/lib/utils/format";
 import { BarChart3, CircleCheck } from "lucide-react";
 
@@ -68,7 +69,8 @@ export default async function ReportsPage({
       <div className="space-y-5">
         <Card className="overflow-hidden">
           <CardHeader title="Sales by product"
-                      description="What is actually moving, ranked by revenue." />
+                      description="What is actually moving, ranked by revenue."
+                      action={<ExportLink report="sales-by-product" periodDays={periodDays} />} />
           {!products.ok ? (
             <ErrorState title="Report unavailable" message={products.message} />
           ) : products.data.length === 0 ? (
@@ -103,7 +105,8 @@ export default async function ReportsPage({
 
         <Card className="overflow-hidden">
           <CardHeader title="Sales by driver"
-                      description="Who sold what, and how much of it is still owed." />
+                      description="Who sold what, and how much of it is still owed."
+                      action={<ExportLink report="sales-by-driver" periodDays={periodDays} />} />
           {!drivers.ok ? (
             <ErrorState title="Report unavailable" message={drivers.message} />
           ) : drivers.data.length === 0 ? (
@@ -143,7 +146,8 @@ export default async function ReportsPage({
 
         <Card className="overflow-hidden">
           <CardHeader title="Low stock"
-                      description="Lines at or below their reorder point, and how many to bring in." />
+                      description="Lines at or below their reorder point, and how many to bring in."
+                      action={<ExportLink report="low-stock" />} />
           {!lowStock.ok ? (
             <ErrorState title="Report unavailable" message={lowStock.message} />
           ) : lowStock.data.length === 0 ? (
@@ -188,7 +192,8 @@ export default async function ReportsPage({
 
         <Card className="overflow-hidden">
           <CardHeader title="Inventory value by category"
-                      description="Where the money on the shelves is sitting, at cost." />
+                      description="Where the money on the shelves is sitting, at cost."
+                      action={<ExportLink report="inventory-value" />} />
           {!inventory.ok ? (
             <ErrorState title="Report unavailable" message={inventory.message} />
           ) : inventory.data.length === 0 ? (
@@ -223,7 +228,8 @@ export default async function ReportsPage({
         {balances && (
           <Card className="overflow-hidden">
             <CardHeader title="Customer balances"
-                        description="Who owes what, and how far past due they are." />
+                        description="Who owes what, and how far past due they are."
+                        action={<ExportLink report="customer-balances" />} />
             {!balances.ok ? (
               <ErrorState title="Report unavailable" message={balances.message} />
             ) : balances.data.length === 0 ? (
