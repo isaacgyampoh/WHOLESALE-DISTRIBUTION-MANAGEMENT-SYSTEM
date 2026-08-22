@@ -22,7 +22,13 @@ export interface ProductRow {
   categoryId: string | null;
   categoryName: string | null;
   unit: string;
-  costPrice: number;
+  /**
+   * Null for anyone whose role does not include pricing, purchasing or
+   * accounting. That is decided by the database - `products_priced`
+   * masks it - so an interface that forgets to check simply has nothing
+   * to show rather than leaking margin.
+   */
+  costPrice: number | null;
   listPrice: number;
   reorderPoint: number;
   reorderQty: number;
@@ -68,7 +74,9 @@ function toProduct(row: Record<string, unknown>): ProductRow {
     categoryId: (row.category_id as string | null) ?? null,
     categoryName: category?.name ?? null,
     unit: (row.unit_of_measure as string) ?? "piece",
-    costPrice: parseAmount(row.cost_price as string),
+    costPrice: row.cost_price === null || row.cost_price === undefined
+      ? null
+      : parseAmount(row.cost_price as string),
     listPrice: parseAmount(row.list_price as string),
     reorderPoint,
     reorderQty: Number(row.reorder_qty ?? 0),
@@ -98,7 +106,7 @@ export async function listProducts(
   const page = Math.max(1, Number(filters.page ?? 1));
 
   let query = supabase
-    .from("products")
+    .from("products_priced")
     // One request with the category and stock embedded, rather than a
     // query per row.
     .select(PRODUCT_SELECT, { count: "exact" })
@@ -146,7 +154,7 @@ export async function listProducts(
 export async function getProduct(id: string): Promise<Result<ProductRow | null>> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
-    .from("products").select(PRODUCT_SELECT).eq("id", id).maybeSingle();
+    .from("products_priced").select(PRODUCT_SELECT).eq("id", id).maybeSingle();
 
   if (error) {
     console.error("[catalogue] product detail failed", error);

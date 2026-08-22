@@ -327,6 +327,7 @@ try {
         // populated view is what signing in as the demo driver gives.
         for (const [path, name] of [
           ["/driver", "driver-round"], ["/driver/sell", "driver-sell"],
+          ["/driver/stock", "driver-stock"], ["/driver/sales", "driver-sales-history"],
           ["/driver/collect", "driver-collect"], ["/driver/return", "driver-return"],
           ["/driver/reconcile", "driver-reconcile"], ["/driver/queue", "driver-queue"],
           ["/loads", "driver-loads"], ["/sales", "driver-sales"],

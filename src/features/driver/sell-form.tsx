@@ -1,305 +1,495 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useSync } from "./sync-provider";
-import { enqueue } from "@/lib/offline/queue";
+import { CustomerPicker, type CachedCustomer } from "./customer-picker";
+import { createCustomerAtCounterAction } from "./actions";
+import { recordVanSaleAction } from "@/features/commercial/actions";
+import { enqueue, refreshSnapshotInto } from "@/lib/offline/queue";
+import { refreshSnapshot } from "@/lib/offline/sync";
 import { Button } from "@/components/ui/button";
-import { Field, Input, Select, Textarea } from "@/components/ui/field";
+import { Input, Textarea } from "@/components/ui/field";
 import { Card, CardBody } from "@/components/ui/card";
 import { Alert, EmptyState } from "@/components/ui/states";
 import { Badge } from "@/components/ui/badge";
 import { formatMoney, formatQuantity } from "@/lib/utils/format";
-import { Plus, Trash2, PackageX, Check } from "lucide-react";
+import type { OfflineSnapshot } from "@/lib/offline/queue";
+import {
+  Minus, Plus, PackageX, Search, Check, Banknote, CreditCard, ShoppingCart,
+} from "lucide-react";
 
 /**
  * Selling from the van.
  *
- * Built against the cached snapshot, never a live query, so the form
- * behaves identically with and without a signal. The sale is queued
- * locally in both cases and uploaded by the sync engine; that is what
- * makes "the connection dropped mid-sale" a non-event rather than a
- * lost transaction.
+ * A till, not a form. The driver picks who is buying, taps quantities
+ * up and down against what is physically on board, sees the total grow,
+ * and chooses cash or credit. Nothing else is on the screen.
  *
- * The arithmetic here is for the driver's eyes only. What the customer
- * is actually charged is computed by the database from the same lines,
- * so a rounding difference in a phone browser cannot change a total.
+ * Everything is drawn from the cached round, so it behaves identically
+ * with and without a signal, and the sale is queued either way. What the
+ * customer is actually charged is computed by the database from the
+ * same lines - the arithmetic here is for the driver's eyes.
+ *
+ * No cost price appears, and none is fetched: the snapshot the device
+ * caches does not contain one.
  */
 
-interface Line {
-  key: string;
-  productId: string;
-  quantity: string;
+type Stage = "cart" | "payment" | "done";
+
+interface Completed {
+  customerName: string;
+  total: number;
+  saleType: "cash" | "credit";
+  queuedOffline: boolean;
+  saleNumber?: string;
 }
 
-export function SellForm() {
+export function SellForm({ initial }: { initial?: OfflineSnapshot | null }) {
   const router = useRouter();
-  const { snapshot, online, refresh, sync } = useSync();
+  const { snapshot: cached, online, refresh, sync } = useSync();
+
+  // The server renders the round, and the cached copy takes over once
+  // the device has one. That ordering matters: the till has to work on
+  // the first paint, before any caching has happened, and it has to
+  // keep working when the network is gone and the server cannot answer.
+  const snapshot = cached ?? initial ?? null;
+
   const [customerId, setCustomerId] = useState("");
-  const [saleType, setSaleType] = useState<"cash" | "credit">("cash");
+  const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [query, setQuery] = useState("");
   const [notes, setNotes] = useState("");
-  const [lines, setLines] = useState<Line[]>([{ key: "l0", productId: "", quantity: "" }]);
-  // Row keys come from a counter, not the clock: Date.now() is impure
-  // in render, and two rows added in the same millisecond would collide.
-  const nextKey = useRef(1);
+  const [stage, setStage] = useState<Stage>("cart");
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [completed, setCompleted] = useState<Completed | null>(null);
+  const [creatingCustomer, startCreate] = useTransition();
 
   const stock = useMemo(() => snapshot?.stock ?? [], [snapshot]);
-  const customers = snapshot?.customers ?? [];
+  const customers: CachedCustomer[] = useMemo(() => snapshot?.customers ?? [], [snapshot]);
   const priceBy = useMemo(
     () => new Map((snapshot?.prices ?? []).map((p) => [p.product_id, p])),
     [snapshot],
   );
-  const stockBy = useMemo(() => new Map(stock.map((s) => [s.product_id, s])), [stock]);
+
   const customer = customers.find((c) => c.id === customerId);
 
-  const total = lines.reduce((sum, line) => {
-    const price = priceBy.get(line.productId)?.unit_price ?? 0;
-    const qty = Number(line.quantity || 0);
-    return sum + price * qty;
-  }, 0);
+  const lines = useMemo(
+    () => stock
+      .filter((s) => (quantities[s.product_id] ?? 0) > 0)
+      .map((s) => ({
+        product_id: s.product_id,
+        name: s.name,
+        quantity: quantities[s.product_id],
+        unit_price: priceBy.get(s.product_id)?.unit_price ?? 0,
+        tax_rate: priceBy.get(s.product_id)?.tax_rate ?? 0,
+      })),
+    [stock, quantities, priceBy],
+  );
 
-  const addLine = () =>
-    setLines((current) => [
+  const total = lines.reduce((sum, l) => sum + l.unit_price * l.quantity, 0);
+  const itemCount = lines.reduce((sum, l) => sum + l.quantity, 0);
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return stock;
+    return stock.filter((s) =>
+      s.name.toLowerCase().includes(q) || s.sku.toLowerCase().includes(q));
+  }, [stock, query]);
+
+  const setQty = (productId: string, next: number, available: number) =>
+    setQuantities((current) => ({
       ...current,
-      { key: `l${nextKey.current++}`, productId: "", quantity: "" },
-    ]);
-  const setLine = (key: string, patch: Partial<Line>) =>
-    setLines((current) => current.map((l) => (l.key === key ? { ...l, ...patch } : l)));
-  const dropLine = (key: string) =>
-    setLines((current) => (current.length === 1 ? current : current.filter((l) => l.key !== key)));
+      [productId]: Math.max(0, Math.min(next, available)),
+    }));
 
+  // ---- no load, nothing to sell -------------------------------------
   if (!snapshot?.load) {
     return (
       <Card>
         <EmptyState
           icon={PackageX}
-          title="No open load"
+          title="Nothing loaded on your van"
           description={
             online
-              ? "You have no load dispatched to your van, so there is nothing to sell."
-              : "No load was cached before you went offline. Reconnect once to load your round."
+              ? "No load has been dispatched to your van, so there is nothing to sell yet."
+              : "Your round was not cached before you lost signal. Reconnect once and it will be here."
           }
         />
       </Card>
     );
   }
 
-  async function submit() {
+  // ---- confirmation --------------------------------------------------
+  if (stage === "done" && completed) {
+    return (
+      <Card>
+        <CardBody className="space-y-5 text-center">
+          <div className="mx-auto grid size-14 place-items-center rounded-full bg-positive-soft dark:bg-positive/15">
+            <Check className="size-7 text-positive" aria-hidden />
+          </div>
+          <div>
+            <p className="text-lg font-semibold text-[var(--text-primary)]">Sale completed</p>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">{completed.customerName}</p>
+            {completed.saleNumber && (
+              <p className="numeric mt-1 text-xs text-[var(--text-muted)]">
+                {completed.saleNumber}
+              </p>
+            )}
+          </div>
+
+          <div className="rounded-[var(--radius-panel)] bg-[var(--surface-sunken)] px-4 py-4">
+            <p className="numeric text-3xl font-semibold text-[var(--text-primary)]">
+              {formatMoney(completed.total)}
+            </p>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">
+              {completed.saleType === "cash" ? "Paid in cash" : "On credit"}
+            </p>
+          </div>
+
+          <Alert tone={completed.queuedOffline ? "warning" : "success"}>
+            {completed.queuedOffline
+              ? "Saved on this phone. It sends by itself when you have a signal."
+              : "The office has it."}
+          </Alert>
+
+          <div className="space-y-2">
+            <Button size="touch" onClick={() => {
+              setCompleted(null); setStage("cart"); setCustomerId("");
+              setQuantities({}); setNotes(""); setQuery("");
+            }}>
+              <ShoppingCart className="size-5" aria-hidden />
+              Sell to another customer
+            </Button>
+            <Button size="touch" variant="outline" onClick={() => router.push("/driver")}>
+              Back to my round
+            </Button>
+          </div>
+        </CardBody>
+      </Card>
+    );
+  }
+
+  // ---- take payment --------------------------------------------------
+  async function complete(saleType: "cash" | "credit") {
     setError(null);
 
-    if (!customerId) { setError("Choose a customer."); return; }
+    if (!customerId) { setError("Choose who is buying."); setStage("cart"); return; }
+    if (!lines.length) { setError("Add something to the sale."); setStage("cart"); return; }
 
-    const chosen = lines
-      .filter((l) => l.productId && Number(l.quantity) > 0)
-      .map((l) => ({
-        product_id: l.productId,
-        quantity: Number(l.quantity),
-        unit_price: priceBy.get(l.productId)?.unit_price ?? 0,
-        tax_rate: priceBy.get(l.productId)?.tax_rate ?? 0,
-      }));
-
-    if (!chosen.length) { setError("Add at least one product."); return; }
-
-    // Checked here so the driver is told at the counter rather than at
-    // sync time. The database checks it again against real stock, which
-    // is what actually decides.
-    for (const line of chosen) {
-      const held = stockBy.get(line.product_id);
-      if (!held) { setError("One of those products is not on your van."); return; }
-      if (line.quantity > held.qty_on_hand) {
-        setError(`Only ${held.qty_on_hand} of ${held.name} left on the van.`);
+    for (const line of lines) {
+      const held = stock.find((s) => s.product_id === line.product_id);
+      if (!held || line.quantity > held.qty_on_hand) {
+        setError(`Only ${held?.qty_on_hand ?? 0} of ${line.name} left on the van.`);
+        setStage("cart");
         return;
       }
       if (!line.unit_price) {
-        setError(`${held.name} has no price on this load.`);
+        setError(`${line.name} has no price on this load. Ask the depot.`);
+        setStage("cart");
         return;
       }
     }
 
     if (saleType === "credit" && customer && total > customer.credit_available) {
       setError(
-        `${customer.name} has ${formatMoney(customer.credit_available)} of credit left; ` +
-        `this sale is ${formatMoney(total)}.`,
+        `${customer.name} has ${formatMoney(customer.credit_available)} of credit left, ` +
+        `and this sale is ${formatMoney(total)}. Take cash, or ask the office to raise their limit.`,
       );
       return;
     }
 
+    const payloadLines = lines.map(({ product_id, quantity, unit_price, tax_rate }) =>
+      ({ product_id, quantity, unit_price, tax_rate }));
+    const summary =
+      `${saleType === "cash" ? "Cash" : "Credit"} sale to ${customer?.name ?? "customer"} · ${formatMoney(total)}`;
+
     setBusy(true);
     try {
-      await enqueue(
-        "van_sale",
-        {
+      if (online) {
+        // With a signal the sale is made now, so the driver gets a real
+        // sale number to read back to the customer rather than a promise
+        // that it will go later.
+        const result = await recordVanSaleAction({
+          loadId: snapshot!.load!.id,
+          customerId,
+          saleType,
+          notes: notes.trim() || null,
+          lines: payloadLines,
+        });
+
+        if (!result.ok) {
+          setError(result.message ?? "The sale could not be completed.");
+          setStage("cart");
+          return;
+        }
+
+        setCompleted({
+          customerName: customer?.name ?? "the customer",
+          total: result.total ?? total,
+          saleType,
+          queuedOffline: false,
+          saleNumber: result.saleNumber,
+        });
+      } else {
+        // No signal: queued, and applied exactly once when it uploads.
+        await enqueue("van_sale", {
           load_id: snapshot!.load!.id,
           customer_id: customerId,
           sale_type: saleType,
           amount_paid: saleType === "cash" ? null : "0",
-          notes: notes || null,
-          lines: chosen,
-        },
-        `${saleType === "cash" ? "Cash" : "Credit"} sale to ${customer?.name ?? "customer"} · ${formatMoney(total)}`,
-      );
+          notes: notes.trim() || null,
+          lines: payloadLines,
+        }, summary);
 
-      setSaved(`${formatMoney(total)} recorded for ${customer?.name ?? "the customer"}.`);
-      setCustomerId("");
-      setNotes("");
-      setLines([{ key: `l${nextKey.current++}`, productId: "", quantity: "" }]);
+        setCompleted({
+          customerName: customer?.name ?? "the customer",
+          total,
+          saleType,
+          queuedOffline: true,
+        });
+      }
+
+      setStage("done");
       await refresh();
-      // Straight out if there is a signal; otherwise it waits in the
-      // queue and the sync bar says so.
       if (online) void sync();
       router.refresh();
     } catch {
-      setError("This device could not store the sale. Check your browser storage settings.");
+      setError("The sale could not be recorded. Try again in a moment.");
+      setStage("cart");
     } finally {
       setBusy(false);
     }
   }
 
-  if (saved) {
-    return (
-      <Card>
-        <CardBody className="space-y-4">
-          <Alert tone="success" title="Sale recorded">
-            {saved}{" "}
-            {online ? "It is on its way to the office." : "It will send when you have a signal."}
-          </Alert>
-          <Button size="touch" onClick={() => setSaved(null)}>
-            <Check className="size-5" aria-hidden />
-            Sell to another customer
-          </Button>
-        </CardBody>
-      </Card>
-    );
+  async function addCustomer(fields: {
+    name: string; phone: string; city: string; address: string;
+  }): Promise<string | null> {
+    if (!online) {
+      setError("Adding a customer needs a signal. Sell to an existing customer for now.");
+      return null;
+    }
+    return new Promise((resolve) => {
+      startCreate(async () => {
+        const result = await createCustomerAtCounterAction(fields);
+        if (!result.ok || !result.id) {
+          setError(result.message ?? "That customer could not be saved.");
+          resolve(null);
+          return;
+        }
+        // Pull the new customer into the cached round so the sale can
+        // reference them, here and after a reload.
+        const fresh = await refreshSnapshot();
+        if (fresh) await refreshSnapshotInto(fresh);
+        await refresh();
+        resolve(result.id);
+      });
+    });
   }
 
   return (
-    <Card>
-      <CardBody className="space-y-5">
-        {error && <Alert tone="danger">{error}</Alert>}
-        {!online && (
-          <Alert tone="warning" title="No signal">
-            The sale is stored on this phone and sent when you reconnect.
-          </Alert>
-        )}
+    <div className="space-y-4 pb-40">
+      {error && <Alert tone="danger">{error}</Alert>}
+      {!online && (
+        <Alert tone="warning" title="No signal">
+          You can keep selling. Sales are saved here and sent when you reconnect.
+        </Alert>
+      )}
 
-        <Field label="Customer" htmlFor="customerId" required>
-          <Select
-            id="customerId"
-            value={customerId}
-            onChange={(e) => setCustomerId(e.target.value)}
-            className="h-14 text-base"
-          >
-            <option value="">Choose a customer</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </Select>
-        </Field>
-
+      {/* ---- who is buying --------------------------------------- */}
+      <section>
+        <h2 className="mb-2 text-[0.6875rem] font-medium tracking-wide text-[var(--text-muted)] uppercase">
+          Customer
+        </h2>
+        <CustomerPicker
+          customers={customers}
+          selectedId={customerId}
+          onSelect={(id) => { setCustomerId(id); setError(null); }}
+          onCreate={addCustomer}
+          creating={creatingCustomer}
+        />
         {customer && (
-          <div className="flex flex-wrap gap-2">
+          <div className="mt-2 flex flex-wrap gap-2">
             <Badge tone={customer.balance > 0 ? "caution" : "positive"}>
               Owes {formatMoney(customer.balance)}
             </Badge>
             <Badge tone="info">{formatMoney(customer.credit_available)} credit left</Badge>
           </div>
         )}
+      </section>
 
-        <fieldset className="space-y-3">
-          <legend className="text-sm font-medium text-[var(--text-primary)]">What they are buying</legend>
-          {lines.map((line, index) => {
-            const held = stockBy.get(line.productId);
-            const price = priceBy.get(line.productId)?.unit_price ?? 0;
-            return (
-              <div key={line.key} className="space-y-2 rounded-[var(--radius-panel)] border border-[var(--border-subtle)] p-3">
-                <Select
-                  aria-label={`Product ${index + 1}`}
-                  value={line.productId}
-                  onChange={(e) => setLine(line.key, { productId: e.target.value })}
-                  className="h-14 text-base"
-                >
-                  <option value="">Choose a product</option>
-                  {stock.map((s) => (
-                    <option key={s.product_id} value={s.product_id}>
-                      {s.name} ({formatQuantity(s.qty_on_hand)} left)
-                    </option>
-                  ))}
-                </Select>
-                <div className="flex items-center gap-2">
-                  <Input
-                    aria-label={`Quantity for product ${index + 1}`}
-                    inputMode="numeric"
-                    placeholder="Quantity"
-                    value={line.quantity}
-                    onChange={(e) => setLine(line.key, { quantity: e.target.value.replace(/\D/g, "") })}
-                    className="h-14 flex-1 text-base"
-                  />
-                  <span className="numeric w-28 shrink-0 text-right text-sm text-[var(--text-secondary)]">
-                    {price ? formatMoney(price * Number(line.quantity || 0)) : "-"}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => dropLine(line.key)}
-                    aria-label={`Remove product ${index + 1}`}
-                    className="grid size-14 shrink-0 place-items-center rounded-[var(--radius-panel)] border border-[var(--border-strong)] text-[var(--text-secondary)]"
-                  >
-                    <Trash2 className="size-5" aria-hidden />
-                  </button>
-                </div>
-                {held && (
-                  <p className="numeric text-xs text-[var(--text-muted)]">
-                    {formatMoney(price)} each · {formatQuantity(held.qty_on_hand)} on the van
-                  </p>
-                )}
-              </div>
-            );
-          })}
-
-          <Button type="button" variant="outline" size="touch" onClick={addLine}>
-            <Plus className="size-5" aria-hidden />
-            Add another product
-          </Button>
-        </fieldset>
-
-        <div className="flex items-baseline justify-between rounded-[var(--radius-panel)] bg-[var(--surface-sunken)] px-4 py-3">
-          <span className="text-sm font-medium text-[var(--text-secondary)]">Total</span>
-          <span className="numeric text-2xl font-semibold text-[var(--text-primary)]">
-            {formatMoney(total)}
+      {/* ---- what is on the van ----------------------------------- */}
+      <section>
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h2 className="text-[0.6875rem] font-medium tracking-wide text-[var(--text-muted)] uppercase">
+            On my van
+          </h2>
+          <span className="numeric text-xs text-[var(--text-muted)]">
+            {formatQuantity(stock.length)} products
           </span>
         </div>
 
-        <Field label="How are they paying?" htmlFor="saleType" required>
-          <div className="grid grid-cols-2 gap-2">
-            {(["cash", "credit"] as const).map((type) => (
-              <button
-                key={type}
-                type="button"
-                onClick={() => setSaleType(type)}
-                aria-pressed={saleType === type}
-                className={
-                  "h-14 rounded-[var(--radius-panel)] border text-base font-medium transition-colors " +
-                  (saleType === type
-                    ? "border-brand-700 bg-brand-50 text-brand-800 dark:bg-brand-950 dark:text-brand-200"
-                    : "border-[var(--border-strong)] text-[var(--text-secondary)]")
-                }
-              >
-                {type === "cash" ? "Cash now" : "On credit"}
-              </button>
-            ))}
+        <div className="relative mb-3">
+          <Search
+            className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-[var(--text-muted)]"
+            aria-hidden
+          />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Find a product"
+            aria-label="Find a product on the van"
+            className="h-14 pl-9 text-base"
+          />
+        </div>
+
+        <ul className="space-y-2">
+          {visible.length === 0 ? (
+            <li className="rounded-[var(--radius-panel)] border border-[var(--border-subtle)] px-4 py-6 text-center text-sm text-[var(--text-secondary)]">
+              Nothing on the van matches that.
+            </li>
+          ) : (
+            visible.map((s) => {
+              const qty = quantities[s.product_id] ?? 0;
+              const price = priceBy.get(s.product_id)?.unit_price ?? 0;
+              const soldOut = s.qty_on_hand <= 0;
+              return (
+                <li
+                  key={s.product_id}
+                  className={
+                    "rounded-[var(--radius-panel)] border p-3 " +
+                    (qty > 0
+                      ? "border-brand-600 bg-brand-50/60 dark:bg-brand-950/40"
+                      : "border-[var(--border-subtle)] bg-[var(--surface-raised)]")
+                  }
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-[var(--text-primary)]">
+                        {s.name}
+                      </p>
+                      <p className="numeric mt-0.5 text-xs text-[var(--text-secondary)]">
+                        {formatMoney(price)} each · {formatQuantity(s.qty_on_hand)} left
+                      </p>
+                    </div>
+                    {qty > 0 && (
+                      <span className="numeric shrink-0 text-sm font-semibold text-[var(--text-primary)]">
+                        {formatMoney(price * qty)}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      type="button"
+                      aria-label={`One fewer ${s.name}`}
+                      onClick={() => setQty(s.product_id, qty - 1, s.qty_on_hand)}
+                      disabled={qty === 0}
+                      className="grid size-14 shrink-0 place-items-center rounded-[var(--radius-panel)] border border-[var(--border-strong)] text-[var(--text-primary)] disabled:opacity-40"
+                    >
+                      <Minus className="size-5" aria-hidden />
+                    </button>
+                    <Input
+                      aria-label={`Quantity of ${s.name}`}
+                      inputMode="numeric"
+                      value={qty === 0 ? "" : String(qty)}
+                      placeholder="0"
+                      onChange={(e) =>
+                        setQty(s.product_id, Number(e.target.value.replace(/\D/g, "") || 0), s.qty_on_hand)
+                      }
+                      disabled={soldOut}
+                      className="numeric h-14 flex-1 text-center text-lg"
+                    />
+                    <button
+                      type="button"
+                      aria-label={`One more ${s.name}`}
+                      onClick={() => setQty(s.product_id, qty + 1, s.qty_on_hand)}
+                      disabled={soldOut || qty >= s.qty_on_hand}
+                      className="grid size-14 shrink-0 place-items-center rounded-[var(--radius-panel)] border border-[var(--border-strong)] text-[var(--text-primary)] disabled:opacity-40"
+                    >
+                      <Plus className="size-5" aria-hidden />
+                    </button>
+                  </div>
+                </li>
+              );
+            })
+          )}
+        </ul>
+      </section>
+
+      {lines.length > 0 && (
+        <section>
+          <h2 className="mb-2 text-[0.6875rem] font-medium tracking-wide text-[var(--text-muted)] uppercase">
+            Note
+          </h2>
+          <Textarea
+            rows={2}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Anything worth recording about this sale"
+            aria-label="Note about this sale"
+          />
+        </section>
+      )}
+
+      {/* ---- the running total, always in reach -------------------- */}
+      <div className="fixed inset-x-0 bottom-16 z-20 border-t border-[var(--border-subtle)] bg-[var(--surface-raised)] px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] lg:bottom-0">
+        <div className="mx-auto max-w-2xl">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-sm text-[var(--text-secondary)]">
+              {itemCount === 0
+                ? "Nothing added yet"
+                : `${formatQuantity(itemCount)} ${itemCount === 1 ? "item" : "items"}`}
+            </span>
+            <span className="numeric text-2xl font-semibold text-[var(--text-primary)]">
+              {formatMoney(total)}
+            </span>
           </div>
-        </Field>
 
-        <Field label="Note" htmlFor="notes" hint="Optional.">
-          <Textarea id="notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </Field>
+          {stage === "cart" ? (
+            <Button
+              size="touch"
+              className="mt-2"
+              disabled={!customerId || lines.length === 0}
+              onClick={() => { setError(null); setStage("payment"); }}
+            >
+              {!customerId ? "Choose a customer first"
+                : lines.length === 0 ? "Add something to sell"
+                : "Take payment"}
+            </Button>
+          ) : (
+            <div className="mt-2 space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <Button size="touch" onClick={() => void complete("cash")} loading={busy}>
+                  <Banknote className="size-5" aria-hidden />
+                  Cash
+                </Button>
+                <Button
+                  size="touch" variant="outline"
+                  onClick={() => void complete("credit")}
+                  loading={busy}
+                >
+                  <CreditCard className="size-5" aria-hidden />
+                  Credit
+                </Button>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStage("cart")}
+                className="min-h-11 w-full text-sm text-[var(--text-secondary)]"
+              >
+                Back to the cart
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
 
-        <Button size="touch" onClick={() => void submit()} loading={busy}>
-          Record sale
-        </Button>
-      </CardBody>
-    </Card>
+      <p className="text-center text-xs text-[var(--text-muted)]">
+        Something wrong with your load?{" "}
+        <Link href="/driver/stock" className="underline">Check your van stock</Link>
+      </p>
+    </div>
   );
 }

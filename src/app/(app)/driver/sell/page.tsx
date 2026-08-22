@@ -1,10 +1,15 @@
 import type { Metadata } from "next";
 import { SellForm } from "@/features/driver/sell-form";
+import { getSellingRound } from "@/features/driver/queries";
 import { PageHeader } from "@/components/layout/page-header";
 
 export const metadata: Metadata = { title: "Sell" };
 
-export default function DriverSellPage() {
+export default async function DriverSellPage() {
+  // Rendered server-side so the till has the round on first paint. The
+  // device's cached copy takes over for the offline case.
+  const round = await getSellingRound();
+
   return (
     <>
       <PageHeader
@@ -12,7 +17,7 @@ export default function DriverSellPage() {
         description="Works with or without a signal."
         breadcrumbs={[{ label: "My round", href: "/driver" }, { label: "Sell" }]}
       />
-      <SellForm />
+      <SellForm initial={round.ok ? round.data : null} />
     </>
   );
 }

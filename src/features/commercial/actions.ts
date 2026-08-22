@@ -229,128 +229,159 @@ export async function setCustomerActiveAction(
 // ===================================================================
 
 /**
- * A sale made from a van, recorded while online.
+ * A sale made from a van while there is a signal.
  *
- * It goes through sync_submit() rather than writing van_sales directly,
- * for two reasons. The stock and ledger rules live in
- * complete_van_sale(), and sync_submit() is what enforces idempotency -
- * so an online sale and one that was queued in a tunnel take exactly
- * the same path, and a double-submitted form cannot produce two sales.
+ * Performed here and now rather than queued. The offline path exists
+ * for the case it is built for - no network - and routing an online
+ * sale through it would make the till depend on the sync engine being
+ * installed, which is a separate migration and a separate concern.
+ *
+ * The stock and ledger rules are still not reimplemented: the rows are
+ * assembled and complete_van_sale() does the work, exactly as the
+ * offline path does when it drains.
  */
-export async function recordVanSaleAction(
-  _prev: CommercialState,
-  formData: FormData,
-): Promise<CommercialState> {
+export async function recordVanSaleAction(input: {
+  loadId: string;
+  customerId: string;
+  saleType: "cash" | "credit";
+  notes?: string | null;
+  lines: { product_id: string; quantity: number; unit_price: number; tax_rate: number }[];
+}): Promise<{
+  ok: boolean;
+  saleNumber?: string;
+  total?: number;
+  balance?: number;
+  message?: string;
+}> {
   const actor = await requirePermission("sales.create");
 
-  const idempotencyKey = String(formData.get("idempotencyKey") ?? "");
-  const loadId = String(formData.get("loadId") ?? "");
-  const customerId = String(formData.get("customerId") ?? "");
-  const saleType = String(formData.get("saleType") ?? "cash");
-  const amountPaid = String(formData.get("amountPaid") ?? "").trim();
-  const notes = String(formData.get("notes") ?? "").trim();
-  const values = { loadId, customerId, saleType, amountPaid, notes };
-  const fieldErrors: Record<string, string> = {};
-
-  if (!/^[0-9a-f-]{36}$/i.test(idempotencyKey)) {
-    return { status: "error", message: "This form is stale. Reload the page and try again.", values };
-  }
-  if (!loadId) fieldErrors.loadId = "Choose the load being sold from.";
-  if (!customerId) fieldErrors.customerId = "Choose a customer.";
-  if (saleType !== "cash" && saleType !== "credit") fieldErrors.saleType = "Choose cash or credit.";
-  if (amountPaid && !MONEY.test(amountPaid)) fieldErrors.amountPaid = "Use an amount like 250 or 250.00.";
-
-  const productIds = formData.getAll("productId").map(String);
-  const quantities = formData.getAll("quantity").map(String);
-  const prices = formData.getAll("unitPrice").map(String);
-
-  const lines: { product_id: string; quantity: number; unit_price: number; tax_rate: number }[] = [];
-  for (const [i, productId] of productIds.entries()) {
-    const q = (quantities[i] ?? "").trim();
-    const p = (prices[i] ?? "").trim();
-    if (!productId || !q || q === "0") continue;
-    if (!WHOLE.test(q)) { fieldErrors.lines = `Line ${i + 1}: quantity must be a whole number.`; break; }
-    if (p && !MONEY.test(p)) { fieldErrors.lines = `Line ${i + 1}: price must be an amount.`; break; }
-    lines.push({
-      product_id: productId, quantity: Number(q),
-      unit_price: p ? Number(p) : 0, tax_rate: 0,
-    });
-  }
-  if (!lines.length && !fieldErrors.lines) fieldErrors.lines = "Add at least one product.";
-
-  if (Object.keys(fieldErrors).length) {
-    return { status: "error", message: "Check the fields below.", values, fieldErrors };
+  if (!input.loadId) return { ok: false, message: "Choose the load being sold from." };
+  if (!input.customerId) return { ok: false, message: "Choose a customer." };
+  if (!input.lines?.length) return { ok: false, message: "Add something to the sale." };
+  if (input.saleType !== "cash" && input.saleType !== "credit") {
+    return { ok: false, message: "Choose cash or credit." };
   }
 
-  // Prices default to what the load was priced at, so a driver never
-  // has to retype them and cannot accidentally sell at zero.
   const admin = createSupabaseAdminClient();
-  const { data: loadItems } = await admin
-    .from("van_load_items").select("product_id, unit_price").eq("load_id", loadId);
-  const priceBy = new Map((loadItems ?? []).map((i) => [i.product_id as string, Number(i.unit_price)]));
-  const { data: taxes } = await admin
-    .from("products").select("id, tax_rate").in("id", lines.map((l) => l.product_id));
-  const taxBy = new Map((taxes ?? []).map((p) => [p.id as string, Number(p.tax_rate ?? 0)]));
 
-  for (const line of lines) {
-    if (!line.unit_price) line.unit_price = priceBy.get(line.product_id) ?? 0;
-    line.tax_rate = taxBy.get(line.product_id) ?? 0;
-    if (!line.unit_price) {
-      return {
-        status: "error", values,
-        message: "Check the fields below.",
-        fieldErrors: { lines: "One of those products has no price on this load." },
-      };
+  const { data: load } = await admin
+    .from("van_loads")
+    .select("id, org_id, status, van_id, driver_id, load_number")
+    .eq("id", input.loadId)
+    .maybeSingle();
+  if (!load || load.org_id !== actor.organizationId) {
+    return { ok: false, message: "That load could not be found." };
+  }
+  if (load.status !== "dispatched" && load.status !== "loaded") {
+    return { ok: false, message: `${load.load_number} is ${load.status} and cannot take sales.` };
+  }
+
+  const { data: customer } = await admin
+    .from("customers").select("id, name, org_id, is_active")
+    .eq("id", input.customerId).maybeSingle();
+  if (!customer || customer.org_id !== actor.organizationId) {
+    return { ok: false, message: "That customer could not be found." };
+  }
+  if (!customer.is_active) return { ok: false, message: "That customer is no longer active." };
+
+  // What the van is actually carrying decides what can be sold. Checked
+  // here for a clear message; complete_van_sale() checks it again, and
+  // that is the one that governs.
+  for (const line of input.lines) {
+    if (!Number.isInteger(line.quantity) || line.quantity <= 0) {
+      return { ok: false, message: "Quantities must be whole numbers above zero." };
+    }
+    const { data: held } = await admin
+      .from("van_inventory").select("qty_on_hand, products(name)")
+      .eq("van_id", load.van_id).eq("product_id", line.product_id).maybeSingle();
+    const available = Number(held?.qty_on_hand ?? 0);
+    if (line.quantity > available) {
+      const name = (held?.products as { name?: string } | null)?.name ?? "that product";
+      return { ok: false, message: `Only ${available} of ${name} left on the van.` };
     }
   }
 
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase.rpc("sync_submit", {
-    p_id: idempotencyKey,
-    p_device_id: "web",
-    p_operation: "van_sale",
-    p_payload: {
-      load_id: loadId,
-      customer_id: customerId,
-      sale_type: saleType,
-      amount_paid: saleType === "cash" ? null : (amountPaid || "0"),
-      notes: notes || null,
-      lines,
-    },
-    p_occurred_at: new Date().toISOString(),
-  });
+  const { data: sale, error } = await admin
+    .from("van_sales")
+    .insert({
+      org_id: actor.organizationId,
+      load_id: load.id,
+      van_id: load.van_id,
+      driver_id: load.driver_id,
+      customer_id: input.customerId,
+      sale_type: input.saleType,
+      status: "draft",
+      sold_at: new Date().toISOString(),
+      notes: input.notes?.trim() || null,
+    })
+    .select("id")
+    .single();
 
-  if (error) {
-    console.error("[commercial] sale failed", error);
-    return { status: "error", message: "The sale could not be recorded. Please try again.", values };
+  if (error || !sale) {
+    console.error("[commercial] sale creation failed", error);
+    return { ok: false, message: "The sale could not be started. Please try again." };
   }
 
-  const outcome = data as { status?: string; error?: string; result?: Record<string, unknown> } | null;
-  if (outcome?.status !== "applied") {
+  const { error: lineError } = await admin.from("van_sale_items").insert(
+    input.lines.map((l) => ({
+      org_id: actor.organizationId,
+      sale_id: sale.id,
+      product_id: l.product_id,
+      quantity: l.quantity,
+      unit_price: l.unit_price,
+      discount_pct: 0,
+      tax_rate: l.tax_rate ?? 0,
+    })),
+  );
+  if (lineError) {
+    console.error("[commercial] sale lines failed", lineError);
+    // A draft with no lines is not a sale. Remove it rather than leave
+    // one nothing can complete.
+    await admin.from("van_sales").delete().eq("id", sale.id);
+    return { ok: false, message: "The sale lines could not be saved. Please try again." };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { error: completeError } = await supabase.rpc("complete_van_sale", {
+    p_sale_id: sale.id,
+    p_amount_paid: null,
+  });
+  if (completeError) {
+    console.error("[commercial] sale completion failed", completeError);
+    await admin.from("van_sale_items").delete().eq("sale_id", sale.id);
+    await admin.from("van_sales").delete().eq("id", sale.id);
     return {
-      status: "error", values,
-      message: outcome?.error?.replace(/^.*?:\s*/, "") ?? "The sale could not be completed.",
+      ok: false,
+      message: completeError.message.replace(/^.*?:\s*/, "") || "The sale could not be completed.",
     };
   }
 
-  const result = outcome.result ?? {};
+  const { data: finished } = await admin
+    .from("van_sales").select("sale_number, total, balance").eq("id", sale.id).single();
+
   await recordAudit(actor, {
     action: "sale.recorded",
     targetType: "van_sale",
-    targetId: String(result.sale_id ?? ""),
-    targetLabel: String(result.sale_number ?? ""),
+    targetId: sale.id,
+    targetLabel: finished?.sale_number ?? "",
     after: {
-      total: result.total, balance: result.balance,
-      sale_type: saleType, lines: lines.length,
+      customer: customer.name,
+      sale_type: input.saleType,
+      lines: input.lines.length,
+      total: finished?.total,
+      balance: finished?.balance,
     },
   });
 
   revalidatePath("/sales");
-  revalidatePath("/vans");
-  revalidatePath("/credit");
+  revalidatePath("/driver");
+  revalidatePath("/driver/sell");
+  revalidatePath("/driver/stock");
+
   return {
-    status: "done",
-    message: `${result.sale_number} recorded.`,
-    createdId: String(result.sale_id ?? ""),
+    ok: true,
+    saleNumber: finished?.sale_number as string,
+    total: Number(finished?.total ?? 0),
+    balance: Number(finished?.balance ?? 0),
   };
 }

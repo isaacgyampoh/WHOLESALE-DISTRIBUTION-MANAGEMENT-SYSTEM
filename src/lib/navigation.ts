@@ -1,6 +1,6 @@
 import type { Permission } from "@/types/permissions";
 import type { UserRole } from "@/types/domain";
-import { canAny } from "@/types/permissions";
+import { can, canAny } from "@/types/permissions";
 
 export interface NavItem {
   label: string;
@@ -125,9 +125,77 @@ export function primaryMobileItems(sections: NavSection[], count = 4): NavItem[]
     .slice(0, count);
 }
 
+/**
+ * The round, for the people who run one.
+ *
+ * A driver's day is not a smaller version of the office's. They sell
+ * from a van, take money, bring goods back and close the day - and
+ * every one of those is a screen built for standing outside a shop.
+ * Handing them Products, Purchasing, Warehouses and Audit alongside it
+ * buries the four things they actually do.
+ *
+ * This is presentation only. Every route is authorised on the server
+ * and by row level security; a driver who types /purchasing is refused
+ * there, not here.
+ */
+const DRIVER_SECTIONS: readonly NavSection[] = [
+  {
+    label: "My round",
+    items: [
+      {
+        label: "Home", href: "/driver", permissions: ["sales.create"],
+        icon: "LayoutDashboard", mobilePriority: 0,
+      },
+      {
+        label: "Sell", href: "/driver/sell", permissions: ["sales.create"],
+        icon: "Receipt", mobilePriority: 1,
+      },
+      {
+        label: "Van stock", href: "/driver/stock", permissions: ["sales.create"],
+        icon: "Boxes", mobilePriority: 2,
+      },
+      {
+        label: "Collect", href: "/driver/collect", permissions: ["payments.create"],
+        icon: "Banknote", mobilePriority: 3,
+      },
+    ],
+  },
+  {
+    label: "End of round",
+    items: [
+      { label: "Return goods", href: "/driver/return", permissions: ["returns.submit"], icon: "Undo2" },
+      { label: "End my day", href: "/driver/reconcile", permissions: ["reconciliation.submit"], icon: "Scale" },
+    ],
+  },
+  {
+    label: "My records",
+    items: [
+      { label: "My sales", href: "/driver/sales", permissions: ["sales.view"], icon: "Receipt" },
+      { label: "What I have recorded", href: "/driver/queue", permissions: ["sales.create"], icon: "ClipboardList" },
+    ],
+  },
+];
+
+/**
+ * Whether this role runs a round rather than the office.
+ *
+ * Keyed on the permission set rather than the role name, so a role that
+ * is given the driver's capabilities later gets the driver's navigation
+ * without anyone remembering to update a list. A supervisor covering a
+ * van still gets the full menu, because they can also do everything
+ * else.
+ */
+function runsARound(role: UserRole): boolean {
+  return can(role, "sales.create")
+    && can(role, "loads.confirm")
+    && !can(role, "products.edit")
+    && !can(role, "users.manage");
+}
+
 /** Sections with nothing visible to this role are dropped entirely. */
 export function navigationFor(role: UserRole): NavSection[] {
-  return NAV_SECTIONS.map((section) => ({
+  const sections = runsARound(role) ? DRIVER_SECTIONS : NAV_SECTIONS;
+  return sections.map((section) => ({
     ...section,
     items: section.items.filter((item) => canAny(role, item.permissions)),
   })).filter((section) => section.items.length > 0);

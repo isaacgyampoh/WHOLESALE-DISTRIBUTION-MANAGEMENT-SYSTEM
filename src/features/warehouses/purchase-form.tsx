@@ -17,7 +17,7 @@ import { Plus, Trash2, Send, PackageCheck, X } from "lucide-react";
 import type { PurchaseOrderRow } from "./queries";
 
 export interface PurchaseOption { id: string; label: string }
-export interface PurchaseProduct { id: string; name: string; sku: string; costPrice: number }
+export interface PurchaseProduct { id: string; name: string; sku: string; costPrice: number | null }
 
 interface Line { key: string; productId: string; quantity: string; unitCost: string }
 
@@ -140,7 +140,7 @@ export function CreatePurchaseOrderButton({
                     inputMode="decimal"
                     placeholder={
                       productBy.get(line.productId)
-                        ? String(productBy.get(line.productId)!.costPrice)
+                        ? String(productBy.get(line.productId)!.costPrice ?? "")
                         : "Cost"
                     }
                     value={line.unitCost}

@@ -26,6 +26,7 @@
     "hosted:workflow": "node tests/visual/test_workflow.mjs",
     "hosted:pages": "node tests/visual/test_pages.mjs",
     "hosted:offline": "node tests/visual/test_offline.mjs",
+    "hosted:driver": "node tests/visual/test_driver_day.mjs",
     "icons": "node scripts/icons/generate.mjs",
     "visual:audit": "node tests/visual/audit.mjs"
   },

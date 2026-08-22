@@ -41,7 +41,10 @@ export async function listWarehouses(): Promise<Result<WarehouseRow[]>> {
       .order("name"),
     supabase
       .from("inventory")
-      .select("warehouse_id, qty_on_hand, products(cost_price)"),
+      // products_priced masks cost per caller, so a warehouse's value
+      // comes back as zero for a role that may not see it rather than
+      // failing the whole page.
+      .select("warehouse_id, qty_on_hand, products_priced(cost_price)"),
   ]);
 
   if (warehouses.error) {
@@ -53,7 +56,7 @@ export async function listWarehouses(): Promise<Result<WarehouseRow[]>> {
     const id = row.warehouse_id as string;
     const qty = Number(row.qty_on_hand ?? 0);
     if (qty === 0) continue;
-    const product = row.products as { cost_price?: string } | null;
+    const product = row.products_priced as { cost_price?: string | null } | null;
     const entry = held.get(id) ?? { lines: 0, units: 0, value: 0 };
     entry.lines += 1;
     entry.units += qty;

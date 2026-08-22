@@ -6,18 +6,24 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardBody } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, ErrorState, EmptyState } from "@/components/ui/states";
-import { formatMoney, formatQuantity } from "@/lib/utils/format";
-import { Receipt, Banknote, Undo2, Scale, TruckIcon, ListChecks } from "lucide-react";
+import { formatMoney, formatQuantity, formatDate } from "@/lib/utils/format";
+import {
+  Receipt, Banknote, Undo2, Scale, Boxes, ListChecks, TruckIcon, ChevronRight,
+} from "lucide-react";
 
 export const metadata: Metadata = { title: "My round" };
 
 /**
  * The driver's home.
  *
- * Not a smaller version of the administrator's dashboard: four things
- * they might do next, and the three numbers that tell them how the day
- * is going. Everything is thumb-sized because it is used standing at
- * the back of a van.
+ * Built around what they do next, not around the tables underneath.
+ * A driver standing at the back of a van needs three things in this
+ * order: which van and load am I on, how is the day going, and what am
+ * I doing now. Everything else is a tap away under More.
+ *
+ * No cost figure appears anywhere on this screen. The database will not
+ * give a driver one - `product_cost()` returns null to their role - and
+ * the screen does not ask for one.
  */
 export default async function DriverPage() {
   const user = await requireUser();
@@ -33,67 +39,116 @@ export default async function DriverPage() {
   }
 
   const round = result.data;
+  const onTheRoad = round.load?.status === "dispatched";
+  const dayClosed = round.reconciliation && round.reconciliation.status !== "draft";
 
   return (
     <>
       <PageHeader
         title={`Good day, ${user.fullName.split(" ")[0]}`}
-        description={round.van ? `${round.van.code} · ${round.van.registrationNo}` : undefined}
+        description="Your van, your round, and what to do next."
       />
 
       {!round.van ? (
         <Card>
           <EmptyState
             icon={TruckIcon}
-            title="No van assigned"
-            description="Ask a supervisor to assign you a van before starting a round."
+            title="No van assigned to you"
+            description="A supervisor assigns you a van before you can start a round. Ask at the depot."
           />
         </Card>
       ) : (
         <div className="space-y-5">
-          {!round.load && (
-            <Alert tone="info" title="Nothing loaded">
-              Your van has no open load. A supervisor loads it before you set off.
+          {/* ---- my van --------------------------------------------- */}
+          <Card>
+            <CardBody className="space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[0.6875rem] font-medium tracking-wide text-[var(--text-muted)] uppercase">
+                    My van
+                  </p>
+                  <p className="mt-0.5 truncate text-lg font-semibold text-[var(--text-primary)]">
+                    {round.van.code}
+                  </p>
+                  <p className="numeric truncate text-xs text-[var(--text-secondary)]">
+                    {round.van.registrationNo}
+                  </p>
+                </div>
+                <Badge tone={onTheRoad ? "brand" : round.load ? "info" : "neutral"}>
+                  {onTheRoad ? "On the road" : round.load ? "Loading" : "No load"}
+                </Badge>
+              </div>
+
+              {round.load ? (
+                <div className="rounded-[var(--radius-panel)] bg-[var(--surface-sunken)] px-4 py-3">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="numeric text-sm font-medium text-[var(--text-primary)]">
+                      {round.load.loadNumber}
+                    </span>
+                    <span className="text-xs text-[var(--text-secondary)]">
+                      {formatDate(round.load.loadDate)}
+                    </span>
+                  </div>
+                  <p className="numeric mt-1 text-xs text-[var(--text-secondary)]">
+                    {formatQuantity(round.stockUnits)} units still on board ·{" "}
+                    {round.load.lineCount} {round.load.lineCount === 1 ? "product" : "products"} loaded
+                  </p>
+                </div>
+              ) : (
+                <Alert tone="info" title="Nothing loaded yet">
+                  Your van has no open load. A supervisor loads it before you set off.
+                </Alert>
+              )}
+            </CardBody>
+          </Card>
+
+          {/* ---- today ---------------------------------------------- */}
+          <section>
+            <h2 className="mb-2 text-[0.6875rem] font-medium tracking-wide text-[var(--text-muted)] uppercase">
+              Today
+            </h2>
+            <div className="grid grid-cols-3 gap-3">
+              <Figure label="Cash" value={formatMoney(round.cashSales)} tone="positive" />
+              <Figure label="Credit" value={formatMoney(round.creditSales)} tone="caution" />
+              <Figure label="Collected" value={formatMoney(round.collections)} tone="positive" />
+            </div>
+            <p className="numeric mt-2 text-xs text-[var(--text-muted)]">
+              {formatQuantity(round.saleCount)} {round.saleCount === 1 ? "sale" : "sales"} so far
+            </p>
+          </section>
+
+          {/* ---- what to do now ------------------------------------- */}
+          <section>
+            <h2 className="mb-2 text-[0.6875rem] font-medium tracking-wide text-[var(--text-muted)] uppercase">
+              What would you like to do?
+            </h2>
+            <div className="grid grid-cols-2 gap-3">
+              <Action
+                href="/driver/sell" icon={Receipt} label="Sell"
+                hint="To a customer" primary disabled={!onTheRoad}
+              />
+              <Action
+                href="/driver/collect" icon={Banknote} label="Collect payment"
+                hint="Money owed" primary
+              />
+              <Action href="/driver/stock" icon={Boxes} label="My van stock" hint="What is left" />
+              <Action href="/driver/return" icon={Undo2} label="Return goods" hint="Back to depot" />
+            </div>
+
+            <div className="mt-3">
+              <Action
+                href="/driver/reconcile" icon={Scale} label="End my day"
+                hint={dayClosed ? "Already submitted" : "Hand in cash and close the round"}
+                wide
+              />
+            </div>
+          </section>
+
+          {!onTheRoad && round.load && (
+            <Alert tone="info" title="Not dispatched yet">
+              Selling opens once the depot dispatches {round.load.loadNumber} to your van.
             </Alert>
           )}
-
-          {round.load && (
-            <Card>
-              <CardBody className="space-y-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="numeric text-sm font-medium text-[var(--text-primary)]">
-                      {round.load.loadNumber}
-                    </p>
-                    <p className="text-xs text-[var(--text-secondary)]">
-                      {round.load.lineCount} {round.load.lineCount === 1 ? "line" : "lines"} ·{" "}
-                      {formatMoney(round.load.loadedValue)} loaded
-                    </p>
-                  </div>
-                  <Badge tone={round.load.status === "dispatched" ? "brand" : "info"}>
-                    {round.load.status === "dispatched" ? "On the road" : round.load.status}
-                  </Badge>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <Figure label="On the van" value={formatQuantity(round.stockUnits)} sub="units left" />
-                  <Figure label="Worth" value={formatMoney(round.stockValue)} sub="at cost" />
-                </div>
-              </CardBody>
-            </Card>
-          )}
-
-          <div className="grid grid-cols-3 gap-3">
-            <Figure label="Cash today" value={formatMoney(round.cashSales)} tone="positive" />
-            <Figure label="On credit" value={formatMoney(round.creditSales)} tone="caution" />
-            <Figure label="Collected" value={formatMoney(round.collections)} tone="positive" />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <Action href="/driver/sell" icon={Receipt} label="Sell" hint="From the van" primary />
-            <Action href="/driver/collect" icon={Banknote} label="Collect" hint="Take a payment" primary />
-            <Action href="/driver/return" icon={Undo2} label="Return" hint="Count what is left" />
-            <Action href="/driver/reconcile" icon={Scale} label="End of day" hint="Hand in the cash" />
-          </div>
 
           <Link
             href="/driver/queue"
@@ -105,22 +160,30 @@ export default async function DriverPage() {
                 Everything I have recorded
               </span>
             </span>
-            <span className="text-xs text-[var(--text-muted)]">View</span>
+            <ChevronRight className="size-4 text-[var(--text-muted)]" aria-hidden />
           </Link>
 
-          {round.reconciliation && round.reconciliation.status !== "draft" && (
+          {dayClosed && round.reconciliation && (
             <Alert
-              tone={round.reconciliation.status === "approved" || round.reconciliation.status === "settled"
-                ? "success"
-                : round.reconciliation.status === "rejected" ? "danger" : "info"}
-              title={`End of day ${round.reconciliation.status}`}
+              tone={
+                round.reconciliation.status === "rejected" ? "danger"
+                : round.reconciliation.status === "submitted" ? "info"
+                : "success"
+              }
+              title={
+                round.reconciliation.status === "submitted"
+                  ? "Your day is with a supervisor"
+                  : round.reconciliation.status === "rejected"
+                    ? "Your day was sent back"
+                    : "Your day is settled"
+              }
             >
               {round.reconciliation.reconNumber}
               {round.reconciliation.status === "rejected"
-                ? " was sent back to you. Check with your supervisor."
+                ? " came back to you. Speak to your supervisor before resubmitting."
                 : round.reconciliation.status === "submitted"
-                  ? " is with a supervisor."
-                  : " is settled."}
+                  ? ". You cannot approve your own round."
+                  : "."}
             </Alert>
           )}
         </div>
@@ -130,49 +193,85 @@ export default async function DriverPage() {
 }
 
 function Figure({
-  label, value, sub, tone,
+  label, value, tone,
 }: {
-  label: string; value: string; sub?: string; tone?: "positive" | "caution";
+  label: string; value: string; tone?: "positive" | "caution";
 }) {
   const accent =
-    tone === "positive" ? "text-positive" : tone === "caution" ? "text-caution" : "text-[var(--text-primary)]";
+    tone === "positive" ? "text-positive"
+    : tone === "caution" ? "text-caution"
+    : "text-[var(--text-primary)]";
   return (
     <div className="surface rounded-[var(--radius-panel)] border border-[var(--border-subtle)] p-3">
       <p className="text-[0.6875rem] font-medium tracking-wide text-[var(--text-muted)] uppercase">
         {label}
       </p>
-      <p className={`numeric mt-1 text-lg font-semibold tracking-tight ${accent}`}>{value}</p>
-      {sub && <p className="mt-0.5 text-[0.6875rem] text-[var(--text-secondary)]">{sub}</p>}
+      <p className={`numeric mt-1 text-base font-semibold tracking-tight sm:text-lg ${accent}`}>
+        {value}
+      </p>
     </div>
   );
 }
 
+/**
+ * A destination sized for a thumb. Disabled rather than hidden when the
+ * round is not in a state for it: a driver who cannot find "Sell"
+ * assumes the app is broken, where a greyed one with a reason does not.
+ */
 function Action({
-  href, icon: Icon, label, hint, primary,
+  href, icon: Icon, label, hint, primary, wide, disabled,
 }: {
   href: string;
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   hint: string;
   primary?: boolean;
+  wide?: boolean;
+  disabled?: boolean;
 }) {
+  const body = (
+    <>
+      <Icon className="size-7 shrink-0" aria-hidden />
+      <span className="min-w-0">
+        <span className="block text-base font-semibold">{label}</span>
+        <span
+          className={
+            "block text-xs " +
+            (primary && !disabled ? "text-white/80" : "text-[var(--text-secondary)]")
+          }
+        >
+          {hint}
+        </span>
+      </span>
+    </>
+  );
+
+  const shape = wide
+    ? "flex min-h-16 flex-row items-center gap-3 rounded-[var(--radius-panel)] border p-4"
+    : "flex min-h-28 flex-col justify-between rounded-[var(--radius-panel)] border p-4";
+
+  if (disabled) {
+    return (
+      <div
+        aria-disabled="true"
+        className={`${shape} border-[var(--border-subtle)] bg-[var(--surface-sunken)] text-[var(--text-muted)]`}
+      >
+        {body}
+      </div>
+    );
+  }
+
   return (
     <Link
       href={href}
       className={
-        "flex min-h-28 flex-col justify-between rounded-[var(--radius-panel)] border p-4 transition-colors " +
+        `${shape} transition-colors ` +
         (primary
           ? "border-brand-700 bg-brand-700 text-white hover:bg-brand-800"
           : "border-[var(--border-strong)] bg-[var(--surface-raised)] text-[var(--text-primary)] hover:bg-[var(--surface-sunken)]")
       }
     >
-      <Icon className="size-7" aria-hidden />
-      <span>
-        <span className="block text-base font-semibold">{label}</span>
-        <span className={"block text-xs " + (primary ? "text-white/80" : "text-[var(--text-secondary)]")}>
-          {hint}
-        </span>
-      </span>
+      {body}
     </Link>
   );
 }

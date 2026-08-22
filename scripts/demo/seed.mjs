@@ -405,6 +405,84 @@ if (existingCycle) {
   }
 }
 
+// ===================================================================
+// Today's round, left open on purpose.
+//
+// The cycle above is finished history - it gives the driver a day of
+// sales, a return and a reconciliation to look back on. But a finished
+// round means signing in as the driver shows an empty van and a Sell
+// button that does nothing, which is no use for a demonstration and no
+// use to a real driver on their first morning.
+//
+// So the van is loaded again and dispatched, and left that way.
+// ===================================================================
+// Scoped to the demo van, not to the organization: a load left open on
+// some other van - by a test, or by a real round in a shared project -
+// is not a reason to leave the demo driver with nothing to sell.
+const { data: openLoad } = await admin
+  .from("van_loads").select("id, load_number")
+  .eq("org_id", org.id).eq("van_id", van)
+  .in("status", ["loaded", "dispatched"]).maybeSingle();
+
+if (openLoad) {
+  say(`van already out on ${openLoad.load_number}`);
+} else if (!driverId) {
+  say("skipped today's round: no demo driver");
+} else {
+  const products = (await admin
+    .from("products").select("id, sku, list_price, cost_price")
+    .eq("org_id", org.id).like("sku", `${DEMO_PREFIX}%`).order("sku")).data ?? [];
+  const bySku = new Map(products.map((p) => [p.sku.replace(DEMO_PREFIX, ""), p]));
+
+  const load = (await admin.from("van_loads").insert({
+    org_id: org.id, van_id: van, driver_id: driverId, warehouse_id: wh,
+    status: "draft", load_date: new Date().toISOString().slice(0, 10),
+    opening_float: 300, notes: "Today's round",
+  }).select("id, load_number").single()).data;
+
+  // A spread a driver would actually take out: fast movers in depth,
+  // slower lines in smaller numbers.
+  const todayLines = [
+    ["SKU-101", 40], ["SKU-102", 30], ["SKU-201", 25],
+    ["SKU-202", 20], ["SKU-301", 18], ["SKU-302", 12],
+  ];
+  let loaded = 0;
+  for (const [code, qty] of todayLines) {
+    const product = bySku.get(code);
+    if (!product) continue;
+
+    // Only what the warehouse can actually spare, so the seed cannot
+    // ask dispatch for stock that is not there.
+    const { data: level } = await admin
+      .from("inventory").select("qty_on_hand, qty_reserved")
+      .eq("product_id", product.id).eq("warehouse_id", wh).maybeSingle();
+    const available = Number(level?.qty_on_hand ?? 0) - Number(level?.qty_reserved ?? 0);
+    const take = Math.min(qty, Math.max(0, available));
+    if (take === 0) continue;
+
+    const { error } = await admin.from("van_load_items").insert({
+      org_id: org.id, load_id: load.id, product_id: product.id,
+      qty_loaded: take, unit_price: product.list_price, unit_cost: product.cost_price,
+    });
+    if (error) throw new Error(`today's load line: ${error.message}`);
+    loaded++;
+  }
+
+  if (loaded === 0) {
+    await admin.from("van_loads").delete().eq("id", load.id);
+    say("skipped today's round: the warehouse has nothing to spare");
+  } else {
+    await admin.from("van_loads").update({
+      status: "loaded", driver_confirmed_at: hoursAgo(2),
+    }).eq("id", load.id);
+
+    const { error } = await admin.rpc("dispatch_van_load", { p_load_id: load.id });
+    if (error) throw new Error(`dispatching today's round: ${error.message}`);
+
+    say(`dispatched ${load.load_number} with ${loaded} product lines - the driver can sell straight away`);
+  }
+}
+
 console.log(`\nDemo data ready in ${DEMO_ORG_NAME}.`);
 if (issued.length) {
   console.log("\n  Sign in with these PINs:\n");

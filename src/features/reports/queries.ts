@@ -178,7 +178,7 @@ export interface InventoryValueRow {
 export async function inventoryValueReport(): Promise<Result<InventoryValueRow[]>> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
-    .from("products")
+    .from("products_priced")
     .select("id, categories(name), inventory(qty_on_hand), cost_price, is_active")
     .eq("is_active", true);
 

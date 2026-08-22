@@ -214,6 +214,17 @@ export interface OfflineSnapshot {
   }[];
 }
 
+/**
+ * Replace the cached round.
+ *
+ * Named apart from saveSnapshot so a caller reading the code can see
+ * that this is a deliberate refresh - after adding a customer at the
+ * counter, say - rather than the periodic one the sync engine does.
+ */
+export async function refreshSnapshotInto(snapshot: OfflineSnapshot): Promise<void> {
+  await saveSnapshot(snapshot);
+}
+
 export async function saveSnapshot(snapshot: OfflineSnapshot): Promise<void> {
   await run(META, "readwrite", (store) =>
     store.put({ key: "snapshot", value: snapshot, savedAt: new Date().toISOString() }),

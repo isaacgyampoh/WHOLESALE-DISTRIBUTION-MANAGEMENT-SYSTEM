@@ -45,7 +45,13 @@ export function ProductList({ products }: { products: ProductRow[] }) {
                 </Td>
                 <Td>{p.categoryName ?? "-"}</Td>
                 <Td>{unitLabel(p.unit)}</Td>
-                <Td numeric>{formatMoney(p.costPrice)}</Td>
+                <Td numeric>
+                  {/* Null for a role that may not see cost. The database
+                      decides; this only has to render the absence. */}
+                  {p.costPrice === null
+                    ? <span className="text-[var(--text-muted)]">-</span>
+                    : formatMoney(p.costPrice)}
+                </Td>
                 <Td numeric>{formatMoney(p.listPrice)}</Td>
                 <Td numeric>
                   {formatQuantity(p.available)}

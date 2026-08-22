@@ -172,7 +172,7 @@ missing_views as (
   from unnest(array[
     'customer_balances','customer_credit_position','customer_statement',
     'invoice_ageing','reconciliation_variances','stock_summary',
-    'van_load_summary','van_stock_summary'
+    'van_load_summary','van_stock_summary','products_priced'
   ]) as v
   where not exists (
     select 1 from information_schema.views
@@ -189,8 +189,8 @@ report as (
           case when m.names = '' then 'none missing' else 'MISSING' end,
           case when m.names = '' then 'OK' else 'FAIL' end, m.names
   from missing_tables m
-  union all select  3, 'Views', '8', c.views::text,
-          case when c.views = 8 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  3, 'Views', '9', c.views::text,
+          case when c.views = 9 then 'OK' else 'CHECK' end, '' from counts c
   union all select  4, 'Expected views all present', 'none missing',
           case when v.names = '' then 'none missing' else 'MISSING' end,
           case when v.names = '' then 'OK' else 'FAIL' end, v.names
@@ -201,8 +201,8 @@ report as (
           case when e.n = 14 then 'OK' else 'FAIL' end,
           (select names from enum_bad)
   from enum_match e
-  union all select  7, 'Functions', '41', c.functions::text,
-          case when c.functions = 41 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  7, 'Functions', '42', c.functions::text,
+          case when c.functions = 42 then 'OK' else 'CHECK' end, '' from counts c
   union all select  8, 'Triggers', '69', c.triggers::text,
           case when c.triggers = 69 then 'OK' else 'CHECK' end, '' from counts c
   union all select  9, 'RLS policies', '69', c.policies::text,
@@ -368,6 +368,48 @@ report as (
           case when exists (select 1 from pg_trigger
                              where tgrelid = 'public.sync_operations'::regclass
                                and tgname = 'sync_operations_no_edit')
+               then 'OK' else 'FAIL' end, ''
+  -- ---- cost is management information (migration 0023) -------------
+  union all select 39, 'Cost: raw column withheld from the Data API', 'withheld',
+          case when not exists (
+            select 1 from information_schema.column_privileges
+             where table_name = 'products' and column_name = 'cost_price'
+               and grantee = 'authenticated' and privilege_type = 'SELECT')
+               then 'withheld' else 'READABLE' end,
+          case when not exists (
+            select 1 from information_schema.column_privileges
+             where table_name = 'products' and column_name = 'cost_price'
+               and grantee = 'authenticated' and privilege_type = 'SELECT')
+               then 'OK' else 'FAIL' end,
+          'A driver could otherwise read the margin on every line'
+  union all select 40, 'Cost: the selling price is still readable', 'readable',
+          case when exists (
+            select 1 from information_schema.column_privileges
+             where table_name = 'products' and column_name = 'list_price'
+               and grantee = 'authenticated' and privilege_type = 'SELECT')
+               then 'readable' else 'BLOCKED' end,
+          case when exists (
+            select 1 from information_schema.column_privileges
+             where table_name = 'products' and column_name = 'list_price'
+               and grantee = 'authenticated' and privilege_type = 'SELECT')
+               then 'OK' else 'FAIL' end, ''
+  union all select 41, 'Cost: product_cost() is the one door', 'present',
+          case when exists (select 1 from pg_proc p
+                              join pg_namespace n on n.oid = p.pronamespace
+                             where n.nspname = 'public' and p.proname = 'product_cost')
+               then 'present' else 'MISSING' end,
+          case when exists (select 1 from pg_proc p
+                              join pg_namespace n on n.oid = p.pronamespace
+                             where n.nspname = 'public' and p.proname = 'product_cost')
+               then 'OK' else 'FAIL' end, ''
+  union all select 42, 'Cost: suppliers are role-gated', 'role-gated',
+          case when exists (select 1 from pg_policies
+                             where tablename = 'suppliers' and policyname = 'suppliers_read'
+                               and qual like '%has_role%')
+               then 'role-gated' else 'OPEN' end,
+          case when exists (select 1 from pg_policies
+                             where tablename = 'suppliers' and policyname = 'suppliers_read'
+                               and qual like '%has_role%')
                then 'OK' else 'FAIL' end, ''
   union all select 38, 'Offline sync: authenticated cannot write it', 'SELECT only',
           case when not exists (

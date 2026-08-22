@@ -93,6 +93,70 @@ select 'authenticated cannot write it',
                  and privilege_type in ('INSERT','UPDATE','DELETE'))
             then 'PASS' else 'FAIL' end;`,
   },
+  {
+    migration: "0023_cost_is_management_information.sql",
+    out: "UPGRADE_0023_COST_SECURITY.sql",
+    title: "UPGRADE 0023 - cost price is management information",
+    summary: `-- WHAT IT CLOSES
+--
+-- A driver could read what the business pays for its goods:
+--
+--   select cost_price from products;
+--   select stock_value from van_stock_summary;
+--   select unit_cost from van_load_items;
+--   select * from suppliers;
+--
+-- and the products screen rendered a Cost column to them. Every one of
+-- those reads is available to anything holding the anon key and a
+-- driver's session, so hiding the column in the interface would have
+-- changed nothing.
+--
+-- WHAT IT ADDS
+--
+--   product_cost()     the one route to a cost figure. Returns NULL to
+--                      any role outside admin, senior_manager, manager,
+--                      accountant and warehouse.
+--   products_priced    products with cost masked per caller. The
+--                      application reads this instead of the table.
+--
+-- and it withdraws the raw cost columns from every Data API caller,
+-- remasks stock_summary and van_stock_summary, and puts suppliers
+-- behind the same roles.
+--
+-- AFTER RUNNING IT, redeploy the application. The version before this
+-- reads products.cost_price directly and would fail on the products,
+-- reports and warehouses screens.`,
+    verify: `select 'product_cost function' as check,
+       case when exists (select 1 from pg_proc p
+                           join pg_namespace n on n.oid = p.pronamespace
+                          where n.nspname = 'public' and p.proname = 'product_cost')
+            then 'PASS' else 'FAIL' end as result
+union all
+select 'products_priced view',
+       case when to_regclass('public.products_priced') is not null
+            then 'PASS' else 'FAIL' end
+union all
+select 'raw cost withheld from authenticated',
+       case when not exists (
+              select 1 from information_schema.column_privileges
+               where table_name = 'products' and column_name = 'cost_price'
+                 and grantee = 'authenticated' and privilege_type = 'SELECT')
+            then 'PASS' else 'FAIL' end
+union all
+select 'the selling price is still readable',
+       case when exists (
+              select 1 from information_schema.column_privileges
+               where table_name = 'products' and column_name = 'list_price'
+                 and grantee = 'authenticated' and privilege_type = 'SELECT')
+            then 'PASS' else 'FAIL' end
+union all
+select 'suppliers are role-gated',
+       case when exists (
+              select 1 from pg_policies
+               where tablename = 'suppliers' and policyname = 'suppliers_read'
+                 and qual like '%has_role%')
+            then 'PASS' else 'FAIL' end;`,
+  },
 ];
 
 /** Final enum members, in the order `alter type ... add value` yields. */

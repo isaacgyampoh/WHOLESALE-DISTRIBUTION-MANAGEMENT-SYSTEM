@@ -25,6 +25,7 @@ const CONN = { host: "127.0.0.1", port: 55432, user: "postgres" };
 const DB = "gab_upgrade";
 const MIGRATIONS = path.join("..", "..", "supabase", "migrations");
 const UPGRADE = path.join("..", "..", "database", "UPGRADE_0022_OFFLINE_SYNC.sql");
+const UPGRADE_COST = path.join("..", "..", "database", "UPGRADE_0023_COST_SECURITY.sql");
 
 let pass = 0, fail = 0;
 const ok = (n, c, x = "") => { c ? (pass++, console.log(`  PASS  ${n} ${x}`)) : (fail++, console.log(`  FAIL  ${n} ${x}`)); };
@@ -41,7 +42,7 @@ for (const s of splitStatements(shim)) await c.query(s);
 
 // Everything up to but NOT including 0022.
 const files = fs.readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort()
-  .filter((f) => !f.startsWith("0022"));
+  .filter((f) => !f.startsWith("0022") && !f.startsWith("0023"));
 for (const f of files) {
   const sql = fs.readFileSync(path.join(MIGRATIONS, f), "utf8");
   for (const s of splitStatements(sql)) {
@@ -49,7 +50,7 @@ for (const f of files) {
     catch (e) { console.log(`  FAILED applying ${f}: ${e.message}`); process.exit(1); }
   }
 }
-console.log(`  migrations 0001-0021 applied (${files.length} files)`);
+console.log(`  migrations up to 0021 applied (${files.length} files)`);
 
 const before = await c.query(
   `select count(*)::int n from pg_type where typname = 'sync_status'`);
@@ -120,6 +121,41 @@ ok("there is still exactly one sync_operations table",
 ok("there is still exactly one select policy",
    (await c.query(`select count(*)::int n from pg_policies where tablename='sync_operations'`))
      .rows[0].n === 1);
+
+// ---- 0023, on top of 0022 -----------------------------------------
+console.log("\n=== UPGRADE_0023, then again ===");
+const costSql = fs.readFileSync(UPGRADE_COST, "utf8");
+try {
+  await c.query(costSql);
+  ok("UPGRADE_0023 runs on a 0022 database", true);
+} catch (e) {
+  ok("UPGRADE_0023 runs on a 0022 database", false, `-> ${e.message}`);
+}
+try {
+  await c.query(costSql);
+  ok("UPGRADE_0023 runs a second time", true);
+} catch (e) {
+  ok("UPGRADE_0023 runs a second time", false, `-> ${e.message}`);
+}
+
+for (const [what, sql] of [
+  ["product_cost exists", `select exists (select 1 from pg_proc p join pg_namespace n
+       on n.oid = p.pronamespace where n.nspname='public' and p.proname='product_cost') v`],
+  ["products_priced exists", `select to_regclass('public.products_priced') is not null v`],
+  ["raw cost is withheld", `select not exists (
+      select 1 from information_schema.column_privileges
+       where table_name='products' and column_name='cost_price'
+         and grantee='authenticated' and privilege_type='SELECT') v`],
+  ["the selling price is still granted", `select exists (
+      select 1 from information_schema.column_privileges
+       where table_name='products' and column_name='list_price'
+         and grantee='authenticated' and privilege_type='SELECT') v`],
+  ["suppliers are role-gated", `select exists (select 1 from pg_policies
+       where tablename='suppliers' and policyname='suppliers_read' and qual like '%has_role%') v`],
+]) {
+  const r = await c.query(sql);
+  ok(what, r.rows[0].v === true);
+}
 
 // An incompatible enum must stop the script rather than be ignored.
 console.log("\n=== an incompatible existing enum is refused ===");
