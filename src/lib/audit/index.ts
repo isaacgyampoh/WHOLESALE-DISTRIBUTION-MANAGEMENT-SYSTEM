@@ -66,7 +66,12 @@ export type AuditAction =
   | "sale.recorded"
   | "sale.synced"
   | "waybill.issued"
-  | "waybill.delivered";
+  | "waybill.delivered"
+  | "transfer.created"
+  | "transfer.approved"
+  | "transfer.dispatched"
+  | "transfer.received"
+  | "transfer.cancelled";
 
 export interface AuditEntry {
   action: AuditAction;
@@ -74,7 +79,7 @@ export interface AuditEntry {
     | "profile" | "product" | "category" | "customer"
     | "van" | "van_load" | "van_return" | "reconciliation"
     | "warehouse" | "supplier" | "purchase_order" | "van_sale"
-    | "waybill";
+    | "waybill" | "stock_transfer";
   targetId?: string;
   targetLabel?: string;
   before?: Record<string, unknown>;

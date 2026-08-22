@@ -298,6 +298,7 @@ try {
           ["/inventory/expiry", "expiry"],
           ["/products?stock=low_stock", "products-low-stock"],
           ["/warehouses", "warehouses"],
+          ["/transfers", "transfers"],
           ["/purchasing", "purchasing"],
           ["/vans", "vans"],
           ["/loads", "loads"],

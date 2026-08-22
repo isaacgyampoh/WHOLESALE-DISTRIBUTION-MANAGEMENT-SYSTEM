@@ -17,6 +17,9 @@ export const PERMISSIONS = [
   "dashboard.view",
   "products.view", "products.create", "products.edit",
   "inventory.view", "inventory.transfer", "inventory.adjust",
+  // Approving a transfer is separate from raising one on purpose: a
+  // depot that signs off its own moves stock wherever it likes.
+  "transfers.approve",
   "vans.view", "vans.manage",
   "loads.view", "loads.create", "loads.dispatch", "loads.confirm",
   "customers.view", "customers.create", "customers.edit",
@@ -43,6 +46,7 @@ const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "dashboard.view",
     "products.view", "products.create", "products.edit",
     "inventory.view", "inventory.transfer", "inventory.adjust",
+    "transfers.approve",
     "vans.view", "vans.manage",
     "loads.view", "loads.create", "loads.dispatch",
     "customers.view", "customers.create", "customers.edit",

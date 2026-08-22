@@ -42,6 +42,7 @@ const PAGES = [
   ["/inventory", "Inventory", ["admin", "manager", "accountant"]],
   ["/inventory/movements", "Stock movements", ["admin", "manager"]],
   ["/inventory/expiry", "Expiry", ["admin", "manager", "accountant"]],
+  ["/transfers", "Transfers", ["admin", "manager"]],
   ["/purchasing", "Purchasing", ["admin", "manager"]],
   ["/vans", "Vans", ["admin", "manager", "driver", "accountant"]],
   ["/loads", "Van loads", ["admin", "manager", "driver", "accountant"]],
@@ -71,10 +72,10 @@ const PAGES = [
 
 // Screens a role must be refused when it asks for the URL directly.
 const REFUSED = {
-  driver: ["/users", "/permissions", "/audit", "/settings", "/purchasing", "/categories", "/reports"],
+  driver: ["/users", "/permissions", "/audit", "/settings", "/purchasing", "/categories", "/reports", "/transfers"],
   // An accountant records payments but never sells, so the round is not
   // theirs.
-  accountant: ["/users", "/permissions", "/audit", "/settings", "/purchasing", "/categories", "/driver"],
+  accountant: ["/users", "/permissions", "/audit", "/settings", "/purchasing", "/categories", "/driver", "/transfers"],
   manager: ["/users", "/permissions", "/audit", "/settings"],
 };
 
