@@ -40,6 +40,8 @@ export interface DatabaseCapabilities {
   supplierDocuments: boolean;
   /** Migration 0030: expiring, revocable links for suppliers. */
   supplierPortal: boolean;
+  /** Migration 0031: suppliers submit their own invoices, and we review them. */
+  supplierSubmissions: boolean;
 }
 
 let cached: DatabaseCapabilities | null = null;
@@ -56,7 +58,7 @@ async function probe(): Promise<DatabaseCapabilities> {
   const admin = createSupabaseAdminClient();
 
   const [priced, batches, sync, payments, documents, transfers, alerts,
-         supplierDocs, portal] = await Promise.all([
+         supplierDocs, portal, submissions] = await Promise.all([
     admin.from("products_priced").select("id").limit(1),
     admin.from("products").select("track_expiry").limit(1),
     admin.from("sync_operations").select("id").limit(1),
@@ -66,6 +68,7 @@ async function probe(): Promise<DatabaseCapabilities> {
     admin.from("notifications").select("id").limit(1),
     admin.from("supplier_documents").select("id").limit(1),
     admin.from("supplier_portal_tokens").select("id").limit(1),
+    admin.from("supplier_documents").select("status").limit(1),
   ]);
 
   const capabilities: DatabaseCapabilities = {
@@ -78,6 +81,7 @@ async function probe(): Promise<DatabaseCapabilities> {
     notifications: !alerts.error,
     supplierDocuments: !supplierDocs.error,
     supplierPortal: !portal.error,
+    supplierSubmissions: !submissions.error,
   };
 
   const missing = Object.entries(capabilities)
@@ -113,7 +117,7 @@ export async function getCapabilities(): Promise<DatabaseCapabilities> {
       maskedProductPricing: false, batchesAndExpiry: false,
       offlineSync: false, salePaymentMethods: false, documents: false,
       warehouseTransfers: false, notifications: false,
-      supplierDocuments: false, supplierPortal: false,
+      supplierDocuments: false, supplierPortal: false, supplierSubmissions: false,
     };
   });
   return inFlight;

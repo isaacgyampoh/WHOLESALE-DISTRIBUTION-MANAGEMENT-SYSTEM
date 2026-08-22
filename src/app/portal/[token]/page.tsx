@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import {
-  resolvePortalSession, getPortalOrders, getPortalOrderLines,
+  resolvePortalSession, getPortalOrders, getPortalOrderLines, getPortalSubmissions,
 } from "@/features/suppliers/portal-queries";
+import { PortalUploadForm } from "@/features/suppliers/portal-upload-form";
 import { BRAND } from "@/lib/brand";
 import { formatMoney, formatDate, formatQuantity } from "@/lib/utils/format";
-import { PackageSearch, ShieldAlert } from "lucide-react";
+import { PackageSearch, ShieldAlert, FileCheck2 } from "lucide-react";
 
 /**
  * What a supplier sees.
@@ -23,6 +24,15 @@ export const metadata: Metadata = {
 };
 
 export const dynamic = "force-dynamic";
+
+/** Worded for the supplier, who does not care about our internal states. */
+const STATUS_WORDS: Record<string, string> = {
+  received: "With our accounts team",
+  reviewing: "Being checked",
+  approved: "Approved for payment",
+  rejected: "Sent back",
+  pending: "Not yet received",
+};
 
 const STATUS_LABELS: Record<string, string> = {
   submitted: "Placed with you",
@@ -56,7 +66,10 @@ export default async function PortalPage({
     );
   }
 
-  const orders = await getPortalOrders(session);
+  const [orders, submissions] = await Promise.all([
+    getPortalOrders(session),
+    getPortalSubmissions(session),
+  ]);
 
   // The lines of every order are fetched together rather than behind a
   // click: a supplier checking what was ordered wants to see it, and
@@ -181,6 +194,89 @@ export default async function PortalPage({
           ))}
         </div>
       )}
+
+
+      {/* What they have sent us, and where each one has got to. Above
+          the form rather than below it: somebody arriving to chase an
+          invoice wants the answer, not another form. */}
+      <section className="mt-10">
+        <h2 className="text-base font-semibold text-[var(--text-primary)]">
+          Invoices you have sent
+        </h2>
+
+        {submissions.length === 0 ? (
+          <p className="mt-2 text-sm text-[var(--text-secondary)]">
+            Nothing yet. Send your first one below.
+          </p>
+        ) : (
+          <ul className="mt-3 divide-y divide-[var(--border-subtle)] overflow-hidden rounded-lg border border-[var(--border-subtle)]">
+            {submissions.map((s) => (
+              <li key={s.id} className="px-5 py-3.5">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                  <div className="min-w-0">
+                    <p className="numeric text-sm font-medium text-[var(--text-primary)]">
+                      {s.reference}
+                    </p>
+                    <p className="text-xs text-[var(--text-muted)]">
+                      Sent {formatDate(s.submittedAt)}
+                      {s.documentDate ? ` · dated ${formatDate(s.documentDate)}` : ""}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {s.amount !== null && (
+                      <span className="numeric text-sm text-[var(--text-primary)]">
+                        {formatMoney(s.amount)}
+                      </span>
+                    )}
+                    <span
+                      className={
+                        s.status === "approved"
+                          ? "rounded-full bg-positive-soft px-2.5 py-0.5 text-xs font-medium text-positive dark:bg-positive/15"
+                          : s.status === "rejected"
+                            ? "rounded-full bg-critical-soft px-2.5 py-0.5 text-xs font-medium text-critical dark:bg-critical/15"
+                            : "rounded-full bg-[var(--surface-sunken)] px-2.5 py-0.5 text-xs font-medium text-[var(--text-secondary)]"
+                      }
+                    >
+                      {STATUS_WORDS[s.status] ?? s.status}
+                    </span>
+                  </div>
+                </div>
+
+                {/* The only part of our review they see, and the only
+                    part that is any use to them: what to send instead. */}
+                {s.status === "rejected" && s.reviewNote && (
+                  <p className="mt-2 rounded-[var(--radius-panel)] bg-critical-soft px-3 py-2 text-xs text-critical dark:bg-critical/10">
+                    {s.reviewNote}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="mt-10 rounded-lg border border-[var(--border-strong)] p-5 sm:p-6">
+        <div className="flex items-start gap-3">
+          <FileCheck2 className="mt-0.5 size-5 shrink-0 text-brand-700" aria-hidden />
+          <div>
+            <h2 className="text-base font-semibold text-[var(--text-primary)]">
+              Send us an invoice
+            </h2>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">
+              Faster than email, and it lands attached to your account rather than in one
+              person&apos;s inbox.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-5">
+          <PortalUploadForm
+            token={token}
+            supplierName={session.supplierName}
+            companyName={session.organizationName || BRAND.name}
+          />
+        </div>
+      </section>
 
       <footer className="mt-12 border-t border-[var(--border-subtle)] pt-5 text-xs text-[var(--text-muted)]">
         <p>

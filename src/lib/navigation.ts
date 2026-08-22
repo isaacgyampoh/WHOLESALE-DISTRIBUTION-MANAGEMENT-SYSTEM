@@ -71,6 +71,10 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       { label: "Expiry", href: "/inventory/expiry", permissions: ["inventory.view"], icon: "CalendarClock" },
       { label: "Transfers", href: "/transfers", permissions: ["inventory.transfer"], icon: "ArrowLeftRight" },
       { label: "Purchasing", href: "/purchasing", permissions: ["inventory.transfer"], icon: "Truck" },
+      {
+        label: "Supplier invoices", href: "/suppliers/review",
+        permissions: ["payments.view"], icon: "Inbox",
+      },
     ],
   },
   {

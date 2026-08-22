@@ -85,6 +85,12 @@ export async function getSupplier(id: string): Promise<Result<SupplierDetail | n
 export interface SupplierDocumentRow {
   id: string;
   kind: string;
+  status: "pending" | "received" | "reviewing" | "approved" | "rejected";
+  submittedCompany: string | null;
+  submittedByName: string | null;
+  submittedAt: string | null;
+  reviewedByName: string | null;
+  reviewNote: string | null;
   title: string;
   reference: string | null;
   documentDate: string | null;
@@ -125,6 +131,12 @@ export async function listSupplierDocuments(
     data: ((data ?? []) as unknown as Record<string, unknown>[]).map((d) => ({
       id: d.id as string,
       kind: (d.kind as string) ?? "other",
+      status: (d.status as SupplierDocumentRow["status"]) ?? "approved",
+      submittedCompany: (d.submitted_company as string) ?? null,
+      submittedByName: (d.submitted_by_name as string) ?? null,
+      submittedAt: (d.submitted_at as string) ?? null,
+      reviewedByName: (d.reviewed_by_name as string) ?? null,
+      reviewNote: (d.review_note as string) ?? null,
       title: d.title as string,
       reference: (d.reference as string) ?? null,
       documentDate: (d.document_date as string) ?? null,
@@ -229,6 +241,64 @@ export async function listPortalTokens(
         : new Date(t.expires_at as string).getTime() < now
           ? "expired"
           : "active",
+    })),
+  };
+}
+
+/**
+ * Everything a supplier has sent that nobody here has finished with.
+ *
+ * Its own query rather than a filter on the supplier page, because the
+ * question "what is waiting on me" is asked by somebody who does not yet
+ * know which supplier it is about.
+ */
+export async function listAwaitingReview(): Promise<Result<
+  (SupplierDocumentRow & { supplierId: string; supplierName: string })[]
+>> {
+  const { supplierSubmissions } = await getCapabilities();
+  if (!supplierSubmissions) {
+    return {
+      ok: false,
+      message:
+        "Supplier submissions need database upgrade 0031. " +
+        "Run database/UPGRADE_0031_SUPPLIER_SUBMISSIONS.sql, then reload.",
+    };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("supplier_document_detail")
+    .select("*")
+    .in("status", ["received", "reviewing"])
+    .order("submitted_at", { ascending: true });
+
+  if (error) return failed("suppliers", error, "The review queue could not be loaded.");
+
+  return {
+    ok: true,
+    data: ((data ?? []) as unknown as Record<string, unknown>[]).map((d) => ({
+      id: d.id as string,
+      kind: (d.kind as string) ?? "invoice",
+      status: (d.status as SupplierDocumentRow["status"]) ?? "received",
+      submittedCompany: (d.submitted_company as string) ?? null,
+      submittedByName: (d.submitted_by_name as string) ?? null,
+      submittedAt: (d.submitted_at as string) ?? null,
+      reviewedByName: (d.reviewed_by_name as string) ?? null,
+      reviewNote: (d.review_note as string) ?? null,
+      title: d.title as string,
+      reference: (d.reference as string) ?? null,
+      documentDate: (d.document_date as string) ?? null,
+      amount: d.amount === null || d.amount === undefined
+        ? null
+        : parseAmount(d.amount as string),
+      fileName: d.file_name as string,
+      mimeType: d.mime_type as string,
+      sizeBytes: Number(d.size_bytes ?? 0),
+      poNumber: (d.po_number as string) ?? null,
+      uploadedByName: (d.uploaded_by_name as string) ?? null,
+      createdAt: d.created_at as string,
+      supplierId: d.supplier_id as string,
+      supplierName: (d.supplier_name as string) ?? "Supplier",
     })),
   };
 }

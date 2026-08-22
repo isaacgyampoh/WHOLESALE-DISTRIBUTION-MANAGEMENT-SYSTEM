@@ -11,6 +11,7 @@ import {
   UploadDocumentButton, OpenDocumentButton, DeleteDocumentButton,
   IssuePortalLinkButton, RevokePortalLinkButton,
 } from "@/features/suppliers/supplier-forms";
+import { ApproveInvoiceButton, RejectInvoiceButton } from "@/features/suppliers/review-forms";
 import { PageHeader } from "@/components/layout/page-header";
 import { Forbidden } from "@/components/layout/forbidden";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -31,6 +32,23 @@ const KIND_LABELS: Record<string, string> = {
   certificate: "Certificate",
   contract: "Contract",
   other: "Document",
+};
+
+/** How far along a document is, worded for whoever is looking at it. */
+const STATUS_LABELS: Record<string, string> = {
+  pending: "Not yet sent",
+  received: "Awaiting review",
+  reviewing: "Being checked",
+  approved: "Approved",
+  rejected: "Sent back",
+};
+
+const STATUS_TONE: Record<string, "positive" | "caution" | "critical" | "neutral" | "info"> = {
+  pending: "neutral",
+  received: "caution",
+  reviewing: "info",
+  approved: "positive",
+  rejected: "critical",
 };
 
 /** Bytes are not a unit anybody reads. */
@@ -125,6 +143,7 @@ export default async function SupplierPage({
                 <tr>
                   <Th>Document</Th>
                   <Th>Kind</Th>
+                  <Th>Status</Th>
                   <Th>Dated</Th>
                   <Th numeric>Amount</Th>
                   <Th>Against</Th>
@@ -143,6 +162,24 @@ export default async function SupplierPage({
                       </span>
                     </Td>
                     <Td><Badge tone="neutral">{KIND_LABELS[d.kind] ?? d.kind}</Badge></Td>
+                    <Td>
+                      <Badge tone={STATUS_TONE[d.status] ?? "neutral"}>
+                        {STATUS_LABELS[d.status] ?? d.status}
+                      </Badge>
+                      {/* Where it came from matters: an invoice the
+                          supplier sent themselves is evidence in a way
+                          one we typed up is not. */}
+                      {d.submittedAt && (
+                        <span className="mt-0.5 block text-xs text-[var(--text-muted)]">
+                          Sent by them
+                        </span>
+                      )}
+                      {d.status === "rejected" && d.reviewNote && (
+                        <span className="mt-0.5 block max-w-48 text-xs text-critical">
+                          {d.reviewNote}
+                        </span>
+                      )}
+                    </Td>
                     <Td className="numeric whitespace-nowrap text-[var(--text-secondary)]">
                       {d.documentDate ? formatDate(d.documentDate) : "—"}
                     </Td>
@@ -152,6 +189,21 @@ export default async function SupplierPage({
                     <Td>
                       <div className="flex items-center justify-end gap-1">
                         <OpenDocumentButton documentId={d.id} fileName={d.fileName} />
+                        {(d.status === "received" || d.status === "reviewing")
+                          && can(user.role, "payments.create") && (
+                          <>
+                            <ApproveInvoiceButton
+                              documentId={d.id}
+                              title={d.title}
+                              amount={d.amount === null ? "No amount given" : formatMoney(d.amount)}
+                            />
+                            <RejectInvoiceButton
+                              documentId={d.id}
+                              title={d.title}
+                              amount={d.amount === null ? "No amount given" : formatMoney(d.amount)}
+                            />
+                          </>
+                        )}
                         {can(user.role, "products.edit") && (
                           <DeleteDocumentButton documentId={d.id} title={d.title} />
                         )}

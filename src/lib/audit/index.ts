@@ -75,7 +75,11 @@ export type AuditAction =
   | "supplier.document_filed"
   | "supplier.document_removed"
   | "supplier.portal_link_issued"
-  | "supplier.portal_link_revoked";
+  | "supplier.portal_link_revoked"
+  | "supplier.invoice_submitted"
+  | "supplier.invoice_reviewing"
+  | "supplier.invoice_approved"
+  | "supplier.invoice_rejected";
 
 export interface AuditEntry {
   action: AuditAction;

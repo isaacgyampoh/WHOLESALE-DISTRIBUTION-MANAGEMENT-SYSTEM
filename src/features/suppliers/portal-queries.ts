@@ -22,6 +22,8 @@ import { createHash } from "node:crypto";
 export interface PortalSession {
   supplierId: string;
   orgId: string;
+  /** Needed to submit: the link is re-checked against it at that point. */
+  tokenId: string;
   expiresAt: string;
   supplierName: string;
   organizationName: string;
@@ -61,7 +63,7 @@ export async function resolvePortalSession(token: string): Promise<PortalSession
   }
 
   const resolved = (Array.isArray(data) ? data[0] : data) as
-    { supplier_id: string; org_id: string; expires_at: string } | undefined;
+    { supplier_id: string; org_id: string; token_id: string; expires_at: string } | undefined;
   if (!resolved?.supplier_id) return null;
 
   const [supplier, org] = await Promise.all([
@@ -72,6 +74,7 @@ export async function resolvePortalSession(token: string): Promise<PortalSession
   return {
     supplierId: resolved.supplier_id,
     orgId: resolved.org_id,
+    tokenId: resolved.token_id,
     expiresAt: resolved.expires_at,
     supplierName: (supplier.data?.name as string) ?? "Supplier",
     organizationName: (org.data?.name as string) ?? "",
@@ -147,5 +150,48 @@ export async function getPortalOrderLines(
     qtyReceived: Number(l.qty_received ?? 0),
     unitCost: parseAmount(l.unit_cost as string),
     lineTotal: parseAmount(l.line_total as string),
+  }));
+}
+
+export interface PortalSubmission {
+  id: string;
+  reference: string;
+  documentDate: string | null;
+  amount: number | null;
+  status: "pending" | "received" | "reviewing" | "approved" | "rejected";
+  submittedAt: string;
+  fileName: string;
+  /** Only ever set on a rejection: it tells them what to send instead. */
+  reviewNote: string | null;
+}
+
+/** What this supplier has already sent, and what became of it. */
+export async function getPortalSubmissions(
+  session: PortalSession,
+): Promise<PortalSubmission[]> {
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin.rpc("supplier_portal_documents", {
+    p_supplier_id: session.supplierId,
+    p_org_id: session.orgId,
+  });
+
+  if (error) {
+    // Absent rather than fatal: a supplier checking their orders should
+    // not be shown an error page because a second panel failed.
+    console.error("[portal] submissions", error);
+    return [];
+  }
+
+  return ((data ?? []) as Record<string, unknown>[]).map((d) => ({
+    id: d.id as string,
+    reference: d.reference as string,
+    documentDate: (d.document_date as string) ?? null,
+    amount: d.amount === null || d.amount === undefined
+      ? null
+      : parseAmount(d.amount as string),
+    status: (d.status as PortalSubmission["status"]) ?? "received",
+    submittedAt: d.submitted_at as string,
+    fileName: d.file_name as string,
+    reviewNote: (d.review_note as string) ?? null,
   }));
 }

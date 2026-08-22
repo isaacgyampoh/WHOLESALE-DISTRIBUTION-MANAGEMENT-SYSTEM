@@ -357,3 +357,82 @@ export async function openDocumentAction(documentId: string): Promise<
   const result = await signDocumentUrl(documentId);
   return result.ok ? { ok: true, url: result.data } : { ok: false, message: result.message };
 }
+
+/**
+ * Accepting or sending back an invoice a supplier submitted.
+ *
+ * Approving one is agreeing to pay it, so it needs the same roles that
+ * see the money. A rejection has to carry a reason: the supplier only
+ * ever sees this one part of our review, and without it they send the
+ * same thing again.
+ */
+export async function reviewSupplierDocumentAction(
+  _prev: SupplierState,
+  formData: FormData,
+): Promise<SupplierState> {
+  const actor = await requirePermission("payments.view");
+
+  const documentId = String(formData.get("documentId") ?? "");
+  const status = String(formData.get("status") ?? "");
+  const note = String(formData.get("note") ?? "").trim();
+
+  if (!["reviewing", "approved", "rejected"].includes(status)) {
+    return { status: "error", message: "Choose whether it is approved or sent back." };
+  }
+
+  if (status === "rejected" && !note) {
+    return {
+      status: "error",
+      message: "Say why it is being sent back.",
+      values: { note },
+      fieldErrors: { note: "The supplier sees this. Without it they send the same thing again." },
+    };
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data: document } = await admin
+    .from("supplier_documents")
+    .select("id, title, supplier_id, org_id")
+    .eq("id", documentId)
+    .maybeSingle();
+
+  if (!document || document.org_id !== actor.organizationId) {
+    return { status: "error", message: "That document could not be found." };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase.rpc("review_supplier_document", {
+    p_document_id: documentId,
+    p_status: status,
+    p_note: note || null,
+  });
+
+  if (error) {
+    console.error("[suppliers] review failed", error);
+    return { status: "error", message: error.message };
+  }
+
+  await recordAudit(actor, {
+    action: status === "approved"
+      ? "supplier.invoice_approved"
+      : status === "rejected"
+        ? "supplier.invoice_rejected"
+        : "supplier.invoice_reviewing",
+    targetType: "supplier",
+    targetId: document.supplier_id as string,
+    targetLabel: document.title as string,
+    after: { status, note: note || null },
+  });
+
+  revalidatePath("/suppliers/review");
+  revalidatePath(`/suppliers/${document.supplier_id}`);
+
+  return {
+    status: "done",
+    message: status === "approved"
+      ? `${document.title} approved for payment.`
+      : status === "rejected"
+        ? `${document.title} sent back to the supplier.`
+        : `${document.title} is now being checked.`,
+  };
+}

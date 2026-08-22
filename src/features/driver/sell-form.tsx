@@ -83,9 +83,13 @@ export function SellForm({
   // mobile money are the two a van actually takes, and asking a driver
   // to build a list of payment lines at a counter would be absurd.
   const [cashPart, setCashPart] = useState("");
+  // What the customer actually handed over on a cash sale. Only used to
+  // work out change: the payment recorded is always the sale total,
+  // because the change goes back in their hand.
+  const [cashGiven, setCashGiven] = useState("");
   const [momoRef, setMomoRef] = useState("");
   // Null until they have chosen how the customer is paying.
-  const [tender, setTender] = useState<Exclude<Tender, "cash" | "credit"> | null>(null);
+  const [tender, setTender] = useState<Exclude<Tender, "credit"> | null>(null);
   const [creatingCustomer, startCreate] = useTransition();
 
   const stock = useMemo(() => snapshot?.stock ?? [], [snapshot]);
@@ -213,13 +217,27 @@ export function SellForm({
     if (tender === "momo") return { payment: { kind: "momo", reference }, label: "mobile money" };
     if (tender === "credit") return { payment: { kind: "credit" }, label: "on credit" };
 
+    // A split has to be a split. Nothing in cash is a mobile money sale,
+    // and everything in cash is a cash sale - both are a wrong button
+    // rather than a payment the office should have to unpick later.
     const cash = Number(cashPart || 0);
-    if (cash <= 0) return null;
+    if (!Number.isFinite(cash) || cash <= 0) return null;
+    if (cash >= total) return null;
     return {
       payment: { kind: "split", cashPart: cash, reference },
-      label: `${formatMoney(cash)} cash and the rest on mobile money`,
+      label: `${formatMoney(cash)} cash and ${formatMoney(total - cash)} on mobile money`,
     };
   }
+
+  /** The two halves of a split, as the driver types the first one. */
+  const splitCash = Number(cashPart || 0);
+  const splitValid = Number.isFinite(splitCash) && splitCash > 0 && splitCash < total;
+  const splitMomo = splitValid ? total - splitCash : 0;
+
+  /** Change on a cash sale. Nothing owed is not change, it is exact. */
+  const handedOver = Number(cashGiven || 0);
+  const changeDue =
+    Number.isFinite(handedOver) && handedOver > total ? handedOver - total : 0;
 
   async function complete(tender: Tender) {
     const saleType: "cash" | "credit" = tender === "credit" ? "credit" : "cash";
@@ -526,7 +544,11 @@ export function SellForm({
                       a van actually takes; credit is a different kind of
                       answer and sits apart. */}
                   <div className="grid grid-cols-2 gap-2">
-                    <Button size="touch" onClick={() => void complete("cash")} loading={busy}>
+                    <Button
+                      size="touch"
+                      onClick={() => { setTender("cash"); setCashGiven(""); }}
+                      disabled={busy}
+                    >
                       <Banknote className="size-5" aria-hidden />
                       Cash
                     </Button>
@@ -568,6 +590,51 @@ export function SellForm({
                     </Button>
                   </div>
                 </>
+              ) : tender === "cash" ? (
+                <div className="space-y-2">
+                  {/* Optional. Most sales are settled with the exact
+                      money, and making somebody type it every time would
+                      slow the till down for the case that does not need
+                      it. */}
+                  <Input
+                    aria-label="Cash handed over"
+                    inputMode="decimal"
+                    placeholder="Cash handed over (optional)"
+                    value={cashGiven}
+                    onChange={(e) => setCashGiven(e.target.value)}
+                    className="numeric h-14 text-center text-base"
+                  />
+
+                  {changeDue > 0 ? (
+                    <div className="rounded-[var(--radius-panel)] border border-positive/30 bg-positive-soft px-4 py-3 text-center dark:bg-positive/10">
+                      <p className="text-xs font-medium uppercase tracking-wider text-positive">
+                        Change to give back
+                      </p>
+                      <p className="numeric mt-0.5 text-3xl font-semibold text-positive">
+                        {formatMoney(changeDue)}
+                      </p>
+                    </div>
+                  ) : handedOver > 0 && handedOver < total ? (
+                    <p className="numeric text-center text-sm text-caution">
+                      That is {formatMoney(total - handedOver)} short of {formatMoney(total)}.
+                      Take the balance, or record it as a credit sale.
+                    </p>
+                  ) : (
+                    <p className="text-center text-xs text-[var(--text-secondary)]">
+                      Leave it blank if they gave the exact money.
+                    </p>
+                  )}
+
+                  <Button
+                    size="touch"
+                    onClick={() => void complete("cash")}
+                    loading={busy}
+                    disabled={handedOver > 0 && handedOver < total}
+                  >
+                    <Banknote className="size-5" aria-hidden />
+                    Take {formatMoney(total)} in cash
+                  </Button>
+                </div>
               ) : tender === "momo" ? (
                 <div className="space-y-2">
                   <Input
@@ -598,12 +665,45 @@ export function SellForm({
                     onChange={(e) => setMomoRef(e.target.value)}
                     className="numeric h-14 text-base"
                   />
-                  <p className="numeric text-center text-xs text-[var(--text-secondary)]">
-                    The rest goes on mobile money. The office works out the
-                    exact split from the sale total.
-                  </p>
-                  <Button size="touch" onClick={() => void complete("split")} loading={busy}>
-                    Take the payment
+                  {/* Both halves, as they type. A driver standing at a
+                      counter should not have to do the subtraction, and
+                      the number they read out is the one the customer
+                      sends. */}
+                  {splitValid ? (
+                    <div className="rounded-[var(--radius-panel)] bg-[var(--surface-sunken)] px-4 py-3">
+                      <div className="flex items-baseline justify-between">
+                        <span className="text-sm text-[var(--text-secondary)]">Cash</span>
+                        <span className="numeric text-base font-semibold text-[var(--text-primary)]">
+                          {formatMoney(splitCash)}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex items-baseline justify-between">
+                        <span className="text-sm text-[var(--text-secondary)]">Mobile money</span>
+                        <span className="numeric text-base font-semibold text-[var(--text-primary)]">
+                          {formatMoney(splitMomo)}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex items-baseline justify-between border-t border-[var(--border-subtle)] pt-2">
+                        <span className="text-sm font-medium text-[var(--text-primary)]">Total</span>
+                        <span className="numeric text-base font-semibold text-[var(--text-primary)]">
+                          {formatMoney(total)}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="numeric text-center text-xs text-caution">
+                      {splitCash <= 0
+                        ? `Enter how much of the ${formatMoney(total)} is being paid in cash.`
+                        : `That is the whole ${formatMoney(total)}. Take it as a cash sale instead.`}
+                    </p>
+                  )}
+                  <Button
+                    size="touch"
+                    onClick={() => void complete("split")}
+                    loading={busy}
+                    disabled={!splitValid}
+                  >
+                    Take {splitValid ? formatMoney(total) : "the payment"}
                   </Button>
                 </div>
               )}

@@ -748,3 +748,119 @@ begin
   $trg$;
 end
 $sync$;
+
+-- ------------------------------------------------------------------
+-- Redeeming a link now says which link it was
+-- ------------------------------------------------------------------
+--
+-- submit_supplier_document() re-checks the link at the moment of
+-- submission, which means it needs the link's id - and the version in
+-- 0030 returned only the supplier and the organization. Replaced here
+-- rather than edited there, so a database already at 0030 gets the
+-- change by running this script.
+--
+-- The token id is not a secret: it identifies a row, not a credential,
+-- and the digest is what actually opens anything.
+drop function if exists public.resolve_supplier_token(text, inet, text);
+
+create or replace function public.resolve_supplier_token(
+  p_token_hash text,
+  p_ip         inet default null,
+  p_user_agent text default null
+)
+returns table (supplier_id uuid, org_id uuid, token_id uuid, expires_at timestamptz)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  token   public.supplier_portal_tokens;
+  recent  integer;
+begin
+  if p_ip is not null then
+    select count(*) into recent
+      from public.supplier_portal_attempts
+     where request_ip = p_ip
+       and not succeeded
+       and attempted_at > now() - interval '15 minutes';
+
+    if recent >= 10 then
+      insert into public.supplier_portal_attempts (request_ip, user_agent, succeeded)
+      values (p_ip, p_user_agent, false);
+      return;
+    end if;
+  end if;
+
+  select * into token
+    from public.supplier_portal_tokens t
+   where t.token_hash = p_token_hash
+     and t.revoked_at is null
+     and t.expires_at > now();
+
+  if not found then
+    insert into public.supplier_portal_attempts (request_ip, user_agent, succeeded)
+    values (p_ip, p_user_agent, false);
+    return;
+  end if;
+
+  update public.supplier_portal_tokens
+     set last_used_at = now(), use_count = use_count + 1
+   where id = token.id;
+
+  insert into public.supplier_portal_attempts (request_ip, user_agent, succeeded, token_id)
+  values (p_ip, p_user_agent, true, token.id);
+
+  return query select token.supplier_id, token.org_id, token.id, token.expires_at;
+end;
+$$;
+
+comment on function public.resolve_supplier_token is
+  'Exchange a link digest for the supplier it belongs to. Returns '
+  'nothing for a link that is unknown, expired, revoked or rate '
+  'limited - the holder is not told which.';
+
+revoke all on function public.resolve_supplier_token(text, inet, text)
+  from public, anon, authenticated;
+grant execute on function public.resolve_supplier_token(text, inet, text) to service_role;
+
+
+-- ------------------------------------------------------------------
+-- The office view carries the review state
+-- ------------------------------------------------------------------
+--
+-- Appended rather than reordered: `create or replace view` refuses to
+-- rename or reorder an existing column, so the new ones go on the end.
+create or replace view public.supplier_document_detail
+with (security_invoker = on) as
+  select
+    d.id,
+    d.org_id,
+    d.supplier_id,
+    s.code  as supplier_code,
+    s.name  as supplier_name,
+    d.purchase_order_id,
+    po.po_number,
+    d.kind,
+    d.title,
+    d.reference,
+    d.document_date,
+    d.amount,
+    d.storage_path,
+    d.file_name,
+    d.mime_type,
+    d.size_bytes,
+    d.notes,
+    p.full_name as uploaded_by_name,
+    d.created_at,
+    d.status,
+    d.submitted_company,
+    d.submitted_by_name,
+    d.submitted_at,
+    r.full_name as reviewed_by_name,
+    d.reviewed_at,
+    d.review_note
+  from public.supplier_documents d
+  join public.suppliers s on s.id = d.supplier_id
+  left join public.purchase_orders po on po.id = d.purchase_order_id
+  left join public.profiles p on p.id = d.uploaded_by
+  left join public.profiles r on r.id = d.reviewed_by;
