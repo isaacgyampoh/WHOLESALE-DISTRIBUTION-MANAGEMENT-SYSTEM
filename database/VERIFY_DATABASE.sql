@@ -129,7 +129,9 @@ expected_enums (typname, members) as (
     ('sync_operation',        'van_sale,collection,van_return,reconciliation'),
     ('waybill_status',         'draft,issued,delivered,cancelled'),
     ('notification_severity',  'info,warning,critical'),
-    ('supplier_document_kind',  'invoice,delivery_note,waybill,credit_note,certificate,contract,other')
+    ('supplier_document_kind',  'invoice,delivery_note,waybill,credit_note,certificate,contract,other'),
+    ('document_review_status',  'pending,received,reviewing,approved,rejected'),
+    ('return_reason',           'damaged,expired,wrong_item,customer_return,unsold,other')
 ),
 actual_enums as (
   select t.typname::text as typname,
@@ -165,7 +167,8 @@ missing_tables as (
     'van_sales','vans','warehouses','auth_pin_attempts','audit_log',
     'sync_operations','product_batches','van_sale_payments',
     'waybills','waybill_items','notifications',
-    'supplier_documents','supplier_portal_tokens','supplier_portal_attempts'
+    'supplier_documents','supplier_portal_tokens','supplier_portal_attempts',
+    'stock_returns','stock_return_items'
   ]) as t
   where not exists (
     select 1 from information_schema.tables
@@ -180,7 +183,8 @@ missing_views as (
     'van_load_summary','van_stock_summary','products_priced',
     'batch_expiry_status','expiry_summary','load_takings',
     'invoice_detail','receipt_detail',
-    'stock_transfer_summary','stock_in_transit','supplier_document_detail'
+    'stock_transfer_summary','stock_in_transit','supplier_document_detail',
+    'supplier_payables','stock_return_summary'
   ]) as v
   where not exists (
     select 1 from information_schema.views
@@ -189,41 +193,41 @@ missing_views as (
 ),
 report as (
   select  1 as ord, 'Tables' as check_name,
-          '40'::text as expected, c.tables::text as actual,
-          case when c.tables = 40 then 'OK' else 'CHECK' end as status,
+          '42'::text as expected, c.tables::text as actual,
+          case when c.tables = 42 then 'OK' else 'CHECK' end as status,
           ''::text as detail
   from counts c
   union all select  2, 'Expected tables all present', 'none missing',
           case when m.names = '' then 'none missing' else 'MISSING' end,
           case when m.names = '' then 'OK' else 'FAIL' end, m.names
   from missing_tables m
-  union all select  3, 'Views', '17', c.views::text,
-          case when c.views = 17 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  3, 'Views', '19', c.views::text,
+          case when c.views = 19 then 'OK' else 'CHECK' end, '' from counts c
   union all select  4, 'Expected views all present', 'none missing',
           case when v.names = '' then 'none missing' else 'MISSING' end,
           case when v.names = '' then 'OK' else 'FAIL' end, v.names
   from missing_views v
-  union all select  5, 'Enum types', '17', c.enums::text,
-          case when c.enums = 17 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  6, 'Enum members and order', '17 matching', e.n::text,
-          case when e.n = 17 then 'OK' else 'FAIL' end,
+  union all select  5, 'Enum types', '19', c.enums::text,
+          case when c.enums = 19 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  6, 'Enum members and order', '19 matching', e.n::text,
+          case when e.n = 19 then 'OK' else 'FAIL' end,
           (select names from enum_bad)
   from enum_match e
-  union all select  7, 'Functions', '66', c.functions::text,
-          case when c.functions = 66 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  8, 'Triggers', '78', c.triggers::text,
-          case when c.triggers = 78 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  9, 'RLS policies', '81', c.policies::text,
-          case when c.policies = 81 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  7, 'Functions', '73', c.functions::text,
+          case when c.functions = 73 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  8, 'Triggers', '80', c.triggers::text,
+          case when c.triggers = 80 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  9, 'RLS policies', '85', c.policies::text,
+          case when c.policies = 85 then 'OK' else 'CHECK' end, '' from counts c
   union all select 10, 'RLS enabled on every table',
           c.all_tables::text, c.rls_tables::text,
           case when c.rls_tables = c.all_tables then 'OK' else 'FAIL' end, '' from counts c
   union all select 11, 'Generated columns', '13', c.generated_cols::text,
           case when c.generated_cols = 13 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 12, 'Indexes', '155', c.indexes::text,
-          case when c.indexes = 155 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 13, 'Constraints', '270', c.constraints::text,
-          case when c.constraints = 270 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 12, 'Indexes', '160', c.indexes::text,
+          case when c.indexes = 160 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 13, 'Constraints', '286', c.constraints::text,
+          case when c.constraints = 286 then 'OK' else 'CHECK' end, '' from counts c
   union all select 14, 'Security functions present', '8', s.n::text,
           case when s.n = 8 then 'OK' else 'FAIL' end, '' from security_fns s
   union all select 15, 'Business functions present', '7', b.n::text,
@@ -629,6 +633,72 @@ report as (
                and (has_function_privilege('anon', p.oid, 'EXECUTE')
                     or has_function_privilege('authenticated', p.oid, 'EXECUTE')))
                then 'OK' else 'FAIL' end, ''
+
+  -- ---- supplier submissions and the audit gaps (0031) --------------
+  union all select 62, 'Submissions: a supplier can send their own invoice', 'present',
+          case when exists (select 1 from pg_proc p
+                             join pg_namespace n on n.oid = p.pronamespace
+                            where n.nspname = 'public'
+                              and p.proname = 'submit_supplier_document')
+               then 'present' else 'MISSING' end,
+          case when exists (select 1 from pg_proc p
+                             join pg_namespace n on n.oid = p.pronamespace
+                            where n.nspname = 'public'
+                              and p.proname = 'submit_supplier_document')
+               then 'OK' else 'FAIL' end,
+          'And the link is re-checked at submission, so revoking stops one in flight'
+  union all select 63, 'Submissions: server-side only', 'service role only',
+          case when not exists (
+            select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+             where n.nspname = 'public' and p.proname = 'submit_supplier_document'
+               and (has_function_privilege('anon', p.oid, 'EXECUTE')
+                    or has_function_privilege('authenticated', p.oid, 'EXECUTE')))
+               then 'service role only' else 'EXPOSED' end,
+          case when not exists (
+            select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+             where n.nspname = 'public' and p.proname = 'submit_supplier_document'
+               and (has_function_privilege('anon', p.oid, 'EXECUTE')
+                    or has_function_privilege('authenticated', p.oid, 'EXECUTE')))
+               then 'OK' else 'FAIL' end, ''
+  union all select 64, 'Submissions: a review workflow exists', 'present',
+          case when exists (select 1 from pg_type where typname = 'document_review_status')
+               then 'present' else 'MISSING' end,
+          case when exists (select 1 from pg_type where typname = 'document_review_status')
+               then 'OK' else 'FAIL' end,
+          'received, reviewing, approved, rejected'
+  union all select 65, 'Invoices carry a discount', 'present',
+          case when exists (select 1 from information_schema.columns
+                             where table_name = 'invoices' and column_name = 'discount')
+               then 'present' else 'MISSING' end,
+          case when exists (select 1 from information_schema.columns
+                             where table_name = 'invoices' and column_name = 'discount')
+               then 'OK' else 'FAIL' end, ''
+  union all select 66, 'Waybills record shortages and damage', '3 columns',
+          (select count(*)::text from information_schema.columns
+            where table_name = 'waybill_items'
+              and column_name in ('qty_received','qty_damaged','qty_short')),
+          case when (select count(*) from information_schema.columns
+                      where table_name = 'waybill_items'
+                        and column_name in ('qty_received','qty_damaged','qty_short')) = 3
+               then 'OK' else 'FAIL' end, ''
+  union all select 67, 'Returns have a reason worth counting', 'enumerated',
+          case when exists (select 1 from pg_type where typname = 'return_reason')
+               then 'enumerated' else 'FREE TEXT' end,
+          case when exists (select 1 from pg_type where typname = 'return_reason')
+               then 'OK' else 'FAIL' end,
+          '"damaged" typed forty ways cannot be counted'
+  union all select 68, 'Customer and supplier returns move stock', 'present',
+          case when to_regclass('public.stock_returns') is not null
+                and exists (select 1 from pg_proc p
+                             join pg_namespace n on n.oid = p.pronamespace
+                            where n.nspname = 'public' and p.proname = 'record_stock_return')
+               then 'present' else 'MISSING' end,
+          case when to_regclass('public.stock_returns') is not null
+                and exists (select 1 from pg_proc p
+                             join pg_namespace n on n.oid = p.pronamespace
+                            where n.nspname = 'public' and p.proname = 'record_stock_return')
+               then 'OK' else 'FAIL' end,
+          'Both were being recorded as adjustments, which loses who and why'
 )
 select ord as "#", check_name as "check", expected, actual, status, detail
 from report

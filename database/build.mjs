@@ -689,6 +689,101 @@ select 'a supplier sees only their own orders',
                           where n.nspname = 'public' and p.proname = 'supplier_portal_orders')
             then 'PASS' else 'FAIL' end;`,
   },
+  {
+    migration: "0031_supplier_submissions.sql",
+    out: "UPGRADE_0031_SUPPLIER_SUBMISSIONS.sql",
+    title: "UPGRADE 0031 - suppliers submit their own invoices",
+    summary: `-- WHAT IT ADDS
+--
+-- 0029 let the office file paperwork that arrived with a delivery, and
+-- 0030 let a supplier look at their orders. Neither closed the loop the
+-- business actually wants: the supplier sends the invoice themselves,
+-- somebody here looks at it, and it is accepted or sent back.
+--
+--   submit_supplier_document()   a supplier filing their own invoice
+--                                through their portal link. The link is
+--                                re-checked at submission, so revoking
+--                                it stops one already in flight.
+--   review_supplier_document()   received -> reviewing -> approved or
+--                                rejected. A rejection must say why, or
+--                                the supplier sends the same thing again.
+--   supplier_payables            what each supplier has delivered, what
+--                                they have billed, and how much of their
+--                                paperwork is waiting on somebody here.
+--
+-- The accountant is told when an invoice arrives and when a delivery is
+-- booked in, so the two can be matched.
+--
+-- It also closes five gaps found in the production audit:
+--
+--   invoices gain a discount column, held apart from the line prices so
+--   it can be reported on rather than buried in a reduced price
+--   waybills record damaged and short quantities, and receive_waybill()
+--   signs one in line by line
+--   returns gain a structured reason, because "damaged" typed forty
+--   ways cannot be counted
+--   stock_returns covers a customer bringing goods back and goods going
+--   back to a supplier - both were being recorded as adjustments, which
+--   loses who returned what and why
+--   purchase orders carry the supplier's own invoice reference
+--
+-- And a driver whose offline sale failed to apply now raises a critical
+-- notification, because the device believes it was recorded.
+--
+-- Existing data is untouched. Documents already filed default to
+-- approved: our own staff filed them, so somebody here has already seen
+-- them.
+--
+-- AFTER RUNNING IT, redeploy. Supplier submissions, the review queue and
+-- the new returns appear only once this is in place.`,
+    verify: `select 'supplier submissions' as check,
+       case when exists (select 1 from pg_proc p
+                           join pg_namespace n on n.oid = p.pronamespace
+                          where n.nspname = 'public' and p.proname = 'submit_supplier_document')
+            then 'PASS' else 'FAIL' end as result
+union all
+select 'a review workflow',
+       case when exists (select 1 from pg_type where typname = 'document_review_status')
+             and exists (select 1 from pg_proc p
+                           join pg_namespace n on n.oid = p.pronamespace
+                          where n.nspname = 'public' and p.proname = 'review_supplier_document')
+            then 'PASS' else 'FAIL' end
+union all
+select 'supplier_payables view',
+       case when to_regclass('public.supplier_payables') is not null
+            then 'PASS' else 'FAIL' end
+union all
+select 'invoices carry a discount',
+       case when exists (select 1 from information_schema.columns
+                          where table_name = 'invoices' and column_name = 'discount')
+            then 'PASS' else 'FAIL' end
+union all
+select 'waybills record shortages',
+       case when (select count(*) from information_schema.columns
+                   where table_name = 'waybill_items'
+                     and column_name in ('qty_received','qty_damaged','qty_short')) = 3
+            then 'PASS' else 'FAIL' end
+union all
+select 'returns have a structured reason',
+       case when exists (select 1 from pg_type where typname = 'return_reason')
+            then 'PASS' else 'FAIL' end
+union all
+select 'customer and supplier returns',
+       case when to_regclass('public.stock_returns') is not null
+             and exists (select 1 from pg_proc p
+                           join pg_namespace n on n.oid = p.pronamespace
+                          where n.nspname = 'public' and p.proname = 'record_stock_return')
+            then 'PASS' else 'FAIL' end
+union all
+select 'submissions are server-side only',
+       case when not exists (
+              select 1 from pg_proc p
+                join pg_namespace n on n.oid = p.pronamespace
+               where n.nspname = 'public' and p.proname = 'submit_supplier_document'
+                 and (has_function_privilege('anon', p.oid, 'EXECUTE')
+                      or has_function_privilege('authenticated', p.oid, 'EXECUTE')))
+            then 'PASS' else 'FAIL' end;`,
+  },
 ];
 
 /** Final enum members, in the order `alter type ... add value` yields. */

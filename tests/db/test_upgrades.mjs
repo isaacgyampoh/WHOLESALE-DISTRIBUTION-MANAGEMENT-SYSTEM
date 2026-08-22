@@ -33,6 +33,7 @@ const UPGRADE_TRF = path.join("..", "..", "database", "UPGRADE_0027_TRANSFERS.sq
 const UPGRADE_NTF = path.join("..", "..", "database", "UPGRADE_0028_NOTIFICATIONS.sql");
 const UPGRADE_DOCS_SUP = path.join("..", "..", "database", "UPGRADE_0029_SUPPLIER_DOCUMENTS.sql");
 const UPGRADE_PORTAL = path.join("..", "..", "database", "UPGRADE_0030_SUPPLIER_PORTAL.sql");
+const UPGRADE_SUBMIT = path.join("..", "..", "database", "UPGRADE_0031_SUPPLIER_SUBMISSIONS.sql");
 
 let pass = 0, fail = 0;
 const ok = (n, c, x = "") => { c ? (pass++, console.log(`  PASS  ${n} ${x}`)) : (fail++, console.log(`  FAIL  ${n} ${x}`)); };
@@ -49,8 +50,8 @@ for (const s of splitStatements(shim)) await c.query(s);
 
 // Everything up to but NOT including 0022.
 const files = fs.readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort()
-  .filter((f) => !["0022", "0023", "0024", "0025", "0026", "0027", "0028", "0029", "0030"]
-    .some((n) => f.startsWith(n)));
+  .filter((f) => !["0022", "0023", "0024", "0025", "0026", "0027", "0028", "0029", "0030",
+                   "0031"].some((n) => f.startsWith(n)));
 for (const f of files) {
   const sql = fs.readFileSync(path.join(MIGRATIONS, f), "utf8");
   for (const s of splitStatements(sql)) {
@@ -338,7 +339,8 @@ for (const [what, sql] of [
 
 // ---- 0029 and 0030, on top of 0028 --------------------------------
 console.log("\n=== UPGRADE_0029 and UPGRADE_0030, then again ===");
-for (const [name, file] of [["0029", UPGRADE_DOCS_SUP], ["0030", UPGRADE_PORTAL]]) {
+for (const [name, file] of [["0029", UPGRADE_DOCS_SUP], ["0030", UPGRADE_PORTAL],
+                            ["0031", UPGRADE_SUBMIT]]) {
   const sql = fs.readFileSync(file, "utf8");
   for (const attempt of ["runs in order", "runs a second time"]) {
     try {
@@ -370,6 +372,27 @@ for (const [what, sql] of [
        where n.nspname='public' and p.proname='resolve_supplier_token'
          and (has_function_privilege('anon', p.oid, 'EXECUTE')
               or has_function_privilege('authenticated', p.oid, 'EXECUTE'))) v`],
+  ["a supplier can submit their own invoice", `select exists (select 1 from pg_proc p
+      join pg_namespace n on n.oid=p.pronamespace
+     where n.nspname='public' and p.proname='submit_supplier_document') v`],
+  ["submitting is server-side only", `select not exists (
+      select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+       where n.nspname='public' and p.proname='submit_supplier_document'
+         and (has_function_privilege('anon', p.oid, 'EXECUTE')
+              or has_function_privilege('authenticated', p.oid, 'EXECUTE'))) v`],
+  ["a review workflow exists", `select exists (
+      select 1 from pg_type where typname='document_review_status') v`],
+  ["invoices carry a discount", `select exists (select 1 from information_schema.columns
+      where table_name='invoices' and column_name='discount') v`],
+  ["waybills record shortages", `select (select count(*) from information_schema.columns
+      where table_name='waybill_items'
+        and column_name in ('qty_received','qty_damaged','qty_short')) = 3 v`],
+  ["returns have a structured reason", `select exists (
+      select 1 from pg_type where typname='return_reason') v`],
+  ["customer and supplier returns move stock", `select to_regclass('public.stock_returns')
+      is not null and exists (select 1 from pg_proc p
+        join pg_namespace n on n.oid=p.pronamespace
+       where n.nspname='public' and p.proname='record_stock_return') v`],
 ]) {
   const r = await c.query(sql);
   ok(what, r.rows[0].v === true);
