@@ -26,8 +26,8 @@ requires anyone but you to have access to your Supabase account.
 3. **Run**.
 
 It is one transaction: it either installs completely or changes nothing.
-Expect it to take a few seconds. It creates 33 tables, 11 views, 44
-functions, 14 enums, 131 indexes, 226 constraints, 70 triggers, 71 row
+Expect it to take a few seconds. It creates 34 tables, 12 views, 45
+functions, 14 enums, 134 indexes, 230 constraints, 70 triggers, 72 row
 level security policies and the Data API grants.
 
 The file is generated from `supabase/migrations/` by
@@ -48,6 +48,7 @@ what is installed, in order:
 | `database/UPGRADE_0022_OFFLINE_SYNC.sql` | The offline sync engine — **required for the driver PWA** |
 | `database/UPGRADE_0023_COST_SECURITY.sql` | **Security.** Stops drivers reading cost price and supplier terms |
 | `database/UPGRADE_0024_BATCHES_AND_EXPIRY.sql` | Batches, expiry dates, and the block on dispatching expired stock |
+| `database/UPGRADE_0025_PAYMENT_METHODS.sql` | Cash, mobile money and split payments, counted apart at end of day |
 
 Every upgrade file is idempotent: running one twice is harmless, and
 each ends with a `PASS`/`FAIL` check of its own work.

@@ -18,6 +18,7 @@ import { formatMoney, formatQuantity } from "@/lib/utils/format";
 import type { OfflineSnapshot } from "@/lib/offline/queue";
 import {
   Minus, Plus, PackageX, Search, Check, Banknote, CreditCard, ShoppingCart,
+  Smartphone, Split,
 } from "lucide-react";
 
 /**
@@ -37,6 +38,7 @@ import {
  */
 
 type Stage = "cart" | "payment" | "done";
+type Tender = "cash" | "momo" | "split" | "credit";
 
 interface Completed {
   customerName: string;
@@ -44,9 +46,22 @@ interface Completed {
   saleType: "cash" | "credit";
   queuedOffline: boolean;
   saleNumber?: string;
+  /** In words, for the confirmation: "₵200 cash, ₵300 mobile money". */
+  paidBy?: string;
 }
 
-export function SellForm({ initial }: { initial?: OfflineSnapshot | null }) {
+export function SellForm({
+  initial,
+  /**
+   * False where the database cannot record a payment breakdown. The till
+   * then offers cash and credit only, as it did before methods existed -
+   * rather than offering a button that would fail at the counter.
+   */
+  canRecordMethods = true,
+}: {
+  initial?: OfflineSnapshot | null;
+  canRecordMethods?: boolean;
+}) {
   const router = useRouter();
   const { snapshot: cached, online, refresh, sync } = useSync();
 
@@ -64,6 +79,13 @@ export function SellForm({ initial }: { initial?: OfflineSnapshot | null }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [completed, setCompleted] = useState<Completed | null>(null);
+  // The split is held as two figures rather than a list: cash and
+  // mobile money are the two a van actually takes, and asking a driver
+  // to build a list of payment lines at a counter would be absurd.
+  const [cashPart, setCashPart] = useState("");
+  const [momoRef, setMomoRef] = useState("");
+  // Null until they have chosen how the customer is paying.
+  const [tender, setTender] = useState<Exclude<Tender, "cash" | "credit"> | null>(null);
   const [creatingCustomer, startCreate] = useTransition();
 
   const stock = useMemo(() => snapshot?.stock ?? [], [snapshot]);
@@ -144,7 +166,9 @@ export function SellForm({ initial }: { initial?: OfflineSnapshot | null }) {
               {formatMoney(completed.total)}
             </p>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              {completed.saleType === "cash" ? "Paid in cash" : "On credit"}
+              {completed.paidBy
+                ? completed.paidBy.charAt(0).toUpperCase() + completed.paidBy.slice(1)
+                : completed.saleType === "cash" ? "Paid in cash" : "On credit"}
             </p>
           </div>
 
@@ -158,6 +182,7 @@ export function SellForm({ initial }: { initial?: OfflineSnapshot | null }) {
             <Button size="touch" onClick={() => {
               setCompleted(null); setStage("cart"); setCustomerId("");
               setQuantities({}); setNotes(""); setQuery("");
+              setTender(null); setCashPart(""); setMomoRef("");
             }}>
               <ShoppingCart className="size-5" aria-hidden />
               Sell to another customer
@@ -172,7 +197,32 @@ export function SellForm({ initial }: { initial?: OfflineSnapshot | null }) {
   }
 
   // ---- take payment --------------------------------------------------
-  async function complete(saleType: "cash" | "credit") {
+  /**
+   * What the driver actually collected, as the database wants it.
+   *
+   * Cash and mobile money only. A van does not take cheques, and
+   * offering methods nobody uses is how a till gets slow.
+   */
+  function tenderFor(tender: Tender): {
+    payment: { kind: Tender; cashPart?: number; reference?: string | null };
+    label: string;
+  } | null {
+    const reference = momoRef.trim() || null;
+
+    if (tender === "cash") return { payment: { kind: "cash" }, label: "cash" };
+    if (tender === "momo") return { payment: { kind: "momo", reference }, label: "mobile money" };
+    if (tender === "credit") return { payment: { kind: "credit" }, label: "on credit" };
+
+    const cash = Number(cashPart || 0);
+    if (cash <= 0) return null;
+    return {
+      payment: { kind: "split", cashPart: cash, reference },
+      label: `${formatMoney(cash)} cash and the rest on mobile money`,
+    };
+  }
+
+  async function complete(tender: Tender) {
+    const saleType: "cash" | "credit" = tender === "credit" ? "credit" : "cash";
     setError(null);
 
     if (!customerId) { setError("Choose who is buying."); setStage("cart"); return; }
@@ -190,6 +240,12 @@ export function SellForm({ initial }: { initial?: OfflineSnapshot | null }) {
         setStage("cart");
         return;
       }
+    }
+
+    const tendered = tenderFor(tender);
+    if (!tendered) {
+      setError("Enter how much of it was paid in cash.");
+      return;
     }
 
     if (saleType === "credit" && customer && total > customer.credit_available) {
@@ -217,6 +273,7 @@ export function SellForm({ initial }: { initial?: OfflineSnapshot | null }) {
           saleType,
           notes: notes.trim() || null,
           lines: payloadLines,
+          payment: tendered.payment,
         });
 
         if (!result.ok) {
@@ -231,6 +288,7 @@ export function SellForm({ initial }: { initial?: OfflineSnapshot | null }) {
           saleType,
           queuedOffline: false,
           saleNumber: result.saleNumber,
+          paidBy: result.paidBy ?? tendered.label,
         });
       } else {
         // No signal: queued, and applied exactly once when it uploads.
@@ -241,6 +299,7 @@ export function SellForm({ initial }: { initial?: OfflineSnapshot | null }) {
           amount_paid: saleType === "cash" ? null : "0",
           notes: notes.trim() || null,
           lines: payloadLines,
+          payment: tendered.payment,
         }, summary);
 
         setCompleted({
@@ -248,6 +307,7 @@ export function SellForm({ initial }: { initial?: OfflineSnapshot | null }) {
           total,
           saleType,
           queuedOffline: true,
+          paidBy: tendered.label,
         });
       }
 
@@ -452,7 +512,7 @@ export function SellForm({ initial }: { initial?: OfflineSnapshot | null }) {
               size="touch"
               className="mt-2"
               disabled={!customerId || lines.length === 0}
-              onClick={() => { setError(null); setStage("payment"); }}
+              onClick={() => { setError(null); setTender(null); setStage("payment"); }}
             >
               {!customerId ? "Choose a customer first"
                 : lines.length === 0 ? "Add something to sell"
@@ -460,26 +520,100 @@ export function SellForm({ initial }: { initial?: OfflineSnapshot | null }) {
             </Button>
           ) : (
             <div className="mt-2 space-y-2">
-              <div className="grid grid-cols-2 gap-2">
-                <Button size="touch" onClick={() => void complete("cash")} loading={busy}>
-                  <Banknote className="size-5" aria-hidden />
-                  Cash
-                </Button>
-                <Button
-                  size="touch" variant="outline"
-                  onClick={() => void complete("credit")}
-                  loading={busy}
-                >
-                  <CreditCard className="size-5" aria-hidden />
-                  Credit
-                </Button>
-              </div>
+              {tender === null ? (
+                <>
+                  {/* How they are paying. Cash and mobile money are what
+                      a van actually takes; credit is a different kind of
+                      answer and sits apart. */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button size="touch" onClick={() => void complete("cash")} loading={busy}>
+                      <Banknote className="size-5" aria-hidden />
+                      Cash
+                    </Button>
+                    {canRecordMethods ? (
+                      <Button size="touch" onClick={() => setTender("momo")} disabled={busy}>
+                        <Smartphone className="size-5" aria-hidden />
+                        Mobile money
+                      </Button>
+                    ) : (
+                      <Button
+                        size="touch" variant="outline"
+                        onClick={() => void complete("credit")}
+                        loading={busy}
+                      >
+                        <CreditCard className="size-5" aria-hidden />
+                        Credit
+                      </Button>
+                    )}
+                  </div>
+                  <div className={canRecordMethods ? "grid grid-cols-2 gap-2" : "hidden"}>
+                    <Button
+                      size="touch" variant="outline"
+                      onClick={() => {
+                        setTender("split");
+                        setCashPart("");
+                      }}
+                      disabled={busy}
+                    >
+                      <Split className="size-5" aria-hidden />
+                      Split
+                    </Button>
+                    <Button
+                      size="touch" variant="outline"
+                      onClick={() => void complete("credit")}
+                      loading={busy}
+                    >
+                      <CreditCard className="size-5" aria-hidden />
+                      Credit
+                    </Button>
+                  </div>
+                </>
+              ) : tender === "momo" ? (
+                <div className="space-y-2">
+                  <Input
+                    aria-label="Mobile money reference"
+                    placeholder="Momo transaction id (optional)"
+                    value={momoRef}
+                    onChange={(e) => setMomoRef(e.target.value)}
+                    className="numeric h-14 text-base"
+                  />
+                  <Button size="touch" onClick={() => void complete("momo")} loading={busy}>
+                    <Smartphone className="size-5" aria-hidden />
+                    Take {formatMoney(total)} on mobile money
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Input
+                    aria-label="Cash part"
+                    inputMode="decimal" placeholder="How much in cash"
+                    value={cashPart}
+                    onChange={(e) => setCashPart(e.target.value)}
+                    className="numeric h-14 text-base"
+                  />
+                  <Input
+                    aria-label="Mobile money reference"
+                    placeholder="Momo transaction id (optional)"
+                    value={momoRef}
+                    onChange={(e) => setMomoRef(e.target.value)}
+                    className="numeric h-14 text-base"
+                  />
+                  <p className="numeric text-center text-xs text-[var(--text-secondary)]">
+                    The rest goes on mobile money. The office works out the
+                    exact split from the sale total.
+                  </p>
+                  <Button size="touch" onClick={() => void complete("split")} loading={busy}>
+                    Take the payment
+                  </Button>
+                </div>
+              )}
+
               <button
                 type="button"
-                onClick={() => setStage("cart")}
+                onClick={() => { if (tender) setTender(null); else setStage("cart"); }}
                 className="min-h-11 w-full text-sm text-[var(--text-secondary)]"
               >
-                Back to the cart
+                {tender ? "Choose another way to pay" : "Back to the cart"}
               </button>
             </div>
           )}

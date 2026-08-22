@@ -160,7 +160,7 @@ missing_tables as (
     'van_assignments','van_inventory','van_load_items','van_loads',
     'van_reconciliations','van_return_items','van_returns','van_sale_items',
     'van_sales','vans','warehouses','auth_pin_attempts','audit_log',
-    'sync_operations','product_batches'
+    'sync_operations','product_batches','van_sale_payments'
   ]) as t
   where not exists (
     select 1 from information_schema.tables
@@ -173,7 +173,7 @@ missing_views as (
     'customer_balances','customer_credit_position','customer_statement',
     'invoice_ageing','reconciliation_variances','stock_summary',
     'van_load_summary','van_stock_summary','products_priced',
-    'batch_expiry_status','expiry_summary'
+    'batch_expiry_status','expiry_summary','load_takings'
   ]) as v
   where not exists (
     select 1 from information_schema.views
@@ -182,16 +182,16 @@ missing_views as (
 ),
 report as (
   select  1 as ord, 'Tables' as check_name,
-          '33'::text as expected, c.tables::text as actual,
-          case when c.tables = 33 then 'OK' else 'CHECK' end as status,
+          '34'::text as expected, c.tables::text as actual,
+          case when c.tables = 34 then 'OK' else 'CHECK' end as status,
           ''::text as detail
   from counts c
   union all select  2, 'Expected tables all present', 'none missing',
           case when m.names = '' then 'none missing' else 'MISSING' end,
           case when m.names = '' then 'OK' else 'FAIL' end, m.names
   from missing_tables m
-  union all select  3, 'Views', '11', c.views::text,
-          case when c.views = 11 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  3, 'Views', '12', c.views::text,
+          case when c.views = 12 then 'OK' else 'CHECK' end, '' from counts c
   union all select  4, 'Expected views all present', 'none missing',
           case when v.names = '' then 'none missing' else 'MISSING' end,
           case when v.names = '' then 'OK' else 'FAIL' end, v.names
@@ -202,21 +202,21 @@ report as (
           case when e.n = 14 then 'OK' else 'FAIL' end,
           (select names from enum_bad)
   from enum_match e
-  union all select  7, 'Functions', '44', c.functions::text,
-          case when c.functions = 44 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  7, 'Functions', '45', c.functions::text,
+          case when c.functions = 45 then 'OK' else 'CHECK' end, '' from counts c
   union all select  8, 'Triggers', '70', c.triggers::text,
           case when c.triggers = 70 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  9, 'RLS policies', '71', c.policies::text,
-          case when c.policies = 71 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  9, 'RLS policies', '72', c.policies::text,
+          case when c.policies = 72 then 'OK' else 'CHECK' end, '' from counts c
   union all select 10, 'RLS enabled on every table',
           c.all_tables::text, c.rls_tables::text,
           case when c.rls_tables = c.all_tables then 'OK' else 'FAIL' end, '' from counts c
-  union all select 11, 'Generated columns', '12', c.generated_cols::text,
-          case when c.generated_cols = 12 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 12, 'Indexes', '131', c.indexes::text,
-          case when c.indexes = 131 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 13, 'Constraints', '226', c.constraints::text,
-          case when c.constraints = 226 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 11, 'Generated columns', '13', c.generated_cols::text,
+          case when c.generated_cols = 13 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 12, 'Indexes', '134', c.indexes::text,
+          case when c.indexes = 134 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 13, 'Constraints', '230', c.constraints::text,
+          case when c.constraints = 230 then 'OK' else 'CHECK' end, '' from counts c
   union all select 14, 'Security functions present', '8', s.n::text,
           case when s.n = 8 then 'OK' else 'FAIL' end, '' from security_fns s
   union all select 15, 'Business functions present', '7', b.n::text,

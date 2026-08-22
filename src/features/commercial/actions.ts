@@ -5,6 +5,8 @@ import { createSupabaseServerClient, createSupabaseAdminClient } from "@/lib/sup
 import { requirePermission } from "@/lib/auth/session";
 import { recordAudit } from "@/lib/audit";
 import { PAYMENT_METHODS } from "@/types/domain";
+import { getCapabilities } from "@/lib/db/capabilities";
+import { formatMoney } from "@/lib/utils/format";
 import type { CommercialState } from "./state";
 
 /**
@@ -246,11 +248,30 @@ export async function recordVanSaleAction(input: {
   saleType: "cash" | "credit";
   notes?: string | null;
   lines: { product_id: string; quantity: number; unit_price: number; tax_rate: number }[];
+  /**
+   * How the customer paid, in the terms a driver thinks in.
+   *
+   * Deliberately not a list of amounts. The payable total includes tax
+   * and is computed by the database from the same lines, so a till that
+   * sent its own figures would be short by exactly the tax - which is
+   * what happened when it did. The driver says how they were paid, and
+   * for a split how much of it was cash; the rest follows from the real
+   * total.
+   */
+  payment?: {
+    kind: "cash" | "momo" | "split" | "credit";
+    /** Split only: how much of the total came in as notes. */
+    cashPart?: number;
+    /** A momo transaction id, where there is one. */
+    reference?: string | null;
+  };
 }): Promise<{
   ok: boolean;
   saleNumber?: string;
   total?: number;
   balance?: number;
+  /** In words, for the confirmation the driver reads back. */
+  paidBy?: string;
   message?: string;
 }> {
   const actor = await requirePermission("sales.create");
@@ -342,9 +363,66 @@ export async function recordVanSaleAction(input: {
   }
 
   const supabase = await createSupabaseServerClient();
+
+  // How it was paid, before it is completed: the breakdown may only be
+  // written while the sale is still a draft, and completing it is what
+  // moves the stock and the ledger.
+  const capabilities = await getCapabilities();
+
+  // What is actually owed, including tax, worked out by the database
+  // from the lines just written. Everything below is measured against
+  // this rather than against anything the till sent.
+  const { data: priced } = await admin
+    .from("van_sales").select("total").eq("id", sale.id).single();
+  const payable = Number(priced?.total ?? 0);
+
+  const kind = input.payment?.kind ?? (input.saleType === "credit" ? "credit" : "cash");
+  const reference = input.payment?.reference?.trim() || null;
+
+  const breakdown: { method: string; amount: number; reference?: string | null }[] = [];
+  if (kind === "cash") {
+    breakdown.push({ method: "cash", amount: payable });
+  } else if (kind === "momo") {
+    breakdown.push({ method: "mobile_money", amount: payable, reference });
+  } else if (kind === "split") {
+    const cash = Math.min(Math.max(Number(input.payment?.cashPart ?? 0), 0), payable);
+    const momo = Number((payable - cash).toFixed(2));
+    if (cash > 0) breakdown.push({ method: "cash", amount: Number(cash.toFixed(2)) });
+    if (momo > 0) breakdown.push({ method: "mobile_money", amount: momo, reference });
+    if (!breakdown.length) {
+      await admin.from("van_sale_items").delete().eq("sale_id", sale.id);
+      await admin.from("van_sales").delete().eq("id", sale.id);
+      return { ok: false, message: "Enter how much was paid in cash." };
+    }
+  }
+  // Credit: nothing taken at the counter, so no breakdown.
+
+  let amountPaid: number | null = null;
+  if (breakdown.length && capabilities.salePaymentMethods) {
+    const { data: taken, error: paymentError } = await supabase.rpc("record_sale_payments", {
+      p_sale_id: sale.id,
+      p_payments: breakdown,
+    });
+
+    if (paymentError) {
+      console.error("[commercial] sale payment failed", paymentError);
+      await admin.from("van_sale_items").delete().eq("sale_id", sale.id);
+      await admin.from("van_sales").delete().eq("id", sale.id);
+      return {
+        ok: false,
+        message: paymentError.message.replace(/^.*?:\s*/, "") || "That payment could not be recorded.",
+      };
+    }
+    amountPaid = Number(taken ?? 0);
+  } else if (breakdown.length) {
+    // No breakdown table on this database. The sale is still recorded
+    // with what was taken, exactly as it was before methods existed.
+    amountPaid = breakdown.reduce((sum, p) => sum + p.amount, 0);
+  }
+
   const { error: completeError } = await supabase.rpc("complete_van_sale", {
     p_sale_id: sale.id,
-    p_amount_paid: null,
+    p_amount_paid: amountPaid,
   });
   if (completeError) {
     console.error("[commercial] sale completion failed", completeError);
@@ -370,6 +448,7 @@ export async function recordVanSaleAction(input: {
       lines: input.lines.length,
       total: finished?.total,
       balance: finished?.balance,
+      paid_by: breakdown.map((p) => `${p.method} ${p.amount}`),
     },
   });
 
@@ -378,10 +457,19 @@ export async function recordVanSaleAction(input: {
   revalidatePath("/driver/sell");
   revalidatePath("/driver/stock");
 
+  const METHOD_WORDS: Record<string, string> = {
+    cash: "cash", mobile_money: "mobile money",
+  };
+
   return {
     ok: true,
     saleNumber: finished?.sale_number as string,
     total: Number(finished?.total ?? 0),
     balance: Number(finished?.balance ?? 0),
+    paidBy: breakdown.length
+      ? breakdown
+          .map((p) => `${formatMoney(p.amount)} ${METHOD_WORDS[p.method] ?? p.method}`)
+          .join(", ")
+      : "on credit",
   };
 }

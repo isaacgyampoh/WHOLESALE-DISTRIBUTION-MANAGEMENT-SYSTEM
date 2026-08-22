@@ -238,6 +238,66 @@ select 'the warning period is configurable',
                             and column_name = 'expiry_warning_days')
             then 'PASS' else 'FAIL' end;`,
   },
+  {
+    migration: "0025_sale_payment_methods.sql",
+    out: "UPGRADE_0025_PAYMENT_METHODS.sql",
+    title: "UPGRADE 0025 - how a sale was paid for",
+    summary: `-- WHAT IT ADDS
+--
+-- A van sale recorded how much was paid and never how. \u20b5500 taken half
+-- in cash and half on mobile money was indistinguishable from \u20b5500 in
+-- notes - so end of day could only ever count cash, and a driver who
+-- took momo looked short by exactly that amount every evening.
+--
+--   van_sale_payments      one row per method, so a split is two rows
+--                          rather than a lost detail
+--   record_sale_payments() records the breakdown. Refuses more than the
+--                          sale is worth, and refuses a cash sale that
+--                          is short.
+--   load_takings           what a round took, cash and momo apart
+--
+-- and van_reconciliations gains expected_momo, actual_momo and
+-- momo_variance, so the two are counted separately at end of day.
+--
+-- A round recorded before this change still reconciles: with no
+-- breakdown, its takings are treated as cash, which is what they were
+-- assumed to be at the time.
+--
+-- AFTER RUNNING IT, redeploy. The till offers Cash, Mobile money and
+-- Split only once this is in place; before it, it offers cash and
+-- credit exactly as it did.`,
+    verify: `select 'van_sale_payments table' as check,
+       case when to_regclass('public.van_sale_payments') is not null
+            then 'PASS' else 'FAIL' end as result
+union all
+select 'record_sale_payments function',
+       case when exists (select 1 from pg_proc p
+                           join pg_namespace n on n.oid = p.pronamespace
+                          where n.nspname = 'public' and p.proname = 'record_sale_payments')
+            then 'PASS' else 'FAIL' end
+union all
+select 'load_takings view',
+       case when to_regclass('public.load_takings') is not null
+            then 'PASS' else 'FAIL' end
+union all
+select 'reconciliation counts momo apart',
+       case when (select count(*) from information_schema.columns
+                   where table_name = 'van_reconciliations'
+                     and column_name in ('expected_momo','actual_momo','momo_variance')) = 3
+            then 'PASS' else 'FAIL' end
+union all
+select 'row level security on the breakdown',
+       case when (select relrowsecurity from pg_class
+                   where oid = 'public.van_sale_payments'::regclass)
+            then 'PASS' else 'FAIL' end
+union all
+select 'nobody writes a payment by hand',
+       case when not exists (
+              select 1 from information_schema.role_table_grants
+               where table_name = 'van_sale_payments' and grantee = 'authenticated'
+                 and privilege_type in ('INSERT','UPDATE','DELETE'))
+            then 'PASS' else 'FAIL' end;`,
+  },
 ];
 
 /** Final enum members, in the order `alter type ... add value` yields. */

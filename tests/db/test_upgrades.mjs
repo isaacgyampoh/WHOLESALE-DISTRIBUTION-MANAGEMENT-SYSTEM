@@ -27,6 +27,7 @@ const MIGRATIONS = path.join("..", "..", "supabase", "migrations");
 const UPGRADE = path.join("..", "..", "database", "UPGRADE_0022_OFFLINE_SYNC.sql");
 const UPGRADE_COST = path.join("..", "..", "database", "UPGRADE_0023_COST_SECURITY.sql");
 const UPGRADE_EXPIRY = path.join("..", "..", "database", "UPGRADE_0024_BATCHES_AND_EXPIRY.sql");
+const UPGRADE_PAY = path.join("..", "..", "database", "UPGRADE_0025_PAYMENT_METHODS.sql");
 
 let pass = 0, fail = 0;
 const ok = (n, c, x = "") => { c ? (pass++, console.log(`  PASS  ${n} ${x}`)) : (fail++, console.log(`  FAIL  ${n} ${x}`)); };
@@ -43,7 +44,7 @@ for (const s of splitStatements(shim)) await c.query(s);
 
 // Everything up to but NOT including 0022.
 const files = fs.readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort()
-  .filter((f) => !f.startsWith("0022") && !f.startsWith("0023") && !f.startsWith("0024"));
+  .filter((f) => !["0022", "0023", "0024", "0025"].some((n) => f.startsWith(n)));
 for (const f of files) {
   const sql = fs.readFileSync(path.join(MIGRATIONS, f), "utf8");
   for (const s of splitStatements(sql)) {
@@ -186,6 +187,36 @@ for (const [what, sql] of [
       where oid='public.product_batches'::regclass`],
   ["the warning period is configurable", `select exists (select 1 from information_schema.columns
       where table_name='organizations' and column_name='expiry_warning_days') v`],
+]) {
+  const r = await c.query(sql);
+  ok(what, r.rows[0].v === true);
+}
+
+// ---- 0025, on top of 0024 -----------------------------------------
+console.log("\n=== UPGRADE_0025, then again ===");
+const paySql = fs.readFileSync(UPGRADE_PAY, "utf8");
+for (const attempt of ["runs on a 0024 database", "runs a second time"]) {
+  try {
+    await c.query(paySql);
+    ok(`UPGRADE_0025 ${attempt}`, true);
+  } catch (e) {
+    ok(`UPGRADE_0025 ${attempt}`, false, `-> ${e.message}`);
+  }
+}
+
+for (const [what, sql] of [
+  ["van_sale_payments exists", `select to_regclass('public.van_sale_payments') is not null v`],
+  ["record_sale_payments exists", `select exists (select 1 from pg_proc p
+       join pg_namespace n on n.oid=p.pronamespace
+      where n.nspname='public' and p.proname='record_sale_payments') v`],
+  ["load_takings exists", `select to_regclass('public.load_takings') is not null v`],
+  ["reconciliation counts momo apart", `select (select count(*) from information_schema.columns
+      where table_name='van_reconciliations'
+        and column_name in ('expected_momo','actual_momo','momo_variance')) = 3 v`],
+  ["nobody writes a payment by hand", `select not exists (
+      select 1 from information_schema.role_table_grants
+       where table_name='van_sale_payments' and grantee='authenticated'
+         and privilege_type in ('INSERT','UPDATE','DELETE')) v`],
 ]) {
   const r = await c.query(sql);
   ok(what, r.rows[0].v === true);

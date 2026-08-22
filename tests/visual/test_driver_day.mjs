@@ -128,6 +128,16 @@ try {
 
   await page.getByRole("button", { name: "Take payment" }).click();
   await page.waitForTimeout(400);
+  const { error: methodsProbe } = await admin.from("van_sale_payments").select("id").limit(1);
+  const methodsInstalled = !methodsProbe;
+  if (methodsInstalled) {
+    ok("the till offers mobile money",
+       await page.getByRole("button", { name: "Mobile money" }).count() > 0);
+    ok("the till offers a split",
+       await page.getByRole("button", { name: "Split", exact: true }).count() > 0);
+  } else {
+    console.log("  SKIP  payment methods (migration 0025 not installed on this database)");
+  }
   await page.getByRole("button", { name: "Cash", exact: true }).click();
 
   const cashDone = await page.getByText("Sale completed")
@@ -137,6 +147,17 @@ try {
   const afterCash = await onVan();
   ok("stock came off the van", afterCash === startingUnits - 2,
      `${startingUnits} -> ${afterCash}`);
+
+  const { data: paidSale } = await admin.from("van_sales")
+    .select("id, sale_number").eq("load_id", load.id)
+    .order("sold_at", { ascending: false }).limit(1).maybeSingle();
+  if (methodsInstalled) {
+    const { data: breakdown } = await admin.from("van_sale_payments")
+      .select("method, amount").eq("sale_id", paidSale?.id ?? "");
+    ok("the sale records how it was paid",
+       (breakdown ?? []).length === 1 && breakdown[0].method === "cash",
+       JSON.stringify(breakdown));
+  }
 
   const { data: cashSale } = await admin.from("van_sales")
     .select("sale_number, sale_type, total, status")
@@ -194,6 +215,40 @@ try {
     .select("id, total").eq("customer_id", newCustomerId);
   ok("the sale is recorded against the new customer", (theirSales ?? []).length === 1,
      `${theirSales?.length} sale(s)`);
+
+  if (methodsInstalled) {
+  console.log("\n=== a sale taken on mobile money ===");
+  await page.getByRole("button", { name: "Sell to another customer" }).click();
+  await page.waitForTimeout(800);
+  await page.getByRole("button", { name: /Choose a customer/ }).first().click();
+  await page.waitForTimeout(500);
+  await page.locator('[role="dialog"] button').filter({ hasText: /Demo/ }).first().click();
+  await page.waitForTimeout(400);
+  await page.getByRole("button", { name: /^One more / }).first().click();
+  await page.waitForTimeout(300);
+  await page.getByRole("button", { name: "Take payment" }).click();
+  await page.waitForTimeout(300);
+  await page.getByRole("button", { name: "Mobile money" }).click();
+  await page.waitForTimeout(300);
+  await page.locator('input[aria-label="Mobile money reference"]').fill(`MM-${stamp}`);
+  await page.getByRole("button", { name: /Take .* on mobile money/ }).click();
+
+  const momoDone = await page.getByText("Sale completed")
+    .waitFor({ timeout: 30_000 }).then(() => true).catch(() => false);
+  ok("a mobile money sale completes", momoDone);
+
+  const { data: momoSale } = await admin.from("van_sales")
+    .select("id").eq("load_id", load.id)
+    .order("sold_at", { ascending: false }).limit(1).maybeSingle();
+  const { data: momoPayment } = await admin.from("van_sale_payments")
+    .select("method, amount, reference").eq("sale_id", momoSale?.id ?? "");
+  ok("it is recorded as mobile money, not as cash",
+     (momoPayment ?? []).length === 1 && momoPayment[0].method === "mobile_money",
+     JSON.stringify(momoPayment));
+  ok("with the transaction reference the driver entered",
+     momoPayment?.[0]?.reference === `MM-${stamp}`, momoPayment?.[0]?.reference ?? "none");
+
+  }
 
   console.log("\n=== what the driver may not see ===");
   for (const [route, why] of [

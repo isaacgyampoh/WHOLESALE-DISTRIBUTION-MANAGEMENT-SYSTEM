@@ -28,6 +28,8 @@ export interface DatabaseCapabilities {
   batchesAndExpiry: boolean;
   /** Migration 0022: the offline sync engine the driver PWA needs. */
   offlineSync: boolean;
+  /** Migration 0025: cash, mobile money and split payments on a sale. */
+  salePaymentMethods: boolean;
 }
 
 let cached: DatabaseCapabilities | null = null;
@@ -43,16 +45,18 @@ let inFlight: Promise<DatabaseCapabilities> | null = null;
 async function probe(): Promise<DatabaseCapabilities> {
   const admin = createSupabaseAdminClient();
 
-  const [priced, batches, sync] = await Promise.all([
+  const [priced, batches, sync, payments] = await Promise.all([
     admin.from("products_priced").select("id").limit(1),
     admin.from("products").select("track_expiry").limit(1),
     admin.from("sync_operations").select("id").limit(1),
+    admin.from("van_sale_payments").select("id").limit(1),
   ]);
 
   const capabilities: DatabaseCapabilities = {
     maskedProductPricing: !priced.error,
     batchesAndExpiry: !batches.error,
     offlineSync: !sync.error,
+    salePaymentMethods: !payments.error,
   };
 
   const missing = Object.entries(capabilities)
@@ -84,7 +88,10 @@ export async function getCapabilities(): Promise<DatabaseCapabilities> {
     inFlight = null;
     console.error("[database] capability probe failed", error);
     // Assume the oldest schema. Everything degrades; nothing leaks.
-    return { maskedProductPricing: false, batchesAndExpiry: false, offlineSync: false };
+    return {
+      maskedProductPricing: false, batchesAndExpiry: false,
+      offlineSync: false, salePaymentMethods: false,
+    };
   });
   return inFlight;
 }
