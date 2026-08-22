@@ -12,7 +12,11 @@ import { createServerClient } from "@supabase/ssr";
  * governed by row level security in the database. A forged request that
  * slips past this still cannot read another organization's rows.
  */
-const PUBLIC_PATHS = ["/sign-in", "/auth", "/_next", "/favicon.ico"];
+// /portal is deliberately here. A supplier holds a link, not an
+// account, so sending them to a sign-in page would make the link
+// useless. The link itself is the authorisation, checked and rate
+// limited in the database by the route that serves it.
+const PUBLIC_PATHS = ["/sign-in", "/auth", "/_next", "/favicon.ico", "/portal"];
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });

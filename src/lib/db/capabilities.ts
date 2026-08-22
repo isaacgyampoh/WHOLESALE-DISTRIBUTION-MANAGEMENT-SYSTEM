@@ -36,6 +36,10 @@ export interface DatabaseCapabilities {
   warehouseTransfers: boolean;
   /** Migration 0028: in-app notifications, per role. */
   notifications: boolean;
+  /** Migration 0029: supplier paperwork in a private bucket. */
+  supplierDocuments: boolean;
+  /** Migration 0030: expiring, revocable links for suppliers. */
+  supplierPortal: boolean;
 }
 
 let cached: DatabaseCapabilities | null = null;
@@ -51,8 +55,8 @@ let inFlight: Promise<DatabaseCapabilities> | null = null;
 async function probe(): Promise<DatabaseCapabilities> {
   const admin = createSupabaseAdminClient();
 
-  const [priced, batches, sync, payments, documents, transfers, alerts] =
-    await Promise.all([
+  const [priced, batches, sync, payments, documents, transfers, alerts,
+         supplierDocs, portal] = await Promise.all([
     admin.from("products_priced").select("id").limit(1),
     admin.from("products").select("track_expiry").limit(1),
     admin.from("sync_operations").select("id").limit(1),
@@ -60,6 +64,8 @@ async function probe(): Promise<DatabaseCapabilities> {
     admin.from("waybills").select("id").limit(1),
     admin.from("stock_transfer_summary").select("id").limit(1),
     admin.from("notifications").select("id").limit(1),
+    admin.from("supplier_documents").select("id").limit(1),
+    admin.from("supplier_portal_tokens").select("id").limit(1),
   ]);
 
   const capabilities: DatabaseCapabilities = {
@@ -70,6 +76,8 @@ async function probe(): Promise<DatabaseCapabilities> {
     documents: !documents.error,
     warehouseTransfers: !transfers.error,
     notifications: !alerts.error,
+    supplierDocuments: !supplierDocs.error,
+    supplierPortal: !portal.error,
   };
 
   const missing = Object.entries(capabilities)
@@ -105,6 +113,7 @@ export async function getCapabilities(): Promise<DatabaseCapabilities> {
       maskedProductPricing: false, batchesAndExpiry: false,
       offlineSync: false, salePaymentMethods: false, documents: false,
       warehouseTransfers: false, notifications: false,
+      supplierDocuments: false, supplierPortal: false,
     };
   });
   return inFlight;

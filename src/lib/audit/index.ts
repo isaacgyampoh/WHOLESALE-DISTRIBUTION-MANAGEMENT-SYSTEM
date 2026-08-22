@@ -71,7 +71,11 @@ export type AuditAction =
   | "transfer.approved"
   | "transfer.dispatched"
   | "transfer.received"
-  | "transfer.cancelled";
+  | "transfer.cancelled"
+  | "supplier.document_filed"
+  | "supplier.document_removed"
+  | "supplier.portal_link_issued"
+  | "supplier.portal_link_revoked";
 
 export interface AuditEntry {
   action: AuditAction;

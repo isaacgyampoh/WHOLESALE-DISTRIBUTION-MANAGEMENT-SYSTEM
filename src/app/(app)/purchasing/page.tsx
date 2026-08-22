@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { requireUser } from "@/lib/auth/session";
 import { can } from "@/types/permissions";
 import { listPurchaseOrders, getPurchaseSummary, listSuppliers, PAGE_SIZE } from "@/features/warehouses/queries";
@@ -140,7 +141,11 @@ export default async function PurchasingPage({
                   {suppliers.data.map((s) => (
                     <Tr key={s.id}>
                       <Td>
-                        <span className="block font-medium">{s.name}</span>
+                        {/* The supplier's own page: their paperwork, and
+                            the portal links they hold. */}
+                        <Link href={`/suppliers/${s.id}`} className="block font-medium hover:underline">
+                          {s.name}
+                        </Link>
                         <span className="numeric text-xs text-[var(--text-muted)]">{s.code}</span>
                       </Td>
                       <Td className="text-[var(--text-secondary)]">
