@@ -26,9 +26,9 @@ requires anyone but you to have access to your Supabase account.
 3. **Run**.
 
 It is one transaction: it either installs completely or changes nothing.
-Expect it to take a few seconds. It creates 32 tables, 8 views, 40
-functions, the enums, indexes, constraints, triggers, row level security
-policies and the Data API grants.
+Expect it to take a few seconds. It creates 33 tables, 11 views, 44
+functions, 14 enums, 131 indexes, 226 constraints, 70 triggers, 71 row
+level security policies and the Data API grants.
 
 The file is generated from `supabase/migrations/` by
 `npm run db:build-installer` — never edit it by hand.
