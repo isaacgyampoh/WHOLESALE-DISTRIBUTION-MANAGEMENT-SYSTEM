@@ -550,6 +550,145 @@ select 'nobody writes their own',
                  and privilege_type in ('INSERT','DELETE'))
             then 'PASS' else 'FAIL' end;`,
   },
+  {
+    migration: "0029_supplier_documents.sql",
+    out: "UPGRADE_0029_SUPPLIER_DOCUMENTS.sql",
+    title: "UPGRADE 0029 - supplier paperwork",
+    summary: `-- WHAT IT ADDS
+--
+-- A delivery arrives with paperwork - an invoice, a delivery note, a
+-- certificate - and until now that went into a drawer. When a supplier
+-- disputes what was delivered six weeks later, the drawer is the only
+-- evidence, and the drawer is in one building.
+--
+--   supplier-documents   a PRIVATE Supabase Storage bucket, capped at
+--                        20 MB per file and restricted to document
+--                        types. Private is the point: a public bucket
+--                        hands every supplier invoice to anybody who
+--                        can guess a URL, and those carry purchase
+--                        prices.
+--   supplier_documents   the record. The row is the document; the file
+--                        is an attachment to it, so history survives a
+--                        missing object.
+--
+-- Files are reached by short-lived signed URL, minted server side for
+-- somebody already authorised. Row level security is applied to the
+-- STORAGE OBJECTS as well as to the rows describing them, because
+-- storage is reachable directly with an access token and a policy on
+-- the table alone would leave the files open to any signed-in driver.
+--
+-- AFTER RUNNING IT, redeploy. Check in the Supabase dashboard that the
+-- supplier-documents bucket shows as private.`,
+    verify: `select 'the bucket exists' as check,
+       case when exists (select 1 from storage.buckets where id = 'supplier-documents')
+            then 'PASS' else 'FAIL' end as result
+union all
+select 'and is private',
+       case when exists (select 1 from storage.buckets
+                          where id = 'supplier-documents' and public = false)
+            then 'PASS' else 'FAIL' end
+union all
+select 'with a size cap and a type list',
+       case when exists (select 1 from storage.buckets
+                          where id = 'supplier-documents'
+                            and file_size_limit is not null
+                            and allowed_mime_types is not null)
+            then 'PASS' else 'FAIL' end
+union all
+select 'supplier_documents table',
+       case when to_regclass('public.supplier_documents') is not null
+            then 'PASS' else 'FAIL' end
+union all
+select 'the files have policies of their own',
+       case when (select count(*) from pg_policies
+                   where schemaname = 'storage' and tablename = 'objects'
+                     and policyname like 'supplier_documents_objects%') = 3
+            then 'PASS' else 'FAIL' end
+union all
+select 'a driver cannot read supplier paperwork',
+       case when exists (select 1 from pg_policies
+                          where tablename = 'supplier_documents'
+                            and policyname = 'supplier_documents_read'
+                            and qual like '%has_role%')
+            then 'PASS' else 'FAIL' end;`,
+  },
+  {
+    migration: "0030_supplier_portal.sql",
+    out: "UPGRADE_0030_SUPPLIER_PORTAL.sql",
+    title: "UPGRADE 0030 - letting a supplier see their own orders",
+    summary: `-- WHAT IT ADDS
+--
+-- Suppliers ring up to ask what was ordered and what has been received.
+-- Every one of those calls is somebody in the office reading a screen
+-- aloud.
+--
+-- The obvious answer - give the supplier a login - is the wrong one.
+-- Accounts need provisioning, resetting and deprovisioning, and a
+-- supplier's staff turn over without telling us. So a link instead,
+-- which is a capability rather than an identity.
+--
+-- The link is treated as the credential it is:
+--
+--   held as a digest, never in full, so a leaked backup hands over no
+--   working links
+--   expires, between 1 and 365 days. A link with no end date is a
+--   permanent grant to whoever it was last forwarded to.
+--   revocable without waiting for expiry
+--   rate limited per address, with every attempt recorded
+--   scoped to one supplier: their own orders, their own lines, and
+--   nothing about any other supplier or any customer at all
+--
+-- Nothing here is granted to anon or to authenticated. The portal route
+-- resolves the link server side with the service role and then reads on
+-- the supplier's behalf, so the database's position that anonymous
+-- callers get nothing is unchanged.
+--
+-- AFTER RUNNING IT, redeploy. Links are issued from the supplier's page
+-- and shown once.`,
+    verify: `select 'supplier_portal_tokens table' as check,
+       case when to_regclass('public.supplier_portal_tokens') is not null
+            then 'PASS' else 'FAIL' end as result
+union all
+select 'links are held as a digest only',
+       case when exists (select 1 from information_schema.columns
+                          where table_name = 'supplier_portal_tokens'
+                            and column_name = 'token_hash')
+             and not exists (select 1 from information_schema.columns
+                              where table_name = 'supplier_portal_tokens'
+                                and column_name in ('token', 'secret', 'plaintext'))
+            then 'PASS' else 'FAIL' end
+union all
+select 'every link expires',
+       case when exists (select 1 from pg_constraint
+                          where conrelid = 'public.supplier_portal_tokens'::regclass
+                            and conname = 'supplier_portal_tokens_expiry_ahead')
+            then 'PASS' else 'FAIL' end
+union all
+select 'attempts are recorded for rate limiting',
+       case when to_regclass('public.supplier_portal_attempts') is not null
+            then 'PASS' else 'FAIL' end
+union all
+select 'and hold no link',
+       case when not exists (select 1 from information_schema.columns
+                              where table_name = 'supplier_portal_attempts'
+                                and column_name like '%hash%')
+            then 'PASS' else 'FAIL' end
+union all
+select 'redeeming is server-side only',
+       case when not exists (
+              select 1 from pg_proc p
+                join pg_namespace n on n.oid = p.pronamespace
+               where n.nspname = 'public' and p.proname = 'resolve_supplier_token'
+                 and (has_function_privilege('anon', p.oid, 'EXECUTE')
+                      or has_function_privilege('authenticated', p.oid, 'EXECUTE')))
+            then 'PASS' else 'FAIL' end
+union all
+select 'a supplier sees only their own orders',
+       case when exists (select 1 from pg_proc p
+                           join pg_namespace n on n.oid = p.pronamespace
+                          where n.nspname = 'public' and p.proname = 'supplier_portal_orders')
+            then 'PASS' else 'FAIL' end;`,
+  },
 ];
 
 /** Final enum members, in the order `alter type ... add value` yields. */

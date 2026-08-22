@@ -128,7 +128,8 @@ expected_enums (typname, members) as (
     ('sync_status',           'applied,failed,conflict'),
     ('sync_operation',        'van_sale,collection,van_return,reconciliation'),
     ('waybill_status',         'draft,issued,delivered,cancelled'),
-    ('notification_severity',  'info,warning,critical')
+    ('notification_severity',  'info,warning,critical'),
+    ('supplier_document_kind',  'invoice,delivery_note,waybill,credit_note,certificate,contract,other')
 ),
 actual_enums as (
   select t.typname::text as typname,
@@ -163,7 +164,8 @@ missing_tables as (
     'van_reconciliations','van_return_items','van_returns','van_sale_items',
     'van_sales','vans','warehouses','auth_pin_attempts','audit_log',
     'sync_operations','product_batches','van_sale_payments',
-    'waybills','waybill_items','notifications'
+    'waybills','waybill_items','notifications',
+    'supplier_documents','supplier_portal_tokens','supplier_portal_attempts'
   ]) as t
   where not exists (
     select 1 from information_schema.tables
@@ -178,7 +180,7 @@ missing_views as (
     'van_load_summary','van_stock_summary','products_priced',
     'batch_expiry_status','expiry_summary','load_takings',
     'invoice_detail','receipt_detail',
-    'stock_transfer_summary','stock_in_transit'
+    'stock_transfer_summary','stock_in_transit','supplier_document_detail'
   ]) as v
   where not exists (
     select 1 from information_schema.views
@@ -187,41 +189,41 @@ missing_views as (
 ),
 report as (
   select  1 as ord, 'Tables' as check_name,
-          '37'::text as expected, c.tables::text as actual,
-          case when c.tables = 37 then 'OK' else 'CHECK' end as status,
+          '40'::text as expected, c.tables::text as actual,
+          case when c.tables = 40 then 'OK' else 'CHECK' end as status,
           ''::text as detail
   from counts c
   union all select  2, 'Expected tables all present', 'none missing',
           case when m.names = '' then 'none missing' else 'MISSING' end,
           case when m.names = '' then 'OK' else 'FAIL' end, m.names
   from missing_tables m
-  union all select  3, 'Views', '16', c.views::text,
-          case when c.views = 16 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  3, 'Views', '17', c.views::text,
+          case when c.views = 17 then 'OK' else 'CHECK' end, '' from counts c
   union all select  4, 'Expected views all present', 'none missing',
           case when v.names = '' then 'none missing' else 'MISSING' end,
           case when v.names = '' then 'OK' else 'FAIL' end, v.names
   from missing_views v
-  union all select  5, 'Enum types', '16', c.enums::text,
-          case when c.enums = 16 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  6, 'Enum members and order', '16 matching', e.n::text,
-          case when e.n = 16 then 'OK' else 'FAIL' end,
+  union all select  5, 'Enum types', '17', c.enums::text,
+          case when c.enums = 17 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  6, 'Enum members and order', '17 matching', e.n::text,
+          case when e.n = 17 then 'OK' else 'FAIL' end,
           (select names from enum_bad)
   from enum_match e
-  union all select  7, 'Functions', '60', c.functions::text,
-          case when c.functions = 60 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  8, 'Triggers', '77', c.triggers::text,
-          case when c.triggers = 77 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  9, 'RLS policies', '78', c.policies::text,
-          case when c.policies = 78 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  7, 'Functions', '66', c.functions::text,
+          case when c.functions = 66 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  8, 'Triggers', '78', c.triggers::text,
+          case when c.triggers = 78 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  9, 'RLS policies', '81', c.policies::text,
+          case when c.policies = 81 then 'OK' else 'CHECK' end, '' from counts c
   union all select 10, 'RLS enabled on every table',
           c.all_tables::text, c.rls_tables::text,
           case when c.rls_tables = c.all_tables then 'OK' else 'FAIL' end, '' from counts c
   union all select 11, 'Generated columns', '13', c.generated_cols::text,
           case when c.generated_cols = 13 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 12, 'Indexes', '146', c.indexes::text,
-          case when c.indexes = 146 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 13, 'Constraints', '252', c.constraints::text,
-          case when c.constraints = 252 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 12, 'Indexes', '155', c.indexes::text,
+          case when c.indexes = 155 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 13, 'Constraints', '270', c.constraints::text,
+          case when c.constraints = 270 then 'OK' else 'CHECK' end, '' from counts c
   union all select 14, 'Security functions present', '8', s.n::text,
           case when s.n = 8 then 'OK' else 'FAIL' end, '' from security_fns s
   union all select 15, 'Business functions present', '7', b.n::text,
@@ -569,6 +571,64 @@ report as (
                and privilege_type in ('INSERT','DELETE'))
                then 'OK' else 'FAIL' end,
           'One a browser could insert reports something that did not happen'
+
+  -- ---- supplier paperwork and the portal (0029, 0030) --------------
+  union all select 57, 'Suppliers: the document bucket is private', 'private',
+          case when exists (select 1 from storage.buckets
+                             where id = 'supplier-documents' and public = false)
+               then 'private' else 'PUBLIC OR MISSING' end,
+          case when exists (select 1 from storage.buckets
+                             where id = 'supplier-documents' and public = false)
+               then 'OK' else 'FAIL' end,
+          'A public bucket hands every purchase price to anybody who guesses a URL'
+  union all select 58, 'Suppliers: the files have policies of their own', '3 policies',
+          (select count(*)::text from pg_policies
+            where schemaname = 'storage' and tablename = 'objects'
+              and policyname like 'supplier_documents_objects%'),
+          case when (select count(*) from pg_policies
+                      where schemaname = 'storage' and tablename = 'objects'
+                        and policyname like 'supplier_documents_objects%') = 3
+               then 'OK' else 'FAIL' end,
+          'Storage is reachable directly; a policy on the rows alone is not enough'
+  union all select 59, 'Portal: links are held as a digest only', 'digest only',
+          case when exists (select 1 from information_schema.columns
+                             where table_name = 'supplier_portal_tokens'
+                               and column_name = 'token_hash')
+                and not exists (select 1 from information_schema.columns
+                                 where table_name = 'supplier_portal_tokens'
+                                   and column_name in ('token','secret','plaintext'))
+               then 'digest only' else 'PLAINTEXT' end,
+          case when exists (select 1 from information_schema.columns
+                             where table_name = 'supplier_portal_tokens'
+                               and column_name = 'token_hash')
+                and not exists (select 1 from information_schema.columns
+                                 where table_name = 'supplier_portal_tokens'
+                                   and column_name in ('token','secret','plaintext'))
+               then 'OK' else 'FAIL' end,
+          'A leaked backup must hand over no working links'
+  union all select 60, 'Portal: every link expires', 'enforced',
+          case when exists (select 1 from pg_constraint
+                             where conrelid = 'public.supplier_portal_tokens'::regclass
+                               and conname = 'supplier_portal_tokens_expiry_ahead')
+               then 'enforced' else 'MISSING' end,
+          case when exists (select 1 from pg_constraint
+                             where conrelid = 'public.supplier_portal_tokens'::regclass
+                               and conname = 'supplier_portal_tokens_expiry_ahead')
+               then 'OK' else 'FAIL' end,
+          'One with no end date is a permanent grant to whoever it was forwarded to'
+  union all select 61, 'Portal: redeeming is server-side only', 'service role only',
+          case when not exists (
+            select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+             where n.nspname = 'public' and p.proname = 'resolve_supplier_token'
+               and (has_function_privilege('anon', p.oid, 'EXECUTE')
+                    or has_function_privilege('authenticated', p.oid, 'EXECUTE')))
+               then 'service role only' else 'EXPOSED' end,
+          case when not exists (
+            select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+             where n.nspname = 'public' and p.proname = 'resolve_supplier_token'
+               and (has_function_privilege('anon', p.oid, 'EXECUTE')
+                    or has_function_privilege('authenticated', p.oid, 'EXECUTE')))
+               then 'OK' else 'FAIL' end, ''
 )
 select ord as "#", check_name as "check", expected, actual, status, detail
 from report

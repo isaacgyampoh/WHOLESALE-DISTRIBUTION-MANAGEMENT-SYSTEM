@@ -7855,3 +7855,641 @@ comment on function public.mark_notifications_read is
 
 revoke all on function public.mark_notifications_read(uuid[]) from public, anon;
 grant execute on function public.mark_notifications_read(uuid[]) to authenticated, service_role;
+
+
+-- ====================================================================
+-- 0029_supplier_documents.sql
+-- ====================================================================
+-- ===================================================================
+-- 0029  Supplier documents
+-- ===================================================================
+--
+-- A delivery arrives with paperwork - an invoice, a waybill, a
+-- certificate of analysis - and until now that paperwork went into a
+-- drawer. When a supplier disputes what was delivered six weeks later,
+-- the drawer is the only evidence, and the drawer is in one building.
+--
+-- Files go into a PRIVATE Supabase Storage bucket. Private is the whole
+-- point: a public bucket hands every supplier invoice the business has
+-- ever received to anybody who can guess a URL, and those documents
+-- carry purchase prices. Access is by short-lived signed URL, minted
+-- server side for somebody who has already been authorised.
+--
+-- The row in this table is the record; the file is an attachment to it.
+-- That way a document is still accounted for if the object is ever
+-- missing, rather than silently disappearing from the history.
+
+-- ------------------------------------------------------------------
+-- The bucket
+-- ------------------------------------------------------------------
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'supplier-documents', 'supplier-documents', false,
+  -- 20 MB. A scanned invoice is under two; anything at twenty is a
+  -- photograph nobody compressed, and beyond that it is not paperwork.
+  20971520,
+  array[
+    'application/pdf',
+    'image/jpeg', 'image/png', 'image/webp', 'image/heic',
+    'text/csv',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-excel'
+  ]
+)
+on conflict (id) do update
+  set public = false,
+      file_size_limit = excluded.file_size_limit,
+      allowed_mime_types = excluded.allowed_mime_types;do $enum$
+declare
+  found text[];
+  wanted text[] := array['invoice', 'delivery_note', 'waybill', 'credit_note', 'certificate', 'contract', 'other'];
+begin
+  if not exists (
+    select 1 from pg_type t
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'supplier_document_kind'
+  ) then
+    create type public.supplier_document_kind as enum ('invoice', 'delivery_note', 'waybill', 'credit_note', 'certificate', 'contract', 'other');
+  else
+    select array_agg(e.enumlabel order by e.enumsortorder) into found
+      from pg_enum e
+      join pg_type t on t.oid = e.enumtypid
+      join pg_namespace n on n.oid = t.typnamespace
+     where n.nspname = 'public' and t.typname = 'supplier_document_kind';
+
+    -- Already correct: nothing to do, and the script carries on.
+    if found is distinct from wanted then
+      raise exception
+        'public.supplier_document_kind already exists with different values. Found %, expected %. '
+        'Reconcile it before running this script; this script will not alter an '
+        'enum other code may already depend on.',
+        found, wanted;
+    end if;
+  end if;
+end $enum$;
+
+
+create table if not exists public.supplier_documents (
+  id            uuid primary key default gen_random_uuid(),
+  org_id        uuid not null references public.organizations(id) on delete cascade,
+  supplier_id   uuid not null references public.suppliers(id) on delete restrict,
+  purchase_order_id uuid references public.purchase_orders(id) on delete set null,
+
+  kind          public.supplier_document_kind not null default 'other',
+  title         text not null,
+  reference     text,
+  document_date date,
+  -- What the supplier is charging, when the document says. Kept beside
+  -- the file so a total can be reconciled without opening it.
+  amount        numeric(14,2),
+
+  -- Where the file is, inside the private bucket. The path is
+  -- {org_id}/{supplier_id}/{uuid}, so an object cannot be reached from
+  -- one organization's folder by guessing another's.
+  storage_path  text not null,
+  file_name     text not null,
+  mime_type     text not null,
+  size_bytes    bigint not null,
+
+  notes         text,
+  uploaded_by   uuid references public.profiles(id) on delete set null,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now(),
+
+  constraint supplier_documents_title_not_blank check (length(trim(title)) > 0),
+  constraint supplier_documents_size_sane check (size_bytes > 0 and size_bytes <= 20971520),
+  -- Belt and braces with the bucket's own list: a row is refused even if
+  -- somebody reconfigures the bucket later.
+  constraint supplier_documents_type_allowed check (
+    mime_type in (
+      'application/pdf',
+      'image/jpeg', 'image/png', 'image/webp', 'image/heic',
+      'text/csv',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel'
+    )
+  ),
+  -- One row per stored object. A second row pointing at the same file
+  -- would make deleting either of them destroy the other's evidence.
+  constraint supplier_documents_path_unique unique (storage_path)
+);
+
+comment on table public.supplier_documents is
+  'Paperwork that arrived with a delivery. The row is the record; the '
+  'file in the private bucket is an attachment to it.';
+
+create index if not exists supplier_documents_supplier
+  on public.supplier_documents (org_id, supplier_id, document_date desc);
+create index if not exists supplier_documents_order
+  on public.supplier_documents (purchase_order_id)
+  where purchase_order_id is not null;
+
+drop trigger if exists supplier_documents_touch on public.supplier_documents;drop trigger if exists supplier_documents_touch on public.supplier_documents;
+create trigger supplier_documents_touch
+  before update on public.supplier_documents
+  for each row execute function public.set_updated_at();
+
+
+alter table public.supplier_documents enable row level security;
+
+-- Supplier paperwork carries purchase prices, which 0023 established is
+-- management information. The same roles, for the same reason.
+drop policy if exists supplier_documents_read on public.supplier_documents;drop policy if exists supplier_documents_read on public.supplier_documents;
+create policy supplier_documents_read on public.supplier_documents
+  for select using (
+    org_id = public.auth_org_id()
+    and public.has_role('admin', 'senior_manager', 'manager', 'accountant', 'warehouse')
+  );
+
+
+drop policy if exists supplier_documents_write on public.supplier_documents;drop policy if exists supplier_documents_write on public.supplier_documents;
+create policy supplier_documents_write on public.supplier_documents
+  for all using (
+    org_id = public.auth_org_id()
+    and public.has_role('admin', 'senior_manager', 'manager', 'accountant', 'warehouse')
+  ) with check (
+    org_id = public.auth_org_id()
+    and public.has_role('admin', 'senior_manager', 'manager', 'accountant', 'warehouse')
+  );
+
+
+revoke all on public.supplier_documents from anon, authenticated;
+grant select, insert, update, delete on public.supplier_documents to authenticated;
+grant all on public.supplier_documents to service_role;
+
+-- ------------------------------------------------------------------
+-- The objects themselves
+-- ------------------------------------------------------------------
+--
+-- Row level security on the bucket's objects, not only on the rows that
+-- describe them. Storage is reachable directly with an access token, so
+-- a policy only on supplier_documents would leave the files themselves
+-- open to any signed-in driver.
+--
+-- The first path segment is the organization. A caller may only touch
+-- objects under their own.
+drop policy if exists supplier_documents_objects_read on storage.objects;drop policy if exists supplier_documents_objects_read on storage.objects;
+create policy supplier_documents_objects_read on storage.objects
+  for select to authenticated using (
+    bucket_id = 'supplier-documents'
+    and (storage.foldername(name))[1] = public.auth_org_id()::text
+    and public.has_role('admin', 'senior_manager', 'manager', 'accountant', 'warehouse')
+  );
+
+
+drop policy if exists supplier_documents_objects_write on storage.objects;drop policy if exists supplier_documents_objects_write on storage.objects;
+create policy supplier_documents_objects_write on storage.objects
+  for insert to authenticated with check (
+    bucket_id = 'supplier-documents'
+    and (storage.foldername(name))[1] = public.auth_org_id()::text
+    and public.has_role('admin', 'senior_manager', 'manager', 'accountant', 'warehouse')
+  );
+
+
+-- Deleting evidence is a narrower job than filing it. A storeman
+-- uploads; removing a document that a dispute may later turn on is for
+-- somebody accountable for that decision.
+drop policy if exists supplier_documents_objects_delete on storage.objects;drop policy if exists supplier_documents_objects_delete on storage.objects;
+create policy supplier_documents_objects_delete on storage.objects
+  for delete to authenticated using (
+    bucket_id = 'supplier-documents'
+    and (storage.foldername(name))[1] = public.auth_org_id()::text
+    and public.has_role('admin', 'senior_manager', 'manager')
+  );
+
+
+-- ------------------------------------------------------------------
+-- What the office reads
+-- ------------------------------------------------------------------
+create or replace view public.supplier_document_detail
+with (security_invoker = on) as
+  select
+    d.id,
+    d.org_id,
+    d.supplier_id,
+    s.code  as supplier_code,
+    s.name  as supplier_name,
+    d.purchase_order_id,
+    po.po_number,
+    d.kind,
+    d.title,
+    d.reference,
+    d.document_date,
+    d.amount,
+    d.storage_path,
+    d.file_name,
+    d.mime_type,
+    d.size_bytes,
+    d.notes,
+    p.full_name as uploaded_by_name,
+    d.created_at
+  from public.supplier_documents d
+  join public.suppliers s on s.id = d.supplier_id
+  left join public.purchase_orders po on po.id = d.purchase_order_id
+  left join public.profiles p on p.id = d.uploaded_by;
+
+comment on view public.supplier_document_detail is
+  'Supplier paperwork with the supplier and order it belongs to.';
+
+
+-- ====================================================================
+-- 0030_supplier_portal.sql
+-- ====================================================================
+-- ===================================================================
+-- 0030  Letting a supplier see their own orders
+-- ===================================================================
+--
+-- Suppliers ring up to ask what was ordered, what has been received and
+-- what is still outstanding. Every one of those calls is a person in the
+-- office reading a screen aloud.
+--
+-- The obvious answer - give the supplier a login - is the wrong one.
+-- Accounts need provisioning, resetting and deprovisioning, and a
+-- supplier's staff turn over without anybody telling us. So: a link,
+-- which is a capability rather than an identity.
+--
+-- A link is a credential, and this one is treated like one:
+--
+--   it is stored as a digest, never in full. A leaked database backup
+--   does not hand over working links, exactly as it does not hand over
+--   PINs.
+--   it expires. A link with no end date is a permanent grant to whoever
+--   the supplier last forwarded it to.
+--   it can be revoked without waiting for expiry.
+--   guessing at it is rate limited, and every attempt is recorded.
+--   it is scoped to one supplier, so it discloses nothing about any
+--   other supplier and nothing about customers at all.
+--
+-- Nothing here is granted to anon. The portal route resolves the link
+-- server side and then reads on the supplier's behalf, so the database's
+-- position that anonymous callers get nothing is unchanged.
+
+create table if not exists public.supplier_portal_tokens (
+  id           uuid primary key default gen_random_uuid(),
+  org_id       uuid not null references public.organizations(id) on delete cascade,
+  supplier_id  uuid not null references public.suppliers(id) on delete cascade,
+
+  -- The digest only. There is deliberately no way to recover the link
+  -- from this table; if it is lost, a new one is issued.
+  token_hash   text not null unique,
+  -- Enough to tell two links apart in a list without holding the link.
+  token_hint   text not null,
+  label        text,
+
+  expires_at   timestamptz not null,
+  revoked_at   timestamptz,
+  revoked_by   uuid references public.profiles(id) on delete set null,
+
+  last_used_at timestamptz,
+  use_count    integer not null default 0,
+
+  created_by   uuid references public.profiles(id) on delete set null,
+  created_at   timestamptz not null default now(),
+
+  constraint supplier_portal_tokens_expiry_ahead check (expires_at > created_at)
+);
+
+comment on table public.supplier_portal_tokens is
+  'Links handed to suppliers. Held as a digest, so this table cannot be '
+  'read to obtain a working link.';
+
+create index if not exists supplier_portal_tokens_supplier
+  on public.supplier_portal_tokens (org_id, supplier_id, created_at desc);
+
+alter table public.supplier_portal_tokens enable row level security;
+
+-- The office can see which links exist, when they expire and whether
+-- they have been used. Never the link itself, which is not here to see.
+drop policy if exists supplier_portal_tokens_read on public.supplier_portal_tokens;drop policy if exists supplier_portal_tokens_read on public.supplier_portal_tokens;
+create policy supplier_portal_tokens_read on public.supplier_portal_tokens
+  for select using (
+    org_id = public.auth_org_id()
+    and public.has_role('admin', 'senior_manager', 'manager')
+  );
+
+
+-- Issuing and revoking go through their own functions, which is where
+-- the digest is computed and the expiry enforced. A row written by hand
+-- could carry no expiry at all.
+revoke all on public.supplier_portal_tokens from anon, authenticated;
+grant select on public.supplier_portal_tokens to authenticated;
+grant all on public.supplier_portal_tokens to service_role;
+
+-- ------------------------------------------------------------------
+-- Attempts
+-- ------------------------------------------------------------------
+create table if not exists public.supplier_portal_attempts (
+  id           uuid primary key default gen_random_uuid(),
+  request_ip   inet,
+  user_agent   text,
+  succeeded    boolean not null default false,
+  -- Only on success. A failed attempt matched nothing by definition, and
+  -- recording a guess against a supplier would be recording a guess.
+  token_id     uuid references public.supplier_portal_tokens(id) on delete set null,
+  attempted_at timestamptz not null default now()
+);
+
+comment on table public.supplier_portal_attempts is
+  'Portal link attempts, for rate limiting. Holds no link and no digest.';
+
+create index if not exists supplier_portal_attempts_by_ip
+  on public.supplier_portal_attempts (request_ip, attempted_at desc)
+  where request_ip is not null;
+
+alter table public.supplier_portal_attempts enable row level security;
+revoke all on public.supplier_portal_attempts from anon, authenticated;
+grant all on public.supplier_portal_attempts to service_role;
+-- No policy, so nothing but the service role reads it. Deliberate: this
+-- is server-side machinery, and 0015 grants new tables to authenticated
+-- by default.
+
+-- ------------------------------------------------------------------
+-- Issuing one
+-- ------------------------------------------------------------------
+--
+-- Takes the digest rather than the link. The link is generated by the
+-- application, shown once, and never travels to the database in full -
+-- so it cannot appear in a query log, a statement sample, or a plan.
+create or replace function public.issue_supplier_token(
+  p_supplier_id uuid,
+  p_token_hash  text,
+  p_token_hint  text,
+  p_days        integer default 30,
+  p_label       text default null
+)
+returns public.supplier_portal_tokens
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  supplier public.suppliers;
+  issued   public.supplier_portal_tokens;
+begin
+  perform public.require_role('admin', 'senior_manager', 'manager');
+
+  select * into supplier from public.suppliers where id = p_supplier_id;
+  if not found then
+    raise exception 'Supplier % not found', p_supplier_id;
+  end if;
+
+  if auth.uid() is not null and supplier.org_id is distinct from public.auth_org_id() then
+    raise exception 'Supplier % not found', p_supplier_id using errcode = '42501';
+  end if;
+
+  if p_token_hash is null or length(p_token_hash) < 32 then
+    raise exception 'A portal link must be issued with a full digest';
+  end if;
+
+  -- A link that never expires is a permanent grant to whoever the
+  -- supplier last forwarded it to.
+  if p_days is null or p_days < 1 or p_days > 365 then
+    raise exception 'A portal link lasts between 1 and 365 days';
+  end if;
+
+  insert into public.supplier_portal_tokens (
+    org_id, supplier_id, token_hash, token_hint, label, expires_at, created_by
+  ) values (
+    supplier.org_id, p_supplier_id, p_token_hash, p_token_hint, nullif(trim(p_label), ''),
+    now() + make_interval(days => p_days), auth.uid()
+  )
+  returning * into issued;
+
+  return issued;
+end;
+$$;
+
+revoke all on function public.issue_supplier_token(uuid, text, text, integer, text)
+  from public, anon;
+grant execute on function public.issue_supplier_token(uuid, text, text, integer, text)
+  to authenticated, service_role;
+
+create or replace function public.revoke_supplier_token(p_token_id uuid)
+returns public.supplier_portal_tokens
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  token public.supplier_portal_tokens;
+begin
+  perform public.require_role('admin', 'senior_manager', 'manager');
+
+  select * into token from public.supplier_portal_tokens where id = p_token_id;
+  if not found then
+    raise exception 'Portal link % not found', p_token_id;
+  end if;
+
+  if auth.uid() is not null and token.org_id is distinct from public.auth_org_id() then
+    raise exception 'Portal link % not found', p_token_id using errcode = '42501';
+  end if;
+
+  update public.supplier_portal_tokens
+     set revoked_at = coalesce(revoked_at, now()), revoked_by = auth.uid()
+   where id = p_token_id
+  returning * into token;
+
+  return token;
+end;
+$$;
+
+revoke all on function public.revoke_supplier_token(uuid) from public, anon;
+grant execute on function public.revoke_supplier_token(uuid) to authenticated, service_role;
+
+-- ------------------------------------------------------------------
+-- Redeeming one
+-- ------------------------------------------------------------------
+--
+-- Returns the supplier a link is for, or null. Null covers every kind of
+-- failure - unknown, expired, revoked, rate limited - because telling
+-- the holder of a bad link which of those it was tells them how to make
+-- a better guess.
+create or replace function public.resolve_supplier_token(
+  p_token_hash text,
+  p_ip         inet default null,
+  p_user_agent text default null
+)
+returns table (supplier_id uuid, org_id uuid, expires_at timestamptz)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  token   public.supplier_portal_tokens;
+  recent  integer;
+begin
+  -- Guessing is cheap without this: the digest space is large, but an
+  -- unthrottled endpoint is still an endpoint somebody will point a
+  -- script at, and every attempt would otherwise cost nothing.
+  if p_ip is not null then
+    select count(*) into recent
+      from public.supplier_portal_attempts
+     where request_ip = p_ip
+       and not succeeded
+       and attempted_at > now() - interval '15 minutes';
+
+    if recent >= 10 then
+      insert into public.supplier_portal_attempts (request_ip, user_agent, succeeded)
+      values (p_ip, p_user_agent, false);
+      return;
+    end if;
+  end if;
+
+  select * into token
+    from public.supplier_portal_tokens t
+   where t.token_hash = p_token_hash
+     and t.revoked_at is null
+     and t.expires_at > now();
+
+  if not found then
+    insert into public.supplier_portal_attempts (request_ip, user_agent, succeeded)
+    values (p_ip, p_user_agent, false);
+    return;
+  end if;
+
+  update public.supplier_portal_tokens
+     set last_used_at = now(), use_count = use_count + 1
+   where id = token.id;
+
+  insert into public.supplier_portal_attempts (request_ip, user_agent, succeeded, token_id)
+  values (p_ip, p_user_agent, true, token.id);
+
+  return query select token.supplier_id, token.org_id, token.expires_at;
+end;
+$$;
+
+comment on function public.resolve_supplier_token is
+  'Exchange a link digest for the supplier it belongs to. Returns '
+  'nothing for a link that is unknown, expired, revoked or rate '
+  'limited - the holder is not told which.';
+
+-- Only the server may redeem. The portal route resolves the link with
+-- the service role and then reads on the supplier''s behalf, so nothing
+-- here is exposed to a browser.
+revoke all on function public.resolve_supplier_token(text, inet, text)
+  from public, anon, authenticated;
+grant execute on function public.resolve_supplier_token(text, inet, text) to service_role;
+
+-- ------------------------------------------------------------------
+-- What a supplier may see
+-- ------------------------------------------------------------------
+--
+-- Their own orders and nothing else. No customer, no selling price, no
+-- other supplier's line. These are read by the server with the service
+-- role and always filtered to the resolved supplier, so the filter is
+-- applied twice: here by construction, and again by the caller.
+create or replace function public.supplier_portal_orders(
+  p_supplier_id uuid,
+  p_org_id      uuid
+)
+returns table (
+  id uuid,
+  po_number text,
+  status public.po_status,
+  order_date date,
+  expected_date date,
+  total numeric,
+  lines bigint,
+  qty_ordered bigint,
+  qty_received bigint
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    po.id,
+    po.po_number,
+    po.status,
+    po.order_date,
+    po.expected_date,
+    po.total,
+    count(i.id)                        as lines,
+    coalesce(sum(i.quantity), 0)       as qty_ordered,
+    coalesce(sum(i.qty_received), 0)   as qty_received
+  from public.purchase_orders po
+  left join public.purchase_order_items i on i.po_id = po.id
+  where po.supplier_id = p_supplier_id
+    and po.org_id = p_org_id
+    and po.status <> 'draft'
+  group by po.id, po.po_number, po.status, po.order_date, po.expected_date, po.total
+  order by po.order_date desc
+  limit 100;
+$$;
+
+comment on function public.supplier_portal_orders is
+  'A supplier''s own orders. Drafts are excluded: an order the business '
+  'has not sent is not something the supplier should learn about.';
+
+revoke all on function public.supplier_portal_orders(uuid, uuid)
+  from public, anon, authenticated;
+grant execute on function public.supplier_portal_orders(uuid, uuid) to service_role;
+
+create or replace function public.supplier_portal_order_lines(
+  p_order_id    uuid,
+  p_supplier_id uuid,
+  p_org_id      uuid
+)
+returns table (
+  product_name text,
+  sku text,
+  quantity integer,
+  qty_received integer,
+  unit_cost numeric,
+  line_total numeric
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    p.name,
+    p.sku,
+    i.quantity,
+    i.qty_received,
+    i.unit_cost,
+    i.line_total
+  from public.purchase_order_items i
+  join public.purchase_orders po on po.id = i.po_id
+  join public.products p on p.id = i.product_id
+  where i.po_id = p_order_id
+    and po.supplier_id = p_supplier_id
+    and po.org_id = p_org_id
+    and po.status <> 'draft';
+$$;
+
+comment on function public.supplier_portal_order_lines is
+  'The lines of one of the supplier''s own orders. unit_cost here is '
+  'what this supplier is charging us, which is their own price and not '
+  'a disclosure.';
+
+revoke all on function public.supplier_portal_order_lines(uuid, uuid, uuid)
+  from public, anon, authenticated;
+grant execute on function public.supplier_portal_order_lines(uuid, uuid, uuid) to service_role;
+
+-- ------------------------------------------------------------------
+-- Housekeeping
+-- ------------------------------------------------------------------
+create or replace function public.purge_supplier_portal_attempts(
+  older_than interval default '30 days'
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  removed integer;
+begin
+  delete from public.supplier_portal_attempts
+   where attempted_at < now() - older_than;
+  get diagnostics removed = row_count;
+  return removed;
+end;
+$$;
+
+revoke all on function public.purge_supplier_portal_attempts(interval)
+  from public, anon, authenticated;
+grant execute on function public.purge_supplier_portal_attempts(interval) to service_role;

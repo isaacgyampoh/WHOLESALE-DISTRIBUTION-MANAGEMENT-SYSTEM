@@ -31,6 +31,8 @@ const UPGRADE_PAY = path.join("..", "..", "database", "UPGRADE_0025_PAYMENT_METH
 const UPGRADE_DOCS = path.join("..", "..", "database", "UPGRADE_0026_DOCUMENTS.sql");
 const UPGRADE_TRF = path.join("..", "..", "database", "UPGRADE_0027_TRANSFERS.sql");
 const UPGRADE_NTF = path.join("..", "..", "database", "UPGRADE_0028_NOTIFICATIONS.sql");
+const UPGRADE_DOCS_SUP = path.join("..", "..", "database", "UPGRADE_0029_SUPPLIER_DOCUMENTS.sql");
+const UPGRADE_PORTAL = path.join("..", "..", "database", "UPGRADE_0030_SUPPLIER_PORTAL.sql");
 
 let pass = 0, fail = 0;
 const ok = (n, c, x = "") => { c ? (pass++, console.log(`  PASS  ${n} ${x}`)) : (fail++, console.log(`  FAIL  ${n} ${x}`)); };
@@ -47,7 +49,7 @@ for (const s of splitStatements(shim)) await c.query(s);
 
 // Everything up to but NOT including 0022.
 const files = fs.readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort()
-  .filter((f) => !["0022", "0023", "0024", "0025", "0026", "0027", "0028"]
+  .filter((f) => !["0022", "0023", "0024", "0025", "0026", "0027", "0028", "0029", "0030"]
     .some((n) => f.startsWith(n)));
 for (const f of files) {
   const sql = fs.readFileSync(path.join(MIGRATIONS, f), "utf8");
@@ -329,6 +331,45 @@ for (const [what, sql] of [
   // cannot be checked by looking at the schema.
   ["refreshing conditions works on live data", `select refresh_standing_alerts(
       (select id from public.organizations limit 1)) >= 0 v`],
+]) {
+  const r = await c.query(sql);
+  ok(what, r.rows[0].v === true);
+}
+
+// ---- 0029 and 0030, on top of 0028 --------------------------------
+console.log("\n=== UPGRADE_0029 and UPGRADE_0030, then again ===");
+for (const [name, file] of [["0029", UPGRADE_DOCS_SUP], ["0030", UPGRADE_PORTAL]]) {
+  const sql = fs.readFileSync(file, "utf8");
+  for (const attempt of ["runs in order", "runs a second time"]) {
+    try {
+      await c.query(sql);
+      ok(`UPGRADE_${name} ${attempt}`, true);
+    } catch (e) {
+      ok(`UPGRADE_${name} ${attempt}`, false, `-> ${e.message}`);
+    }
+  }
+}
+
+for (const [what, sql] of [
+  ["the document bucket is private", `select exists (select 1 from storage.buckets
+      where id='supplier-documents' and public=false) v`],
+  ["supplier_documents exists", `select to_regclass('public.supplier_documents') is not null v`],
+  ["the files have policies of their own", `select (select count(*) from pg_policies
+      where schemaname='storage' and tablename='objects'
+        and policyname like 'supplier_documents_objects%') = 3 v`],
+  ["portal links are a digest only", `select exists (select 1 from information_schema.columns
+      where table_name='supplier_portal_tokens' and column_name='token_hash')
+    and not exists (select 1 from information_schema.columns
+      where table_name='supplier_portal_tokens'
+        and column_name in ('token','secret','plaintext')) v`],
+  ["every link expires", `select exists (select 1 from pg_constraint
+      where conrelid='public.supplier_portal_tokens'::regclass
+        and conname='supplier_portal_tokens_expiry_ahead') v`],
+  ["redeeming is server-side only", `select not exists (
+      select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+       where n.nspname='public' and p.proname='resolve_supplier_token'
+         and (has_function_privilege('anon', p.oid, 'EXECUTE')
+              or has_function_privilege('authenticated', p.oid, 'EXECUTE'))) v`],
 ]) {
   const r = await c.query(sql);
   ok(what, r.rows[0].v === true);
