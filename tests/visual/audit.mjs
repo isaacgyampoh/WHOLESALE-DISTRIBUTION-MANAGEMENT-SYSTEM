@@ -63,6 +63,31 @@ async function cookiesFor(email) {
     .map((x) => ({ name: x.name, value: x.value, domain: "localhost", path: "/" }));
 }
 
+/**
+ * Navigate, tolerating a slow hosted response.
+ *
+ * This suite makes several hundred requests against a shared Supabase
+ * project. One of them occasionally takes longer than the timeout, and
+ * abandoning the whole run for it means no visual QA at all. Retried
+ * once, then reported rather than thrown: a screen that genuinely will
+ * not load shows up as a finding, which is what it is.
+ */
+async function visit(page, url) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await page.goto(url, { waitUntil: "domcontentloaded" });
+      return true;
+    } catch (error) {
+      if (attempt === 1) {
+        findings.push(`  ${url.replace(BASE, "")}\n     - did not load: ${error.message.split("\n")[0]}`);
+        return false;
+      }
+      await page.waitForTimeout(3000);
+    }
+  }
+  return false;
+}
+
 /** Everything the eye would have to hunt for, measured instead. */
 async function diagnose(page, label, vp) {
   const problems = await page.evaluate((vp) => {
@@ -95,6 +120,11 @@ async function diagnose(page, label, vp) {
       // Screen-reader-only text is clipped on purpose: that is how it is
       // hidden from sight while staying available to assistive tech.
       .filter((el) => !el.closest(".sr-only") && !el.classList.contains("sr-only"))
+      // So is a truncated line. `text-overflow: ellipsis` works by
+      // overflowing and marking it with a "...", which is exactly the
+      // shape this check looks for - a long customer name ending in an
+      // ellipsis is the design working, not a layout fault.
+      .filter((el) => getComputedStyle(el).textOverflow !== "ellipsis")
       .filter((el) => el.scrollWidth > el.clientWidth + 2 && el.clientWidth > 0)
       .slice(0, 4).map((el) => `${el.tagName.toLowerCase()}"${(el.textContent || "").trim().slice(0, 18)}"`);
     if (clipped.length) out.push(`clipped: ${clipped.join("; ")}`);
@@ -134,7 +164,7 @@ const findings = [];
 const browser = await chromium.launch();
 // Some pages query the hosted project several times; the default 30s can
 // be tight when a query is failing and retrying upstream.
-const NAV_TIMEOUT = 60_000;
+const NAV_TIMEOUT = 90_000;
 
 async function shot(page, name, vp) {
   await page.waitForLoadState("load");
@@ -154,7 +184,7 @@ try {
     const anon = await browser.newContext(opts);
     const p = await anon.newPage();
     p.setDefaultNavigationTimeout(NAV_TIMEOUT);
-    await p.goto(`${BASE}/sign-in`, { waitUntil: "domcontentloaded" });
+    await visit(p, `${BASE}/sign-in`);
     await shot(p, "signin", vp); findings.push(await diagnose(p, "sign-in", vp));
 
     // Rejected PIN: type four digits and let the form submit itself.
@@ -167,7 +197,7 @@ try {
       findings.push(await diagnose(p, "sign-in rejected", vp));
     }
 
-    await p.goto(`${BASE}/nope`, { waitUntil: "domcontentloaded" });
+    await visit(p, `${BASE}/nope`);
     await shot(p, "notfound", vp); findings.push(await diagnose(p, "not-found", vp));
     await anon.close();
 
@@ -176,11 +206,11 @@ try {
       await c.addCookies(ck[who]);
       const pg = await c.newPage();
       pg.setDefaultNavigationTimeout(NAV_TIMEOUT);
-      await pg.goto(`${BASE}/`, { waitUntil: "domcontentloaded" });
+      await visit(pg, `${BASE}/`);
       await shot(pg, label, vp); findings.push(await diagnose(pg, label, vp));
 
       if (who === "admin") {
-        await pg.goto(`${BASE}/users`, { waitUntil: "domcontentloaded" });
+        await visit(pg, `${BASE}/users`);
         await shot(pg, "staff", vp); findings.push(await diagnose(pg, "staff", vp));
 
         const create = pg.locator('button:has-text("Create staff")').first();
@@ -204,14 +234,14 @@ try {
         if (await first.count()) {
           const href = await first.getAttribute("href");
           if (href && href !== "/users") {
-            await pg.goto(`${BASE}${href}`, { waitUntil: "domcontentloaded" });
+            await visit(pg, `${BASE}${href}`);
             await shot(pg, "staff-detail", vp);
             findings.push(await diagnose(pg, "staff detail", vp));
           }
         }
 
         // Phase 6 screens.
-        await pg.goto(`${BASE}/products`, { waitUntil: "domcontentloaded" });
+        await visit(pg, `${BASE}/products`);
         await shot(pg, "products", vp); findings.push(await diagnose(pg, "products", vp));
 
         const addProduct = pg.locator('button:has-text("Add product")').first();
@@ -226,7 +256,7 @@ try {
         if (await firstProduct.count()) {
           const href = await firstProduct.getAttribute("href");
           if (href && href !== "/products") {
-            await pg.goto(`${BASE}${href}`, { waitUntil: "domcontentloaded" });
+            await visit(pg, `${BASE}${href}`);
             await shot(pg, "product-detail", vp);
             findings.push(await diagnose(pg, "product detail", vp));
 
@@ -242,7 +272,7 @@ try {
 
         // The collection dialog is the one form on these screens, so it
         // gets the same treatment as the product and stock dialogs.
-        await pg.goto(`${BASE}/payments`, { waitUntil: "domcontentloaded" });
+        await visit(pg, `${BASE}/payments`);
         const collect = pg.locator('button:has-text("Record collection")').first();
         if (await collect.count() && await collect.isVisible()) {
           await collect.click(); await pg.waitForTimeout(400);
@@ -255,7 +285,7 @@ try {
         if (await firstCustomer.count()) {
           const href = await firstCustomer.getAttribute("href");
           if (href && href !== "/customers") {
-            await pg.goto(`${BASE}${href}`, { waitUntil: "domcontentloaded" });
+            await visit(pg, `${BASE}${href}`);
             await shot(pg, "customer-detail", vp);
             findings.push(await diagnose(pg, "customer detail", vp));
           }
@@ -280,13 +310,13 @@ try {
           ["/settings", "settings"],
           ["/permissions", "permissions"], ["/audit", "audit"], ["/account", "account"],
         ]) {
-          await pg.goto(`${BASE}${path}`, { waitUntil: "domcontentloaded" });
+          await visit(pg, `${BASE}${path}`);
           await shot(pg, name, vp); findings.push(await diagnose(pg, name, vp));
         }
       }
       if (who === "driver") {
         for (const [path, name] of [["/users", "forbidden"], ["/audit", "forbidden-audit"]]) {
-          await pg.goto(`${BASE}${path}`, { waitUntil: "domcontentloaded" });
+          await visit(pg, `${BASE}${path}`);
           await shot(pg, name, vp); findings.push(await diagnose(pg, name, vp));
         }
         // The driver's own round, which is the workflow that has to be
@@ -303,7 +333,7 @@ try {
           ["/payments", "driver-collections"], ["/returns", "driver-returns"],
           ["/reconciliation", "driver-reconciliation"], ["/vans", "driver-vans"],
         ]) {
-          await pg.goto(`${BASE}${path}`, { waitUntil: "domcontentloaded" });
+          await visit(pg, `${BASE}${path}`);
           await shot(pg, name, vp); findings.push(await diagnose(pg, name, vp));
         }
       }
