@@ -41,6 +41,7 @@ const PAGES = [
   ["/warehouses", "Warehouses", ["admin", "manager", "accountant"]],
   ["/inventory", "Inventory", ["admin", "manager", "accountant"]],
   ["/inventory/movements", "Stock movements", ["admin", "manager"]],
+  ["/inventory/expiry", "Expiry", ["admin", "manager", "accountant"]],
   ["/purchasing", "Purchasing", ["admin", "manager"]],
   ["/vans", "Vans", ["admin", "manager", "driver", "accountant"]],
   ["/loads", "Van loads", ["admin", "manager", "driver", "accountant"]],

@@ -433,15 +433,21 @@ export async function receivePurchaseOrderAction(
 
   const itemIds = formData.getAll("itemId").map(String);
   const receiving = formData.getAll("qtyReceiving").map(String);
+  const batchNumbers = formData.getAll("batchNumber").map(String);
+  const expiryDates = formData.getAll("expiresOn").map(String);
 
   const admin = createSupabaseAdminClient();
   const { data: items } = await admin
     .from("purchase_order_items")
-    .select("id, quantity, qty_received, products(name)")
+    .select("id, quantity, qty_received, products(name, track_batches, track_expiry)")
     .eq("po_id", id);
   const byId = new Map((items ?? []).map((i) => [i.id as string, i]));
 
-  const toReceive: { itemId: string; quantity: number; label: string }[] = [];
+  const toReceive: {
+    itemId: string; quantity: number; label: string;
+    batchNumber: string | null; expiresOn: string | null;
+  }[] = [];
+
   for (const [i, itemId] of itemIds.entries()) {
     const raw = (receiving[i] ?? "").trim();
     if (!itemId || !raw || raw === "0") continue;
@@ -451,14 +457,34 @@ export async function receivePurchaseOrderAction(
     const item = byId.get(itemId);
     if (!item) return fail("That order line could not be found.");
 
+    const product = item.products as
+      { name?: string; track_batches?: boolean; track_expiry?: boolean } | null;
+    const name = product?.name ?? "a line";
+
     const outstanding = Number(item.quantity) - Number(item.qty_received);
     if (Number(raw) > outstanding) {
-      const name = (item.products as { name?: string } | null)?.name ?? "a line";
       return fail(`More received than ordered on ${name}: ${raw} against ${outstanding} outstanding.`);
     }
+
+    const batchNumber = (batchNumbers[i] ?? "").trim();
+    const expiresOn = (expiryDates[i] ?? "").trim();
+
+    // Caught here so the message names the product. The database
+    // refuses either way - receive_purchase_batch() owns the rule.
+    if (product?.track_batches && !batchNumber) {
+      return fail(`${name} is batch tracked. Enter the batch number from the delivery note.`);
+    }
+    if (product?.track_expiry && !expiresOn) {
+      return fail(`${name} carries an expiry date. Enter the one on the delivery.`);
+    }
+    if (expiresOn && new Date(expiresOn) <= new Date(new Date().toDateString())) {
+      return fail(`That delivery of ${name} is already out of date. Refuse it rather than booking it in.`);
+    }
+
     toReceive.push({
-      itemId, quantity: Number(raw),
-      label: (item.products as { name?: string } | null)?.name ?? "line",
+      itemId, quantity: Number(raw), label: name,
+      batchNumber: batchNumber || null,
+      expiresOn: expiresOn || null,
     });
   }
 
@@ -466,8 +492,15 @@ export async function receivePurchaseOrderAction(
 
   const supabase = await createSupabaseServerClient();
   for (const line of toReceive) {
-    const { error } = await supabase.rpc("receive_purchase_line", {
-      p_item_id: line.itemId, p_quantity: line.quantity,
+    // receive_purchase_batch wraps receive_purchase_line: it posts the
+    // same stock movement and adds the batch record around it. A line
+    // for a product that tracks nothing behaves exactly as before.
+    const { error } = await supabase.rpc("receive_purchase_batch", {
+      p_item_id: line.itemId,
+      p_quantity: line.quantity,
+      p_batch_number: line.batchNumber,
+      p_expires_on: line.expiresOn,
+      p_manufactured_on: null,
     });
     if (error) {
       console.error("[purchasing] receiving failed", error);
@@ -481,11 +514,18 @@ export async function receivePurchaseOrderAction(
   await recordAudit(actor, {
     action: "purchase.received", targetType: "purchase_order", targetId: id,
     targetLabel: String(po.po_number),
-    after: { lines: toReceive.length, units: total },
+    after: {
+      lines: toReceive.length,
+      units: total,
+      batches: toReceive.filter((l) => l.batchNumber).map((l) => ({
+        product: l.label, batch: l.batchNumber, expires: l.expiresOn,
+      })),
+    },
   });
 
   revalidatePath("/purchasing");
   revalidatePath("/inventory");
+  revalidatePath("/inventory/expiry");
   revalidatePath("/warehouses");
   return {
     status: "done",

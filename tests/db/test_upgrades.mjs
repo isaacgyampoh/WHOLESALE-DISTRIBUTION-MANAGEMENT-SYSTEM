@@ -26,6 +26,7 @@ const DB = "gab_upgrade";
 const MIGRATIONS = path.join("..", "..", "supabase", "migrations");
 const UPGRADE = path.join("..", "..", "database", "UPGRADE_0022_OFFLINE_SYNC.sql");
 const UPGRADE_COST = path.join("..", "..", "database", "UPGRADE_0023_COST_SECURITY.sql");
+const UPGRADE_EXPIRY = path.join("..", "..", "database", "UPGRADE_0024_BATCHES_AND_EXPIRY.sql");
 
 let pass = 0, fail = 0;
 const ok = (n, c, x = "") => { c ? (pass++, console.log(`  PASS  ${n} ${x}`)) : (fail++, console.log(`  FAIL  ${n} ${x}`)); };
@@ -42,7 +43,7 @@ for (const s of splitStatements(shim)) await c.query(s);
 
 // Everything up to but NOT including 0022.
 const files = fs.readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort()
-  .filter((f) => !f.startsWith("0022") && !f.startsWith("0023"));
+  .filter((f) => !f.startsWith("0022") && !f.startsWith("0023") && !f.startsWith("0024"));
 for (const f of files) {
   const sql = fs.readFileSync(path.join(MIGRATIONS, f), "utf8");
   for (const s of splitStatements(sql)) {
@@ -152,6 +153,39 @@ for (const [what, sql] of [
          and grantee='authenticated' and privilege_type='SELECT') v`],
   ["suppliers are role-gated", `select exists (select 1 from pg_policies
        where tablename='suppliers' and policyname='suppliers_read' and qual like '%has_role%') v`],
+]) {
+  const r = await c.query(sql);
+  ok(what, r.rows[0].v === true);
+}
+
+// ---- 0024, on top of 0023 -----------------------------------------
+console.log("\n=== UPGRADE_0024, then again ===");
+const expirySql = fs.readFileSync(UPGRADE_EXPIRY, "utf8");
+for (const attempt of ["runs on a 0023 database", "runs a second time"]) {
+  try {
+    await c.query(expirySql);
+    ok(`UPGRADE_0024 ${attempt}`, true);
+  } catch (e) {
+    ok(`UPGRADE_0024 ${attempt}`, false, `-> ${e.message}`);
+  }
+}
+
+for (const [what, sql] of [
+  ["product_batches exists", `select to_regclass('public.product_batches') is not null v`],
+  ["tracking is off by default", `select (select column_default from information_schema.columns
+       where table_name='products' and column_name='track_expiry') like 'false%' v`],
+  ["batch_expiry_status exists", `select to_regclass('public.batch_expiry_status') is not null v`],
+  ["expiry_summary exists", `select to_regclass('public.expiry_summary') is not null v`],
+  ["receive_purchase_batch exists", `select exists (select 1 from pg_proc p
+       join pg_namespace n on n.oid=p.pronamespace
+      where n.nspname='public' and p.proname='receive_purchase_batch') v`],
+  ["dispatch refuses expired stock", `select (select pg_get_functiondef(p.oid) from pg_proc p
+       join pg_namespace n on n.oid=p.pronamespace
+      where n.nspname='public' and p.proname='dispatch_van_load') like '%expired on%' v`],
+  ["batches carry row level security", `select relrowsecurity v from pg_class
+      where oid='public.product_batches'::regclass`],
+  ["the warning period is configurable", `select exists (select 1 from information_schema.columns
+      where table_name='organizations' and column_name='expiry_warning_days') v`],
 ]) {
   const r = await c.query(sql);
   ok(what, r.rows[0].v === true);

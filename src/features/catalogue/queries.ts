@@ -43,6 +43,9 @@ export interface ProductRow {
   barcode: string | null;
   unitsPerCase: number;
   taxRate: number;
+  trackBatches: boolean;
+  trackExpiry: boolean;
+  shelfLifeDays: number | null;
 }
 
 export interface ProductFilters {
@@ -91,12 +94,17 @@ function toProduct(row: Record<string, unknown>): ProductRow {
     barcode: (row.barcode as string | null) ?? null,
     unitsPerCase: Number(row.units_per_case ?? 1),
     taxRate: parseAmount(row.tax_rate as string),
+    trackBatches: Boolean(row.track_batches),
+    trackExpiry: Boolean(row.track_expiry),
+    shelfLifeDays: row.shelf_life_days === null || row.shelf_life_days === undefined
+      ? null : Number(row.shelf_life_days),
   };
 }
 
 const PRODUCT_SELECT =
   "id, sku, barcode, name, description, category_id, unit_of_measure, units_per_case, " +
   "cost_price, list_price, tax_rate, reorder_point, reorder_qty, is_active, " +
+  "track_batches, track_expiry, shelf_life_days, " +
   "created_at, updated_at, categories(name), inventory(qty_on_hand, qty_reserved)";
 
 export async function listProducts(

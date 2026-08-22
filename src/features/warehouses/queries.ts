@@ -99,6 +99,7 @@ export interface PurchaseOrderRow {
   /** Enough to book goods in without a second request per order. */
   lines: {
     id: string; productName: string; sku: string; ordered: number; received: number;
+    trackBatches: boolean; trackExpiry: boolean;
   }[];
 }
 
@@ -121,7 +122,8 @@ export async function listPurchaseOrders(
     .select(
       "id, po_number, status, order_date, expected_date, total, " +
       "suppliers(name), warehouses(name), " +
-      "purchase_order_items(id, quantity, qty_received, products(name, sku))",
+      "purchase_order_items(id, quantity, qty_received, " +
+      "products(name, sku, track_batches, track_expiry))",
       { count: "exact" },
     )
     .order("order_date", { ascending: false })
@@ -151,13 +153,17 @@ export async function listPurchaseOrders(
       qtyOrdered: items.reduce((s, i) => s + Number(i.quantity ?? 0), 0),
       qtyReceived: items.reduce((s, i) => s + Number(i.qty_received ?? 0), 0),
       lines: items.map((i) => {
-        const product = i.products as { name?: string; sku?: string } | null;
+        const product = i.products as {
+          name?: string; sku?: string; track_batches?: boolean; track_expiry?: boolean;
+        } | null;
         return {
           id: i.id as string,
           productName: product?.name ?? "Unknown product",
           sku: product?.sku ?? "",
           ordered: Number(i.quantity ?? 0),
           received: Number(i.qty_received ?? 0),
+          trackBatches: Boolean(product?.track_batches),
+          trackExpiry: Boolean(product?.track_expiry),
         };
       }),
     };
@@ -232,5 +238,94 @@ export async function listSuppliers(): Promise<Result<SupplierRow[]>> {
       leadTimeDays: Number(s.lead_time_days ?? 0),
       isActive: s.is_active as boolean,
     })),
+  };
+}
+
+export interface BatchRow {
+  batchId: string;
+  productId: string;
+  sku: string;
+  productName: string;
+  warehouseName: string;
+  batchNumber: string;
+  manufacturedOn: string | null;
+  expiresOn: string | null;
+  qtyReceived: number;
+  qtyRemaining: number;
+  daysToExpiry: number | null;
+  status: "expired" | "expiring" | "good" | "no_expiry";
+}
+
+export interface ExpirySummary {
+  expiredBatches: number;
+  expiredUnits: number;
+  expiringBatches: number;
+  expiringUnits: number;
+  goodBatches: number;
+}
+
+/**
+ * Batches, newest problem first.
+ *
+ * Ordered by how long is left rather than by name: the reason anyone
+ * opens this screen is to find what is about to go off.
+ */
+export async function listBatches(
+  filters: { status?: string; search?: string } = {},
+): Promise<Result<BatchRow[]>> {
+  const supabase = await createSupabaseServerClient();
+
+  let query = supabase
+    .from("batch_expiry_status")
+    .select("*")
+    .gt("qty_remaining", 0)
+    .order("expires_on", { ascending: true, nullsFirst: false })
+    .limit(500);
+
+  if (filters.status && filters.status !== "all") query = query.eq("status", filters.status);
+
+  const search = filters.search?.trim();
+  if (search) {
+    const safe = search.replace(/[%,()]/g, " ");
+    query = query.or(`product_name.ilike.%${safe}%,batch_number.ilike.%${safe}%,sku.ilike.%${safe}%`);
+  }
+
+  const { data, error } = await query;
+  if (error) return failed("batches", error, "Batches could not be loaded.");
+
+  return {
+    ok: true,
+    data: ((data ?? []) as unknown as Record<string, unknown>[]).map((b) => ({
+      batchId: b.batch_id as string,
+      productId: b.product_id as string,
+      sku: (b.sku as string) ?? "",
+      productName: (b.product_name as string) ?? "",
+      warehouseName: (b.warehouse_name as string) ?? "",
+      batchNumber: (b.batch_number as string) ?? "",
+      manufacturedOn: (b.manufactured_on as string | null) ?? null,
+      expiresOn: (b.expires_on as string | null) ?? null,
+      qtyReceived: Number(b.qty_received ?? 0),
+      qtyRemaining: Number(b.qty_remaining ?? 0),
+      daysToExpiry: b.days_to_expiry === null || b.days_to_expiry === undefined
+        ? null : Number(b.days_to_expiry),
+      status: b.status as BatchRow["status"],
+    })),
+  };
+}
+
+export async function getExpirySummary(): Promise<Result<ExpirySummary>> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.from("expiry_summary").select("*").maybeSingle();
+  if (error) return failed("expiry", error, "The expiry summary could not be loaded.");
+
+  return {
+    ok: true,
+    data: {
+      expiredBatches: Number(data?.expired_batches ?? 0),
+      expiredUnits: Number(data?.expired_units ?? 0),
+      expiringBatches: Number(data?.expiring_batches ?? 0),
+      expiringUnits: Number(data?.expiring_units ?? 0),
+      goodBatches: Number(data?.good_batches ?? 0),
+    },
   };
 }

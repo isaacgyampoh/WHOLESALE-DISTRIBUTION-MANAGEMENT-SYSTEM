@@ -138,6 +138,56 @@ export function ProductForm({
             aria-invalid={Boolean(err.reorderQty)}
           />
         </Field>
+
+        {/* Not everything expires. A crate does not, and forcing a date
+            onto one would put a meaningless number in the warehouse's
+            way at every delivery. */}
+        <fieldset className="space-y-2 rounded-[var(--radius-panel)] border border-[var(--border-subtle)] p-3">
+          <legend className="px-1 text-sm font-medium text-[var(--text-primary)]">
+            Batches and shelf life
+          </legend>
+
+          <label className="flex min-h-11 cursor-pointer items-center gap-2.5 text-sm">
+            <input
+              type="checkbox" name="trackBatches"
+              defaultChecked={v?.trackBatches === "on" || product?.trackBatches}
+              className="size-4 accent-[var(--color-brand-700)]"
+            />
+            <span>
+              Track batch numbers
+              <span className="block text-xs text-[var(--text-secondary)]">
+                Recorded when goods are received.
+              </span>
+            </span>
+          </label>
+
+          <label className="flex min-h-11 cursor-pointer items-center gap-2.5 text-sm">
+            <input
+              type="checkbox" name="trackExpiry"
+              defaultChecked={v?.trackExpiry === "on" || product?.trackExpiry}
+              className="size-4 accent-[var(--color-brand-700)]"
+            />
+            <span>
+              This product expires
+              <span className="block text-xs text-[var(--text-secondary)]">
+                An expiry date is required at receiving, and a van will not
+                be dispatched carrying it out of date.
+              </span>
+            </span>
+          </label>
+
+          <Field
+            label="Shelf life in days" htmlFor="shelfLifeDays" error={err.shelfLifeDays}
+            hint="Optional. Used to work out an expiry date when a delivery gives only a manufacture date."
+          >
+            <Input
+              id="shelfLifeDays" name="shelfLifeDays" inputMode="numeric"
+              defaultValue={v?.shelfLifeDays ?? (product?.shelfLifeDays ?? "")}
+              aria-invalid={Boolean(err.shelfLifeDays)}
+              className="numeric"
+            />
+          </Field>
+        </fieldset>
       </div>
 
       <Field label="Description" htmlFor="description">

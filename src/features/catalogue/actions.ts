@@ -50,7 +50,7 @@ async function ownedProduct(actor: AuthenticatedUser, id: string) {
   const admin = createSupabaseAdminClient();
   const { data } = await admin
     .from("products")
-    .select("id, sku, name, category_id, unit_of_measure, cost_price, list_price, reorder_point, reorder_qty, is_active, org_id, description")
+    .select("id, sku, name, category_id, unit_of_measure, cost_price, list_price, reorder_point, reorder_qty, is_active, org_id, description, track_batches, track_expiry, shelf_life_days")
     .eq("id", id)
     .maybeSingle();
   return data && data.org_id === actor.organizationId ? data : null;
@@ -91,6 +91,9 @@ function productFields(formData: FormData) {
     listPrice: String(formData.get("listPrice") ?? ""),
     reorderPoint: String(formData.get("reorderPoint") ?? "0"),
     reorderQty: String(formData.get("reorderQty") ?? "0"),
+    trackBatches: formData.get("trackBatches") === "on" ? "on" : "",
+    trackExpiry: formData.get("trackExpiry") === "on" ? "on" : "",
+    shelfLifeDays: String(formData.get("shelfLifeDays") ?? "").trim(),
     description: String(formData.get("description") ?? "").trim(),
     isActive: String(formData.get("isActive") ?? "true"),
   };
@@ -115,6 +118,11 @@ export async function createProductAction(
   const list = readMoney(v.listPrice, "listPrice", errors);
   const reorderPoint = readWholeNumber(v.reorderPoint, "reorderPoint", errors);
   const reorderQty = readWholeNumber(v.reorderQty, "reorderQty", errors);
+  if (v.shelfLifeDays && !/^\d{1,4}$/.test(v.shelfLifeDays)) {
+    errors.shelfLifeDays = "Use a whole number of days, or leave it blank.";
+  } else if (v.shelfLifeDays && Number(v.shelfLifeDays) > 3650) {
+    errors.shelfLifeDays = "That is over ten years. Check the figure.";
+  }
 
   const categoryId = v.categoryId || null;
   if (categoryId && !(await ownedCategory(actor, categoryId))) {
@@ -142,6 +150,12 @@ export async function createProductAction(
       list_price: list,
       reorder_point: reorderPoint,
       reorder_qty: reorderQty,
+      // Expiry has nowhere to live without a batch, so asking for one
+      // implies the other. The database says the same; this keeps the
+      // form from having to explain it.
+      track_batches: v.trackBatches === "on" || v.trackExpiry === "on",
+      track_expiry: v.trackExpiry === "on",
+      shelf_life_days: v.shelfLifeDays ? Number(v.shelfLifeDays) : null,
       is_active: v.isActive === "true",
       created_by: actor.id,
     })
@@ -193,6 +207,11 @@ export async function updateProductAction(
   const list = readMoney(v.listPrice, "listPrice", errors);
   const reorderPoint = readWholeNumber(v.reorderPoint, "reorderPoint", errors);
   const reorderQty = readWholeNumber(v.reorderQty, "reorderQty", errors);
+  if (v.shelfLifeDays && !/^\d{1,4}$/.test(v.shelfLifeDays)) {
+    errors.shelfLifeDays = "Use a whole number of days, or leave it blank.";
+  } else if (v.shelfLifeDays && Number(v.shelfLifeDays) > 3650) {
+    errors.shelfLifeDays = "That is over ten years. Check the figure.";
+  }
 
   const categoryId = v.categoryId || null;
   if (!(await categoryAllowed(actor, categoryId)) ||
@@ -219,6 +238,12 @@ export async function updateProductAction(
       list_price: list,
       reorder_point: reorderPoint,
       reorder_qty: reorderQty,
+      // Expiry has nowhere to live without a batch, so asking for one
+      // implies the other. The database says the same; this keeps the
+      // form from having to explain it.
+      track_batches: v.trackBatches === "on" || v.trackExpiry === "on",
+      track_expiry: v.trackExpiry === "on",
+      shelf_life_days: v.shelfLifeDays ? Number(v.shelfLifeDays) : null,
       is_active: v.isActive === "true",
     })
     .eq("id", id);

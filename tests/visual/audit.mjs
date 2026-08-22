@@ -295,6 +295,7 @@ try {
           ["/categories", "categories"],
           ["/inventory", "inventory"],
           ["/inventory/movements", "movements"],
+          ["/inventory/expiry", "expiry"],
           ["/products?stock=low_stock", "products-low-stock"],
           ["/warehouses", "warehouses"],
           ["/purchasing", "purchasing"],

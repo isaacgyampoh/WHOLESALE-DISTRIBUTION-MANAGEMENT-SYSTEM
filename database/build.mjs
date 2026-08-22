@@ -157,6 +157,87 @@ select 'suppliers are role-gated',
                  and qual like '%has_role%')
             then 'PASS' else 'FAIL' end;`,
   },
+  {
+    migration: "0024_batches_and_expiry.sql",
+    out: "UPGRADE_0024_BATCHES_AND_EXPIRY.sql",
+    title: "UPGRADE 0024 - batches and expiry",
+    summary: `-- WHAT IT ADDS
+--
+-- The schema had no idea when anything went off. A distributor moving
+-- food, drink and toiletries carries stock that expires, and the only
+-- record of it was whatever somebody remembered.
+--
+--   product_batches          a delivery of one product, with the expiry
+--                            it carries. Created at receiving, which is
+--                            the only moment the date is known.
+--   receive_purchase_batch() receiving, with the batch and expiry off
+--                            the delivery note. Refuses a delivery that
+--                            is already out of date.
+--   batch_expiry_status      every batch with how long it has left.
+--   expiry_summary           counts for the dashboard.
+--   consume_batches()        draws stock down earliest expiry first.
+--
+-- and it replaces dispatch_van_load() so that no van leaves the yard
+-- carrying stock that has expired.
+--
+-- NOTHING CHANGES BEHAVIOUR UNTIL YOU TURN IT ON. Tracking is per
+-- product and off by default: a crate does not expire and is not made
+-- to carry a date. Set it on the product screen.
+--
+-- AFTER RUNNING IT, redeploy the application, then run npm run demo:seed
+-- again if you want the demonstration's expiry examples.`,
+    verify: `select 'product_batches table' as check,
+       case when to_regclass('public.product_batches') is not null
+            then 'PASS' else 'FAIL' end as result
+union all
+select 'products carry tracking flags',
+       case when (select count(*) from information_schema.columns
+                   where table_name = 'products'
+                     and column_name in ('track_batches','track_expiry','shelf_life_days')) = 3
+            then 'PASS' else 'FAIL' end
+union all
+select 'tracking is off by default',
+       case when (select column_default from information_schema.columns
+                   where table_name = 'products' and column_name = 'track_expiry') like 'false%'
+            then 'PASS' else 'FAIL' end
+union all
+select 'expiry needs a batch to live on',
+       case when exists (select 1 from pg_constraint
+                          where conname = 'products_expiry_needs_batches')
+            then 'PASS' else 'FAIL' end
+union all
+select 'batch_expiry_status view',
+       case when to_regclass('public.batch_expiry_status') is not null
+            then 'PASS' else 'FAIL' end
+union all
+select 'expiry_summary view',
+       case when to_regclass('public.expiry_summary') is not null
+            then 'PASS' else 'FAIL' end
+union all
+select 'receive_purchase_batch function',
+       case when exists (select 1 from pg_proc p
+                           join pg_namespace n on n.oid = p.pronamespace
+                          where n.nspname = 'public' and p.proname = 'receive_purchase_batch')
+            then 'PASS' else 'FAIL' end
+union all
+select 'dispatch refuses expired stock',
+       case when (select pg_get_functiondef(p.oid) from pg_proc p
+                    join pg_namespace n on n.oid = p.pronamespace
+                   where n.nspname = 'public' and p.proname = 'dispatch_van_load')
+                 like '%expired on%'
+            then 'PASS' else 'FAIL' end
+union all
+select 'row level security on batches',
+       case when (select relrowsecurity from pg_class
+                   where oid = 'public.product_batches'::regclass)
+            then 'PASS' else 'FAIL' end
+union all
+select 'the warning period is configurable',
+       case when exists (select 1 from information_schema.columns
+                          where table_name = 'organizations'
+                            and column_name = 'expiry_warning_days')
+            then 'PASS' else 'FAIL' end;`,
+  },
 ];
 
 /** Final enum members, in the order `alter type ... add value` yields. */

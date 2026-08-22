@@ -46,9 +46,15 @@ what is installed, in order:
 | `database/UPGRADE_0020_CATALOGUE.sql` | Category status; locks stock to the ledger |
 | `database/UPGRADE_0021_AUDIT_PURGE.sql` | Lets a tenant be removed |
 | `database/UPGRADE_0022_OFFLINE_SYNC.sql` | The offline sync engine — **required for the driver PWA** |
+| `database/UPGRADE_0023_COST_SECURITY.sql` | **Security.** Stops drivers reading cost price and supplier terms |
+| `database/UPGRADE_0024_BATCHES_AND_EXPIRY.sql` | Batches, expiry dates, and the block on dispatching expired stock |
 
 Every upgrade file is idempotent: running one twice is harmless, and
 each ends with a `PASS`/`FAIL` check of its own work.
+
+> **0023 is required by the current application.** It reads products
+> through a masked view that 0023 creates. Run it before redeploying, or
+> the Products, Reports and Warehouses screens will fail.
 
 ---
 

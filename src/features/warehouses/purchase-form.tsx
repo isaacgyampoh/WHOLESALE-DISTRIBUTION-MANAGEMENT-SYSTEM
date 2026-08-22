@@ -205,6 +205,8 @@ export interface ReceivableLine {
   sku: string;
   ordered: number;
   received: number;
+  trackBatches: boolean;
+  trackExpiry: boolean;
 }
 
 /**
@@ -227,6 +229,8 @@ export function ReceiveButton({
     receivePurchaseOrderAction, INITIAL_WAREHOUSE_STATE,
   );
   const [amounts, setAmounts] = useState<Record<string, string>>({});
+  const [batches, setBatches] = useState<Record<string, string>>({});
+  const [expiries, setExpiries] = useState<Record<string, string>>({});
 
   const outstanding = lines.filter((l) => l.ordered > l.received);
 
@@ -294,6 +298,50 @@ export function ReceiveButton({
                       All {formatQuantity(line.ordered - line.received)}
                     </Button>
                   </div>
+
+                  {/* The batch and its date come off the delivery note, and
+                      this is the only moment anyone has them. Both fields
+                      are always submitted so the arrays stay aligned with
+                      the line they belong to. */}
+                  <input
+                    type="hidden" name="batchNumber"
+                    value={line.trackBatches ? (batches[line.id] ?? "") : ""}
+                  />
+                  <input
+                    type="hidden" name="expiresOn"
+                    value={line.trackExpiry ? (expiries[line.id] ?? "") : ""}
+                  />
+
+                  {line.trackBatches && (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <Field label="Batch number" htmlFor={`batch-${line.id}`} required
+                             hint="As printed on the delivery.">
+                        <Input
+                          id={`batch-${line.id}`}
+                          value={batches[line.id] ?? ""}
+                          onChange={(e) =>
+                            setBatches((c) => ({ ...c, [line.id]: e.target.value }))
+                          }
+                          placeholder="B-2026-0142"
+                          className="numeric"
+                        />
+                      </Field>
+                      {line.trackExpiry && (
+                        <Field label="Expires on" htmlFor={`expiry-${line.id}`} required
+                               hint="A delivery already out of date is refused.">
+                          <Input
+                            id={`expiry-${line.id}`}
+                            type="date"
+                            value={expiries[line.id] ?? ""}
+                            onChange={(e) =>
+                              setExpiries((c) => ({ ...c, [line.id]: e.target.value }))
+                            }
+                            className="numeric"
+                          />
+                        </Field>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

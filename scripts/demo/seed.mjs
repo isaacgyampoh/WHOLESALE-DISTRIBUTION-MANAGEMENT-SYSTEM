@@ -406,6 +406,79 @@ if (existingCycle) {
 }
 
 // ===================================================================
+// Batches and expiry.
+//
+// Some lines expire and some do not, which is the point: a crate of
+// bottles has no shelf life and should not be made to carry a date.
+// Three states are seeded so all of them can be shown - stock well
+// inside date, stock inside the warning period, and stock that has
+// gone off and is blocking dispatch until it is written off.
+// ===================================================================
+const { data: existingBatches, error: batchProbe } = await admin
+  .from("product_batches").select("id").eq("org_id", org.id).limit(1).maybeSingle();
+
+if (batchProbe) {
+  // The table is not there. Said plainly rather than skipped in
+  // silence, because a demonstration missing its expiry examples looks
+  // like the feature is broken.
+  say("skipped batches: migration 0024 is not on this database");
+  say("  run database/UPGRADE_0024_BATCHES_AND_EXPIRY.sql, then seed again");
+} else if (existingBatches) {
+  say("batches already present");
+} else {
+  // Which of the demo lines actually perish.
+  const PERISHABLE = [
+    ["SKU-101", 120],   // sparkling water
+    ["SKU-102", 90],    // cola
+    ["SKU-103", 60],    // orange juice
+    ["SKU-104", 120],   // malt
+  ];
+  for (const [code, shelfLife] of PERISHABLE) {
+    await admin.from("products")
+      .update({ track_batches: true, track_expiry: true, shelf_life_days: shelfLife })
+      .eq("org_id", org.id).eq("sku", `${DEMO_PREFIX}${code}`);
+  }
+  // Toiletries get batch numbers but no expiry: a recall needs the
+  // batch, the soap does not go off.
+  for (const code of ["SKU-201", "SKU-202"]) {
+    await admin.from("products")
+      .update({ track_batches: true, track_expiry: false })
+      .eq("org_id", org.id).eq("sku", `${DEMO_PREFIX}${code}`);
+  }
+
+  const { data: perishables } = await admin
+    .from("products").select("id, sku, name")
+    .eq("org_id", org.id).eq("track_expiry", true);
+  const bySku = new Map((perishables ?? []).map((p) => [p.sku.replace(DEMO_PREFIX, ""), p]));
+
+  // Written directly rather than through receiving: the goods are
+  // already in the warehouse from the opening stock above, and putting
+  // them through a purchase order again would double the quantity.
+  // The dates are what matters here.
+  const BATCHES = [
+    ["SKU-101", "B-2026-0411", 120, daysAhead(95)],   // comfortable
+    ["SKU-102", "B-2026-0288", 80,  daysAhead(12)],   // inside the warning period
+    ["SKU-103", "B-2026-0117", 25,  daysAgo(3)],      // gone off
+  ];
+  let written = 0;
+  for (const [code, batchNumber, qty, date] of BATCHES) {
+    const product = bySku.get(code);
+    if (!product) continue;
+    const { error } = await admin.from("product_batches").insert({
+      org_id: org.id, product_id: product.id, warehouse_id: wh,
+      batch_number: batchNumber,
+      expires_on: date,
+      qty_received: qty, qty_remaining: qty,
+      supplier_id: supplier,
+      notes: "Opening batch record",
+    });
+    if (error) throw new Error(`batch ${batchNumber}: ${error.message}`);
+    written++;
+  }
+  say(`recorded ${written} batches: one comfortable, one expiring, one already expired`);
+}
+
+// ===================================================================
 // Today's round, left open on purpose.
 //
 // The cycle above is finished history - it gives the driver a day of

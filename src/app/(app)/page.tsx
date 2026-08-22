@@ -6,6 +6,7 @@ import { getDashboardMetrics, getOpenVariances, getLowStock } from "@/features/d
 import { getDriverSummary } from "@/features/dashboard/driver-queries";
 import { DriverDashboard } from "@/features/dashboard/driver-dashboard";
 import { StatTile } from "@/components/ui/stat-tile";
+import { getExpirySummary } from "@/features/warehouses/queries";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardHeader } from "@/components/ui/card";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/table";
@@ -57,7 +58,7 @@ export default async function DashboardPage() {
     );
   }
 
-  const { metrics, variances, lowStock } = result.data;
+  const { metrics, variances, lowStock, expiry } = result.data;
 
   return (
     <>
@@ -70,6 +71,34 @@ export default async function DashboardPage() {
         <div className="mb-5">
           <Alert tone="info" title="Scoped view">
             These figures cover only the product categories assigned to you.
+          </Alert>
+        </div>
+      )}
+
+      {/* Expiry leads the alerts: stock that has gone off is money
+          already lost, and stock about to go off is the only kind that
+          can still be sold in time. */}
+      {expiry && expiry.expiredUnits > 0 && (
+        <div className="mb-5">
+          <Alert tone="danger" title="Expired stock in the warehouse">
+            {formatQuantity(expiry.expiredUnits)} units across{" "}
+            {expiry.expiredBatches} {expiry.expiredBatches === 1 ? "batch" : "batches"} are
+            past their date. A van will not dispatch while they are on hand.{" "}
+            <Link href="/inventory/expiry?status=expired" className="underline">
+              Write them off
+            </Link>
+          </Alert>
+        </div>
+      )}
+
+      {expiry && expiry.expiredUnits === 0 && expiry.expiringUnits > 0 && (
+        <div className="mb-5">
+          <Alert tone="warning" title="Stock is going out of date">
+            {formatQuantity(expiry.expiringUnits)} units are inside the warning
+            period.{" "}
+            <Link href="/inventory/expiry?status=expiring" className="underline">
+              See what to move first
+            </Link>
           </Alert>
         </div>
       )}
@@ -241,6 +270,11 @@ interface DashboardData {
   metrics: Awaited<ReturnType<typeof getDashboardMetrics>>;
   variances: Awaited<ReturnType<typeof getOpenVariances>>;
   lowStock: Awaited<ReturnType<typeof getLowStock>>;
+  /** Null for a role that does not see inventory. */
+  expiry: {
+    expiredBatches: number; expiredUnits: number;
+    expiringBatches: number; expiringUnits: number; goodBatches: number;
+  } | null;
 }
 
 type LoadResult =
@@ -263,12 +297,19 @@ async function loadDriver(userId: string): Promise<DriverResult> {
 /** Fetches everything the dashboard needs, converting failure into a value. */
 async function loadDashboard(role: Parameters<typeof can>[0]): Promise<LoadResult> {
   try {
-    const [metrics, variances, lowStock] = await Promise.all([
+    const [metrics, variances, lowStock, expiry] = await Promise.all([
       getDashboardMetrics(),
       can(role, "reconciliation.view") ? getOpenVariances() : Promise.resolve([]),
       can(role, "inventory.view") ? getLowStock() : Promise.resolve([]),
+      can(role, "inventory.view") ? getExpirySummary() : Promise.resolve(null),
     ]);
-    return { ok: true, data: { metrics, variances, lowStock } };
+    return {
+      ok: true,
+      data: {
+        metrics, variances, lowStock,
+        expiry: expiry?.ok ? expiry.data : null,
+      },
+    };
   } catch (error) {
     // Full detail to the server log, safe message to the operator.
     console.error("[dashboard] failed to load", error);
