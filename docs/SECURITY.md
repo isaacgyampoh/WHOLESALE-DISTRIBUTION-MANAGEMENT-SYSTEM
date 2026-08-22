@@ -140,6 +140,65 @@ See `docs/OFFLINE_SYNC.md`.
 
 ---
 
+## Supplier documents
+
+Files uploaded against a supplier - invoices, delivery notes,
+certificates - carry purchase prices, which are management information
+under the same rule as cost price on a product.
+
+- The bucket is **private**. A public bucket would hand every supplier
+  invoice the business has ever received to anybody who can guess a URL.
+- Files are reached by a **signed URL that lasts five minutes**, minted
+  server-side only after the row describing the file has been read under
+  the caller's own session. The check that decides whether somebody may
+  open the file is the same one that decides whether they may see the
+  record of it.
+- Row level security is applied to the **storage objects** as well as to
+  the rows. Storage is reachable directly with an access token, so a
+  policy on the table alone would leave the files open to any signed-in
+  driver.
+- The object path starts with the organization id, and the storage
+  policy scopes on that first path segment.
+- Uploads are validated by size and type in three places: the server
+  action, a table constraint, and the bucket itself.
+- A signed URL is never embedded in a listing. It is minted when somebody
+  clicks, so no live link sits in the page source, the browser history or
+  a screenshot.
+
+## The supplier portal
+
+A supplier holds a link, not an account. The link is treated as the
+credential it is:
+
+- **Stored as a SHA-256 digest.** The full link is generated in the
+  server action and never sent to the database, so it cannot appear in a
+  query log, a statement sample or a slow-query trace. A leaked backup
+  hands over nothing that works.
+- **Shown once.** If it is lost, a new one is issued and the old one
+  revoked.
+- **Expires**, between 1 and 365 days, enforced by a table constraint. A
+  link with no end date is a permanent grant to whoever it was last
+  forwarded to.
+- **Revocable** immediately, without waiting for expiry.
+- **Rate limited per address**, ten failures in fifteen minutes, with
+  every attempt recorded. Per address rather than globally, so one
+  attacker cannot lock every supplier out.
+- **Discloses one supplier's own orders and nothing else** - no other
+  supplier, no customer, and no order the business has not sent.
+- **Resolvable only by the service role.** Neither `anon` nor
+  `authenticated` may execute the function, so the database's position
+  that anonymous callers get nothing is unchanged.
+- The audit entry records that a link was issued, its label and its first
+  six characters. Deliberately not the link: an audit trail that records
+  credentials is a place to steal them from.
+- Every failure to resolve renders the same message. Telling the holder
+  of a bad link whether it was unknown, expired or revoked tells them how
+  to make a better guess.
+- The page is marked `noindex`. A link that turns up in a search result
+  is a link that has been published.
+
+---
+
 ## Secrets
 
 | Value | Where it may appear |
@@ -169,7 +228,7 @@ npm run db:start
 npm run db:test
 ```
 
-279 assertions across 13 suites. The ones that are specifically security:
+608 assertions across 20 suites. The ones that are specifically security:
 
 | Suite | Covers |
 |---|---|
@@ -181,11 +240,22 @@ npm run db:test
 | `test_admin_security` | Staff management boundaries, audit immutability |
 | `test_grants` | Table privileges, and the anonymous authorization bypass closed in 0015 |
 | `test_sync` | Offline queue authorization and idempotency |
+| `test_cost_security` | Cost price withheld from every route a driver has |
+| `test_documents` | Invoice and receipt isolation; no cost on a customer document |
+| `test_transfers` | A warehouse cannot approve its own transfer |
+| `test_notifications` | Role-addressed delivery; nobody writes their own |
+| `test_supplier` | The private bucket, and the portal link as a credential |
 
 And through the browser, against a running application:
 
 ```bash
 npm run hosted:pages      # every route, every role, direct URL access
+```
+
+And the unit suites, which need nothing running:
+
+```bash
+npm run test:unit         # permission invariants, PIN rules, CSV escaping
 ```
 
 ---
@@ -212,6 +282,10 @@ Stated plainly rather than left for someone to discover.
   the company's own use, add a second factor for administrators.
 - **The service role key is absolute.** Anything holding it reads and
   writes everything. There is no key rotation schedule built in.
+- **A portal link is a bearer credential.** Anybody holding it sees that
+  supplier's orders. It cannot be tied to a person, because a supplier's
+  staff turn over without telling us - which is the reason it expires and
+  can be revoked rather than the reason it should not exist.
 - **The offline snapshot sits on the phone.** It holds customer names,
   balances and what is on the van — not cost prices, not the wider
   catalogue, not credentials. A lost phone is a data-protection matter

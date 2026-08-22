@@ -26,9 +26,10 @@ requires anyone but you to have access to your Supabase account.
 3. **Run**.
 
 It is one transaction: it either installs completely or changes nothing.
-Expect it to take a few seconds. It creates 34 tables, 12 views, 45
-functions, 14 enums, 134 indexes, 230 constraints, 70 triggers, 72 row
-level security policies and the Data API grants.
+Expect it to take a few seconds. It creates 40 tables, 17 views, 66
+functions, 17 enums, 155 indexes, 270 constraints, 78 triggers, 81 row
+level security policies, one private storage bucket and the Data API
+grants.
 
 The file is generated from `supabase/migrations/` by
 `npm run db:build-installer` — never edit it by hand.
@@ -49,6 +50,11 @@ what is installed, in order:
 | `database/UPGRADE_0023_COST_SECURITY.sql` | **Security.** Stops drivers reading cost price and supplier terms |
 | `database/UPGRADE_0024_BATCHES_AND_EXPIRY.sql` | Batches, expiry dates, and the block on dispatching expired stock |
 | `database/UPGRADE_0025_PAYMENT_METHODS.sql` | Cash, mobile money and split payments, counted apart at end of day |
+| `database/UPGRADE_0026_DOCUMENTS.sql` | Invoices raised automatically, receipts, and waybills |
+| `database/UPGRADE_0027_TRANSFERS.sql` | Warehouse transfers with an approval step |
+| `database/UPGRADE_0028_NOTIFICATIONS.sql` | In-app notifications, addressed by role |
+| `database/UPGRADE_0029_SUPPLIER_DOCUMENTS.sql` | Supplier paperwork in a private storage bucket |
+| `database/UPGRADE_0030_SUPPLIER_PORTAL.sql` | Expiring, revocable supplier links |
 
 Every upgrade file is idempotent: running one twice is harmless, and
 each ends with a `PASS`/`FAIL` check of its own work.
@@ -56,6 +62,20 @@ each ends with a `PASS`/`FAIL` check of its own work.
 > **0023 is required by the current application.** It reads products
 > through a masked view that 0023 creates. Run it before redeploying, or
 > the Products, Reports and Warehouses screens will fail.
+
+Everything from 0024 onwards degrades rather than breaks. The
+application probes the schema when it starts and hides what the database
+cannot support, so a missing upgrade shows up as a feature being absent -
+and the administrator's dashboard names which script is outstanding.
+
+### 0029 creates a storage bucket
+
+`UPGRADE_0029_SUPPLIER_DOCUMENTS.sql` inserts a bucket named
+**supplier-documents** and marks it private. After running it, open
+**Storage** in the Supabase dashboard and confirm the bucket is listed
+and shows as private. It should never be made public: the documents in
+it carry purchase prices, and a public bucket is readable by anybody who
+can guess a URL.
 
 ---
 

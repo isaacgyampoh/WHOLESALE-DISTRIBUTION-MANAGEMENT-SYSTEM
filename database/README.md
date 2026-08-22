@@ -13,7 +13,21 @@ CLI tools.
 | `UPGRADE_0018_PIN_AUTH.sql` | Upgrade for a database installed before migration 0018. Adds PIN sign-in. |
 | `UPGRADE_0019_AUDIT_LOG.sql` | Upgrade for a database installed before migration 0019. Adds the audit trail. |
 | `UPGRADE_0020_CATALOGUE.sql` | Upgrade for a database installed before migration 0020. Adds category status and locks stock to the ledger. |
+| `UPGRADE_0022_OFFLINE_SYNC.sql` | Offline operation for the driver app. |
+| `UPGRADE_0023_COST_SECURITY.sql` | Withdraws cost price from anybody who should not see it. |
+| `UPGRADE_0024_BATCHES_AND_EXPIRY.sql` | Batch numbers and expiry dates. |
+| `UPGRADE_0025_PAYMENT_METHODS.sql` | Cash, mobile money and split payments, counted apart at end of day. |
+| `UPGRADE_0026_DOCUMENTS.sql` | Invoices, receipts and waybills. |
+| `UPGRADE_0027_TRANSFERS.sql` | Warehouse transfers with a real approval step. |
+| `UPGRADE_0028_NOTIFICATIONS.sql` | In-app notifications, per role. |
+| `UPGRADE_0029_SUPPLIER_DOCUMENTS.sql` | Supplier paperwork in a private storage bucket. |
+| `UPGRADE_0030_SUPPLIER_PORTAL.sql` | Expiring, revocable links suppliers use to see their own orders. |
 | `build.mjs` | Regenerates the installer from `supabase/migrations`. You do not need to run this. |
+
+**A new project needs none of these.** The installer already contains
+everything up to and including 0030. The upgrade scripts are for a
+database that was installed before a given change; run them in number
+order, and re-running one is safe.
 
 ---
 
@@ -229,14 +243,16 @@ created in Step 8.
 
 ## What gets installed
 
-- **29 tables** covering organizations, users, products, warehouses,
-  stock, customers, suppliers, sales, invoices, payments, purchasing,
-  vans, van loading, van sales, returns, credit and reconciliation
-- **8 reporting views**
-- **34 functions**, including the business workflow (van dispatch, sale
-  completion, returns, reconciliation) and the security helpers
-- **65 triggers**
-- **67 row level security policies**, with RLS enabled on all 29 tables
+- **40 tables** covering organizations, users, products, warehouses,
+  stock, batches and expiry, customers, suppliers and their paperwork,
+  sales, invoices, receipts, waybills, payments, purchasing, vans, van
+  loading, van sales, returns, transfers, credit, reconciliation,
+  notifications, the audit trail and the offline sync queue
+- **17 reporting views**
+- **66 functions**, including the business workflow (van dispatch, sale
+  completion, returns, reconciliation, transfers) and the security helpers
+- **78 triggers**
+- **81 row level security policies**, with RLS enabled on every table
 - Demo data: two warehouses, four categories, two suppliers, three
   customers, six products and opening stock
 
@@ -255,6 +271,18 @@ delete from public.suppliers;
 delete from public.warehouses;
 ```
 
+## After running an upgrade
+
+Run `VERIFY_DATABASE.sql` again. It reports one row per check, and every
+row should read **OK** or **INFO**. A **CHECK** row means the schema does
+not match what this build expects; a **FAIL** row means something is
+missing or a security rule is not in place.
+
+Then redeploy the application. Until you do, features carried by the new
+migration are hidden rather than broken - the application probes the
+schema at startup, and the administrator's dashboard names any upgrade
+that is still outstanding.
+
 ## Security notes
 
 - **Multi-tenancy is enforced by the database.** A user in one
@@ -268,6 +296,19 @@ delete from public.warehouses;
 - **A driver cannot approve their own cash or stock variance.** This is
   enforced by a constraint, by row level security, and by a check inside
   the approval function.
+- **Cost price is management information.** It is withdrawn from the Data
+  API entirely and reached only through a function that returns null to a
+  driver or a sales rep. Hiding the column in the interface would have
+  changed nothing.
+- **A warehouse cannot approve its own transfer.** A depot that could
+  sign off its own moves could move stock wherever it liked.
+- **Supplier documents live in a private bucket** and are reached only by
+  a signed URL that lasts five minutes. Row level security is applied to
+  the stored objects as well as to the rows describing them, because
+  storage is reachable directly with an access token.
+- **Supplier portal links are stored as digests**, expire, can be revoked,
+  and are rate limited per address. A leaked database backup hands over no
+  working links.
 
 ## Re-running the installer
 
