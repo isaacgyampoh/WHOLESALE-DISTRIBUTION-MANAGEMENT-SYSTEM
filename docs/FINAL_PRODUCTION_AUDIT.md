@@ -17,6 +17,53 @@ Status meanings:
 | **REQUIRES_CONFIGURATION** | Code is complete; needs an action only the owner can take (running SQL, setting a variable). |
 | **BLOCKER** | Cannot be completed here. Stated explicitly with what is needed. |
 
+
+---
+
+## 0. Driver and salesperson
+
+The business rule that changed everything else in this pass: **a driver
+is not a salesperson.** A van goes out with a driver who drives it and
+one or more people who sell from it.
+
+| Area | Status | Notes |
+|---|---|---|
+| A van has a crew, not a driver | PASS | `van_assignments` carries `member_id` and `crew_role`. |
+| One driver per van | PASS | Partial unique index. A second is refused. |
+| One or more salespeople per van | PASS | Tested with two. |
+| Nobody on two vans at once | PASS | |
+| A deactivated account cannot be crewed | PASS | |
+| Another organization's staff cannot be crewed | PASS | |
+| A salesperson cannot be crewed to drive, or a driver to sell | PASS | The job on the van must match the job they hold. |
+| **A driver cannot create a sale** | PASS | Not a hidden button: refused by row level security when called directly. |
+| **A driver cannot take a payment** | PASS | `payments.create` removed from the role. |
+| A driver can see what the round sold | PASS | It is their van. |
+| A salesperson sees their van's stock | PASS | `my_van_id()` resolves for any crew member. |
+| A sale records who sold it and who drove | PASS | Separately. |
+| A sale cannot be recorded in a colleague's name | PASS | |
+| Only the salesperson who made a sale can complete it | PASS | Or a manager. |
+| A van with nobody crewed to sell cannot be dispatched | PASS | Goods would leave with no way to record what happened to them. |
+| The crew is snapshotted onto the load | PASS | A waybill names who went out that day, not who is aboard now. |
+| Existing assignments and sales survived | PASS | Backfilled: the driver was both on those rounds. |
+| Separate applications for the two jobs | PASS | Different navigation, different home screen. |
+| Crew management screen | PASS | `/vans/[id]/crew` — assign, replace, remove, and the history. |
+
+`test_crew.mjs` — 36 assertions.
+
+**Two findings worth recording**, because neither was visible by reading
+the code:
+
+*Row level security policies are permissive and OR together.* Adding a
+stricter rule beside the old `van_sales_driver_insert` changed nothing —
+the old policy still granted. Taking something away means dropping the
+policy that gives it. The test caught this; review would not have.
+
+*The trigger that fills in `salesperson_id` defeated the policy that
+checked it.* A driver could insert a sale, have it stamped with their own
+name, and satisfy `salesperson_id = auth.uid()`. Selling is now gated on
+being crewed **to sell**, which is a different question from being
+aboard.
+
 ---
 
 ## 1. Routing and navigation
@@ -62,6 +109,9 @@ than the interface.
 | Cart, line totals, cart total | PASS | Tax-inclusive total is read back from the database after items are inserted, never computed in the browser. |
 | Cash | PASS | |
 | Mobile money with reference | PASS | Reference is kept for dispute matching. |
+| **Mobile money network recorded** | FIXED | MTN, Telecel and AirtelTigo number transactions independently, so a reference alone cannot be matched to a statement. Held as a table, not an enum, because networks rebrand. |
+| **Mobile money reconciliation** | FIXED | `momo_reconciliation` by day, network, van and salesperson, with unreferenced payments counted apart. |
+| A network on a cash payment is refused | PASS | It is meaningless. |
 | Split cash + mobile money | PASS | `record_sale_payments()` refuses a total above the sale and refuses a short cash sale. |
 | **Split must equal the total exactly** | FIXED | The cash part was accepted without checking the remainder was positive. Now validated in the till and again in the database. |
 | **Change due on an over-tender** | FIXED | Added. Cash handed over is entered, change is shown, and the recorded payment is the sale total — not the amount handed over. |
@@ -365,6 +415,23 @@ Rendered at 1440×900, 1280×800, 1024×768, 768×1024, 390×844 and
 
 ---
 
+## Demonstration to production
+
+| Area | Status | Notes |
+|---|---|---|
+| `npm run production:clean` shows what it would delete, and stops | PASS | Nothing goes without `--confirm`. |
+| It refuses when the data is not a demonstration | PASS | A sale recorded today, or accounts the seed did not create. |
+| It removes only the demonstration organization | PASS | A second organization beside it comes through untouched. |
+| The schema, functions, views and policies are unchanged | PASS | Asserted by counting them before and after. |
+| Running it twice is harmless | PASS | |
+| `npm run production:verify` confirms nothing is left | PASS | Checks three marks, not one. |
+| `database/PRODUCTION_CLEAN.sql` for SQL-only access | PASS | Same guard; cannot delete Auth users, and says so. |
+| **A tenant could not actually be removed** | FIXED | `stock_movements` refused every delete, so the cleanup was refused at the ledger and left the database half-emptied. Migration 0035 permits a delete from a trusted role only — the same settlement 0021 made for `audit_log`. Every rewrite is still refused from everybody. |
+
+`test_production.mjs` — 25 assertions.
+
+---
+
 ## Remaining issue
 
 **BLOCKER: offline sync is unverified against the hosted database.**
@@ -391,12 +458,23 @@ Everything else in this document is complete and verified.
 
 | | |
 |---|---|
-| Database assertions | 699 across 22 suites |
+| Database assertions | 762 across 24 suites |
 | Unit assertions | 27 |
-| Migrations | 31, each with an idempotent upgrade script |
-| Upgrade path | 0022 → 0031 applied in order and re-applied, `VERIFY_DATABASE.sql` clean after both |
-| Schema | 42 tables, 19 views, 19 enums, 73 functions, 80 triggers, 85 row level security policies |
+| Routes | 51 |
+| Migrations | 35 |
+| Upgrade scripts | 19, each idempotent |
+| Upgrade path | 0022 → 0035 applied in order and re-applied; `VERIFY_DATABASE.sql` clean after both |
+| `VERIFY_DATABASE.sql` | 77 checks, 0 not OK |
+| Schema | 44 tables, 22 views, 20 enums, 161 functions, 81 triggers, 91 row level security policies, 167 indexes, 300 constraints |
 | Lint / typecheck / build | Clean |
+
+**One migration ships alone, on purpose.** `UPGRADE_0032_SALESPERSON_ROLE.sql`
+contains a single `alter type` and must be run by itself, before 0033.
+PostgreSQL refuses to use a new enum label in the transaction that added
+it, and the Supabase SQL editor runs a whole script as one transaction —
+so with that line at the top of the crew migration, every policy below it
+that mentions `salesperson` failed and the upgrade did not apply. This is
+the same failure that broke an upgrade once before, in a new place.
 
 The browser suites (`npm run hosted:pages`, `npm run visual:audit`) have
 the new routes in their matrices but were not run here: they connect to

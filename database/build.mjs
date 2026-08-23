@@ -22,6 +22,9 @@ import { idempotentSql, splitStatements } from "./sqlgen.mjs";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS = path.join(here, "..", "supabase", "migrations");
 const OUT = path.join(here, "WHOLESALE_DISTRIBUTION_DATABASE.sql");
+// The same installer under the name the business asked for. Written from
+// the same string rather than copied later, so the two cannot drift.
+const OUT_BRANDED = path.join(here, "GAB_PREMIUM_ENT_DATABASE.sql");
 
 /**
  * Upgrade scripts, for a database installed before a given migration.
@@ -1142,6 +1145,9 @@ const header = `-- =============================================================
 // tables would still collide - it makes the failure legible.
 const installer = idempotentSql(header + parts.join("") + "\n");
 fs.writeFileSync(OUT, installer);
+// The same bytes under the name the business asked for, written from the
+// same string rather than copied afterwards so the two cannot drift.
+fs.writeFileSync(OUT_BRANDED, installer);
 
 // ---- upgrade scripts, from the same migrations -----------------------
 const upgradeSummaries = [];
