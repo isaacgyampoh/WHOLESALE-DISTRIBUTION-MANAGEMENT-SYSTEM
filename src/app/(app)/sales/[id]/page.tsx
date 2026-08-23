@@ -81,6 +81,12 @@ export default async function SaleReceiptPage({
           label: "Served by",
           lines: [
             sale.soldBy,
+            // Both, because they are different people. A customer with a
+            // query names whoever they dealt with, and that is the
+            // salesperson.
+            sale.drivenBy && sale.drivenBy !== sale.soldBy
+              ? `Driver ${sale.drivenBy}`
+              : null,
             sale.vanCode ? `Van ${sale.vanCode}` : null,
             onCredit && sale.dueDate ? `Due ${formatDate(sale.dueDate)}` : null,
           ],

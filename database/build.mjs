@@ -944,6 +944,52 @@ select 'momo_reconciliation view',
        case when to_regclass('public.momo_reconciliation') is not null
             then 'PASS' else 'FAIL' end;`,
   },
+  {
+    migration: "0035_ledger_tenant_purge.sql",
+    out: "UPGRADE_0035_LEDGER_PURGE.sql",
+    title: "UPGRADE 0035 - a tenant can actually be removed",
+    summary: `-- WHAT IT FIXES
+--
+-- stock_movements refused every UPDATE and every DELETE, from anybody,
+-- with no exception. Right for a ledger - and it also meant a tenant
+-- could not be removed: the cleanup reached the ledger, was refused, and
+-- left the database half-emptied with an organization that could not be
+-- deleted because its movements still pointed at it.
+--
+-- Found by testing the cleanup rather than by reading it. The script
+-- logged the refusal and carried on, so the failure showed only in the
+-- rows left behind.
+--
+-- Migration 0021 settled exactly this for audit_log. Same rule here:
+--
+--   * every UPDATE is still refused, from everybody, always
+--   * DELETE is permitted only from a trusted server-side role
+--   * 'authenticated' has no DELETE on this table to begin with, so
+--     nothing changes for a signed-in user
+--
+-- A caller holding the service role could already read and write every
+-- row in every table; this does not widen what such a key can reach.`,
+    verify: `select 'the ledger still refuses rewrites' as check,
+       case when exists (select 1 from pg_trigger
+                          where tgrelid = 'public.stock_movements'::regclass
+                            and tgname = 'stock_movements_no_update')
+            then 'PASS' else 'FAIL' end as result
+union all
+select 'a signed-in user cannot delete from it',
+       case when not exists (
+              select 1 from information_schema.role_table_grants
+               where table_name = 'stock_movements' and grantee = 'authenticated'
+                 and privilege_type in ('UPDATE','DELETE'))
+            then 'PASS' else 'FAIL' end
+union all
+select 'a tenant purge is possible',
+       case when position('is_trusted_context' in
+              (select pg_get_functiondef(p.oid) from pg_proc p
+                 join pg_namespace n on n.oid = p.pronamespace
+                where n.nspname = 'public' and p.proname = 'block_movement_mutation'
+                limit 1)) > 0
+            then 'PASS' else 'FAIL' end;`,
+  },
 ];
 
 /** Final enum members, in the order `alter type ... add value` yields. */

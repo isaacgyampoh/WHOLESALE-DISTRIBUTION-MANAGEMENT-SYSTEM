@@ -28,7 +28,9 @@
     "hosted:offline": "node tests/visual/test_offline.mjs",
     "hosted:driver": "node tests/visual/test_driver_day.mjs",
     "icons": "node scripts/icons/generate.mjs",
-    "visual:audit": "node tests/visual/audit.mjs"
+    "visual:audit": "node tests/visual/audit.mjs",
+    "production:clean": "node scripts/production/clean.mjs",
+    "production:verify": "node scripts/production/verify.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",

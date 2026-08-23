@@ -546,6 +546,7 @@ export interface SaleReceipt {
   customerName: string;
   customerPhone: string | null;
   soldBy: string | null;
+  drivenBy: string | null;
   vanCode: string | null;
   lines: SaleReceiptLine[];
   /** Empty before migration 0025, when a sale had no breakdown at all. */
@@ -563,7 +564,11 @@ export async function getSaleReceipt(id: string): Promise<Result<SaleReceipt | n
     .select(
       "id, sale_number, sale_type, status, sold_at, subtotal, tax_total, total, " +
       "amount_paid, balance, due_date, customer_id, " +
-      "customers(code, name, phone), profiles(full_name), vans(code)",
+      "customers(code, name, phone), vans(code), " +
+      // Two different people since the crew model: the salesperson made
+      // the sale, the driver drove the van it came off.
+      "salesperson:profiles!van_sales_salesperson_id_fkey(full_name), " +
+      "driver:profiles!van_sales_driver_id_fkey(full_name)",
     )
     .eq("id", id)
     .maybeSingle();
@@ -573,7 +578,8 @@ export async function getSaleReceipt(id: string): Promise<Result<SaleReceipt | n
 
   const row = data as unknown as Record<string, unknown>;
   const customer = row.customers as { code?: string; name?: string; phone?: string } | null;
-  const driver = row.profiles as { full_name?: string } | null;
+  const seller = row.salesperson as { full_name?: string } | null;
+  const driver = row.driver as { full_name?: string } | null;
   const van = row.vans as { code?: string } | null;
 
   const [items, payments, invoice] = await Promise.all([
@@ -609,7 +615,8 @@ export async function getSaleReceipt(id: string): Promise<Result<SaleReceipt | n
       customerCode: customer?.code ?? "",
       customerName: customer?.name ?? "Customer",
       customerPhone: customer?.phone ?? null,
-      soldBy: driver?.full_name ?? null,
+      soldBy: seller?.full_name ?? null,
+      drivenBy: driver?.full_name ?? null,
       vanCode: van?.code ?? null,
       lines: ((items.data ?? []) as unknown as Record<string, unknown>[]).map((l) => {
         const product = l.products as { name?: string; sku?: string } | null;

@@ -162,11 +162,16 @@ if (posted) say(`posted opening stock for ${posted} product(s)`);
 
 // Demo people. Each signs in the ordinary way.
 // Demo people, each with a real PIN they sign in with.
+// 3072 stays the driver, as it always was. 5120 is new: since a driver
+// is no longer the salesperson, the demo needs both people to show the
+// round at all - the driver cannot sell and the salesperson cannot
+// dispatch.
 const USERS = [
   ["demo-admin@demo.invalid", "admin", "Demo Super Administrator", "1024"],
   ["demo-manager@demo.invalid", "manager", "Adwoa Demo", "2048"],
   ["demo-driver@demo.invalid", "driver", "Kojo Demo", "3072"],
   ["demo-accounts@demo.invalid", "accountant", "Efua Demo", "4096"],
+  ["demo-sales@demo.invalid", "salesperson", "Yaw Demo", "5120"],
 ];
 const issued = [];
 for (const [email, role, fullName, pin] of USERS) {
@@ -194,18 +199,38 @@ for (const [email, role, fullName, pin] of USERS) {
   }
 }
 
-// The driver needs a van to have anything to show.
-const { data: driver } = await admin
-  .from("profiles").select("id").eq("email", "demo-driver@demo.invalid").maybeSingle();
-if (driver) {
-  const { data: assignment } = await admin
-    .from("van_assignments").select("id").eq("driver_id", driver.id)
+// The van needs a crew: one to drive it and one to sell from it. It
+// cannot be dispatched without both.
+const crew = [
+  ["demo-driver@demo.invalid", "driver"],
+  ["demo-sales@demo.invalid", "salesperson"],
+];
+
+for (const [email, crewRole] of crew) {
+  const { data: member } = await admin
+    .from("profiles").select("id").eq("email", email).maybeSingle();
+  if (!member) continue;
+
+  const { data: existing } = await admin
+    .from("van_assignments").select("id").eq("member_id", member.id)
     .is("unassigned_at", null).maybeSingle();
-  if (!assignment) {
-    await admin.from("van_assignments").insert({ org_id: org.id, van_id: van, driver_id: driver.id });
-    say("assigned the demo driver to the demo van");
+  if (existing) continue;
+
+  const { error } = await admin.from("van_assignments").insert({
+    org_id: org.id, van_id: van, member_id: member.id, crew_role: crewRole,
+  });
+  if (error) {
+    say(`could not crew ${crewRole} (${error.message}) - apply UPGRADE_0032 and 0033`);
+  } else {
+    say(`crewed the demo ${crewRole} onto the demo van`);
   }
 }
+
+// Whoever sells in this demo. Sales are attributed to them, not to the
+// person driving.
+const { data: salesperson } = await admin
+  .from("profiles").select("id").eq("email", "demo-sales@demo.invalid").maybeSingle();
+const salespersonId = salesperson?.id ?? null;
 
 // ===================================================================
 // A complete distribution cycle, so every screen has something real on
@@ -328,6 +353,7 @@ if (existingCycle) {
 
     const sale = (await admin.from("van_sales").insert({
       org_id: org.id, load_id: load.id, van_id: van, driver_id: driverId,
+      salesperson_id: salespersonId ?? driverId,
       customer_id: customer.id, sale_type: spec.type, status: "draft",
       sold_at: hoursAgo(20 - index * 3),
       due_date: spec.type === "credit"
