@@ -48,7 +48,28 @@ one or more people who sell from it.
 | Separate applications for the two jobs | PASS | Different navigation, different home screen. |
 | Crew management screen | PASS | `/vans/[id]/crew` — assign, replace, remove, and the history. |
 
-`test_crew.mjs` — 36 assertions.
+`test_crew.mjs` — 36 assertions. `test_field_workflow.mjs` — 48, walking
+a whole round rather than testing one rule at a time.
+
+**A third finding, and the worst of them.** Adding a role to the enum
+does not add it to the role lists already written inside functions. Five
+still named `driver` and `sales_rep` and did not know the salesperson
+existed — so the person who actually sells was refused by the very
+functions selling depends on:
+
+| Function | What was broken |
+|---|---|
+| `issue_invoice_for_sale` | A credit sale failed at the invoice trigger. **Credit selling did not work at all.** |
+| `sync_submit` | An offline sale could not be uploaded. |
+| `sync_bootstrap` | The device could not fetch its snapshot, so offline selling never started. |
+| `record_credit_payment` | A collection could not be taken. |
+| `can_access_product` | A salesperson was not scoped to their van and saw the whole catalogue. |
+
+Every unit-level test passed throughout, because each used the old
+roles. It surfaced only on walking the sequence end to end. Migration
+0036 fixes all five and **fails the migration** if any other function
+still has the same gap, rather than leaving one more to be found in the
+field.
 
 **Two findings worth recording**, because neither was visible by reading
 the code:
@@ -458,12 +479,12 @@ Everything else in this document is complete and verified.
 
 | | |
 |---|---|
-| Database assertions | 762 across 24 suites |
+| Database assertions | 818 across 25 suites |
 | Unit assertions | 27 |
 | Routes | 51 |
-| Migrations | 35 |
-| Upgrade scripts | 19, each idempotent |
-| Upgrade path | 0022 → 0035 applied in order and re-applied; `VERIFY_DATABASE.sql` clean after both |
+| Migrations | 36 |
+| Upgrade scripts | 20, each idempotent |
+| Upgrade path | 0022 → 0036 applied in order and re-applied; `VERIFY_DATABASE.sql` clean after both |
 | `VERIFY_DATABASE.sql` | 77 checks, 0 not OK |
 | Schema | 44 tables, 22 views, 20 enums, 161 functions, 81 triggers, 91 row level security policies, 167 indexes, 300 constraints |
 | Lint / typecheck / build | Clean |

@@ -993,6 +993,76 @@ select 'a tenant purge is possible',
                 limit 1)) > 0
             then 'PASS' else 'FAIL' end;`,
   },
+  {
+    migration: "0036_salesperson_reaches_everything.sql",
+    out: "UPGRADE_0036_SALESPERSON_REACH.sql",
+    title: "UPGRADE 0036 - the salesperson role reaches what it needs to",
+    summary: `-- WHAT IT FIXES
+--
+-- Adding a role to the enum does not add it to the role lists already
+-- written into functions. Five of them still named 'driver' and
+-- 'sales_rep' and did not know the salesperson existed, so the person
+-- who actually sells was refused by the very functions selling depends
+-- on:
+--
+--   issue_invoice_for_sale   a credit sale failed at the invoice
+--                            trigger. Credit selling did not work.
+--   sync_submit              an offline sale could not be uploaded.
+--   sync_bootstrap           the device could not fetch its snapshot,
+--                            so offline selling never started.
+--   record_credit_payment    a collection could not be taken.
+--   can_access_product       a salesperson was not scoped to their van
+--                            and saw the whole catalogue.
+--
+-- Found by walking a whole round rather than testing one rule at a
+-- time. Every unit-level test passed, because each used the old roles.
+--
+-- This script also FAILS if any other function still has a role list
+-- naming the field roles without the salesperson, rather than leaving
+-- one more to be discovered in the field.
+--
+-- RUN IT AFTER 0033. It needs the salesperson role and the crew model
+-- to already exist.`,
+    verify: `select 'a salesperson can raise an invoice' as check,
+       case when position('salesperson' in
+              (select pg_get_functiondef(p.oid) from pg_proc p
+                 join pg_namespace n on n.oid = p.pronamespace
+                where n.nspname = 'public' and p.proname = 'issue_invoice_for_sale'
+                limit 1)) > 0
+            then 'PASS' else 'FAIL' end as result
+union all
+select 'a salesperson can sync offline sales',
+       case when position('salesperson' in
+              (select pg_get_functiondef(p.oid) from pg_proc p
+                 join pg_namespace n on n.oid = p.pronamespace
+                where n.nspname = 'public' and p.proname = 'sync_submit'
+                limit 1)) > 0
+            then 'PASS' else 'FAIL' end
+union all
+select 'a salesperson can fetch their snapshot',
+       case when position('salesperson' in
+              (select pg_get_functiondef(p.oid) from pg_proc p
+                 join pg_namespace n on n.oid = p.pronamespace
+                where n.nspname = 'public' and p.proname = 'sync_bootstrap'
+                limit 1)) > 0
+            then 'PASS' else 'FAIL' end
+union all
+select 'a salesperson can take a collection',
+       case when position('salesperson' in
+              (select pg_get_functiondef(p.oid) from pg_proc p
+                 join pg_namespace n on n.oid = p.pronamespace
+                where n.nspname = 'public' and p.proname = 'record_credit_payment'
+                limit 1)) > 0
+            then 'PASS' else 'FAIL' end
+union all
+select 'a salesperson is scoped to their van',
+       case when position('salesperson' in
+              (select pg_get_functiondef(p.oid) from pg_proc p
+                 join pg_namespace n on n.oid = p.pronamespace
+                where n.nspname = 'public' and p.proname = 'can_access_product'
+                limit 1)) > 0
+            then 'PASS' else 'FAIL' end;`,
+  },
 ];
 
 /** Final enum members, in the order `alter type ... add value` yields. */
