@@ -153,8 +153,10 @@ Four values. Two are public, two must never leave the server.
       default: a crate does not expire and should not be made to carry a
       date.
 
-- [ ] **Assign each driver to a van.** A driver with no van sees an empty
-      round and cannot sell.
+- [ ] **Crew every van.** Each needs a driver *and* at least one
+      salesperson: a van with nobody crewed to sell cannot be dispatched
+      at all, and a salesperson with no van sees an empty round.
+      Vans → open one → Crew.
 
 - [ ] **Remove the demo data** — see `docs/DEMO_TO_PRODUCTION.md`. Run it
       *before* real data goes in, and understand that `npm run demo:clean`
@@ -176,7 +178,8 @@ see.
 
       This is the one part of the system that has not been verified
       against a hosted database — see the note at the end of
-      `docs/FINAL_PRODUCTION_AUDIT.md`.
+      `docs/FINAL_PRODUCTION_AUDIT.md`. Do it with a **salesperson**
+      account: a driver cannot record a sale.
 
 - [ ] **A cash sale, a mobile money sale and a split**, and confirm the
       end-of-day figures separate cash from mobile money.
