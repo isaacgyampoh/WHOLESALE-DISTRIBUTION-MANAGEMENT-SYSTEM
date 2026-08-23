@@ -37,6 +37,20 @@ import {
  * caches does not contain one.
  */
 
+/**
+ * The mobile money networks, for the till.
+ *
+ * Held here rather than read from the database because the till has to
+ * work with no signal, and this list changes about once a decade. The
+ * database has the same list and refuses anything not on it, so the two
+ * cannot silently disagree.
+ */
+const MOMO_PROVIDERS = [
+  { code: "mtn", short: "MTN" },
+  { code: "telecel", short: "Telecel" },
+  { code: "airteltigo", short: "AirtelTigo" },
+] as const;
+
 type Stage = "cart" | "payment" | "done";
 type Tender = "cash" | "momo" | "split" | "credit";
 
@@ -88,6 +102,10 @@ export function SellForm({
   // because the change goes back in their hand.
   const [cashGiven, setCashGiven] = useState("");
   const [momoRef, setMomoRef] = useState("");
+  // Which network. MTN, Telecel and AirtelTigo number their transactions
+  // independently, so the reference alone cannot be matched against a
+  // statement.
+  const [momoProvider, setMomoProvider] = useState("");
   // Null until they have chosen how the customer is paying.
   const [tender, setTender] = useState<Exclude<Tender, "credit"> | null>(null);
   const [creatingCustomer, startCreate] = useTransition();
@@ -208,13 +226,18 @@ export function SellForm({
    * offering methods nobody uses is how a till gets slow.
    */
   function tenderFor(tender: Tender): {
-    payment: { kind: Tender; cashPart?: number; reference?: string | null };
+    payment: {
+      kind: Tender; cashPart?: number; reference?: string | null; provider?: string | null;
+    };
     label: string;
   } | null {
     const reference = momoRef.trim() || null;
+    const provider = momoProvider || null;
 
     if (tender === "cash") return { payment: { kind: "cash" }, label: "cash" };
-    if (tender === "momo") return { payment: { kind: "momo", reference }, label: "mobile money" };
+    if (tender === "momo") {
+      return { payment: { kind: "momo", reference, provider }, label: "mobile money" };
+    }
     if (tender === "credit") return { payment: { kind: "credit" }, label: "on credit" };
 
     // A split has to be a split. Nothing in cash is a mobile money sale,
@@ -224,7 +247,7 @@ export function SellForm({
     if (!Number.isFinite(cash) || cash <= 0) return null;
     if (cash >= total) return null;
     return {
-      payment: { kind: "split", cashPart: cash, reference },
+      payment: { kind: "split", cashPart: cash, reference, provider },
       label: `${formatMoney(cash)} cash and ${formatMoney(total - cash)} on mobile money`,
     };
   }
@@ -637,6 +660,26 @@ export function SellForm({
                 </div>
               ) : tender === "momo" ? (
                 <div className="space-y-2">
+                  {/* Which network. Big buttons rather than a dropdown:
+                      this is tapped standing up, and there are only
+                      ever a handful. */}
+                  <div className="grid grid-cols-3 gap-2">
+                    {MOMO_PROVIDERS.map((p) => (
+                      <button
+                        key={p.code}
+                        type="button"
+                        onClick={() => setMomoProvider(p.code === momoProvider ? "" : p.code)}
+                        aria-pressed={momoProvider === p.code}
+                        className={`h-14 rounded-[var(--radius-panel)] border px-2 text-sm font-medium ${
+                          momoProvider === p.code
+                            ? "border-brand-700 bg-brand-50 text-brand-700 dark:bg-brand-950 dark:text-brand-300"
+                            : "border-[var(--border-strong)] text-[var(--text-secondary)]"
+                        }`}
+                      >
+                        {p.short}
+                      </button>
+                    ))}
+                  </div>
                   <Input
                     aria-label="Mobile money reference"
                     placeholder="Momo transaction id (optional)"
@@ -658,6 +701,26 @@ export function SellForm({
                     onChange={(e) => setCashPart(e.target.value)}
                     className="numeric h-14 text-base"
                   />
+                  {/* Which network. Big buttons rather than a dropdown:
+                      this is tapped standing up, and there are only
+                      ever a handful. */}
+                  <div className="grid grid-cols-3 gap-2">
+                    {MOMO_PROVIDERS.map((p) => (
+                      <button
+                        key={p.code}
+                        type="button"
+                        onClick={() => setMomoProvider(p.code === momoProvider ? "" : p.code)}
+                        aria-pressed={momoProvider === p.code}
+                        className={`h-14 rounded-[var(--radius-panel)] border px-2 text-sm font-medium ${
+                          momoProvider === p.code
+                            ? "border-brand-700 bg-brand-50 text-brand-700 dark:bg-brand-950 dark:text-brand-300"
+                            : "border-[var(--border-strong)] text-[var(--text-secondary)]"
+                        }`}
+                      >
+                        {p.short}
+                      </button>
+                    ))}
+                  </div>
                   <Input
                     aria-label="Mobile money reference"
                     placeholder="Momo transaction id (optional)"

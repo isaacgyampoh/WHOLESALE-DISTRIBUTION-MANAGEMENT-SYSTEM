@@ -52,7 +52,14 @@ const van = (await c.query(
   `insert into vans (org_id, code, registration_no, home_warehouse_id)
    values ($1,'SYNCVAN','GT-SYNC',$2) returning id`, [orgA, wh])).rows[0].id;
 await c.query(
-  `insert into van_assignments (org_id, van_id, driver_id) values ($1,$2,$3)`, [orgA, van, driver]);
+  `insert into van_assignments (org_id, van_id, member_id, crew_role) values ($1,$2,$3,'driver')`,
+  [orgA, van, driver]);
+// The person who syncs is a salesperson: a driver cannot record a sale,
+// offline or otherwise.
+const syncSeller = await mk("syncsell", "salesperson");
+await c.query(
+  `insert into van_assignments (org_id, van_id, member_id, crew_role) values ($1,$2,$3,'salesperson')`,
+  [orgA, van, syncSeller]);
 
 // Stock into the warehouse through the ledger, then onto the van.
 await c.query(

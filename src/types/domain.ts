@@ -11,6 +11,9 @@ export const USER_ROLES = [
   "senior_manager",
   "manager",
   "sales_rep",
+  // Field sales: crewed on a van, sells from it. Deliberately not the
+  // same as sales_rep, which is office-based and has no van.
+  "salesperson",
   "warehouse",
   "accountant",
   "driver",

@@ -34,6 +34,9 @@ const UPGRADE_NTF = path.join("..", "..", "database", "UPGRADE_0028_NOTIFICATION
 const UPGRADE_DOCS_SUP = path.join("..", "..", "database", "UPGRADE_0029_SUPPLIER_DOCUMENTS.sql");
 const UPGRADE_PORTAL = path.join("..", "..", "database", "UPGRADE_0030_SUPPLIER_PORTAL.sql");
 const UPGRADE_SUBMIT = path.join("..", "..", "database", "UPGRADE_0031_SUPPLIER_SUBMISSIONS.sql");
+const UPGRADE_ROLE = path.join("..", "..", "database", "UPGRADE_0032_SALESPERSON_ROLE.sql");
+const UPGRADE_CREW = path.join("..", "..", "database", "UPGRADE_0033_VAN_CREW.sql");
+const UPGRADE_MOMO = path.join("..", "..", "database", "UPGRADE_0034_MOMO_PROVIDER.sql");
 
 let pass = 0, fail = 0;
 const ok = (n, c, x = "") => { c ? (pass++, console.log(`  PASS  ${n} ${x}`)) : (fail++, console.log(`  FAIL  ${n} ${x}`)); };
@@ -51,7 +54,7 @@ for (const s of splitStatements(shim)) await c.query(s);
 // Everything up to but NOT including 0022.
 const files = fs.readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort()
   .filter((f) => !["0022", "0023", "0024", "0025", "0026", "0027", "0028", "0029", "0030",
-                   "0031"].some((n) => f.startsWith(n)));
+                   "0031", "0032", "0033", "0034"].some((n) => f.startsWith(n)));
 for (const f of files) {
   const sql = fs.readFileSync(path.join(MIGRATIONS, f), "utf8");
   for (const s of splitStatements(sql)) {
@@ -340,7 +343,12 @@ for (const [what, sql] of [
 // ---- 0029 and 0030, on top of 0028 --------------------------------
 console.log("\n=== UPGRADE_0029 and UPGRADE_0030, then again ===");
 for (const [name, file] of [["0029", UPGRADE_DOCS_SUP], ["0030", UPGRADE_PORTAL],
-                            ["0031", UPGRADE_SUBMIT]]) {
+                            ["0031", UPGRADE_SUBMIT],
+                            // 0032 is the enum label on its own: PostgreSQL
+                            // will not let 0033 use it in the same
+                            // transaction that created it.
+                            ["0032", UPGRADE_ROLE], ["0033", UPGRADE_CREW],
+                            ["0034", UPGRADE_MOMO]]) {
   const sql = fs.readFileSync(file, "utf8");
   for (const attempt of ["runs in order", "runs a second time"]) {
     try {
@@ -372,6 +380,32 @@ for (const [what, sql] of [
        where n.nspname='public' and p.proname='resolve_supplier_token'
          and (has_function_privilege('anon', p.oid, 'EXECUTE')
               or has_function_privilege('authenticated', p.oid, 'EXECUTE'))) v`],
+  // ---- the crew model, applied as an upgrade ----
+  ["a van assignment names a job", `select (select count(*) from information_schema.columns
+      where table_name='van_assignments' and column_name in ('member_id','crew_role')) = 2 v`],
+  ["one driver per van", `select exists (select 1 from pg_indexes
+      where indexname='van_assignments_one_active_driver_per_van') v`],
+  ["a sale records who sold it", `select exists (select 1 from information_schema.columns
+      where table_name='van_sales' and column_name='salesperson_id') v`],
+  ["no sale is left unattributed", `select not exists (
+      select 1 from public.van_sales where salesperson_id is null) v`],
+  // The trap this migration fell into: policies are permissive and OR
+  // together, so the old driver rule had to be dropped, not outvoted.
+  ["the old driver-insert policy is gone", `select not exists (select 1 from pg_policies
+      where tablename='van_sales' and policyname='van_sales_driver_insert') v`],
+  ["selling is gated on being crewed to sell", `select exists (select 1 from pg_proc p
+      join pg_namespace n on n.oid=p.pronamespace
+     where n.nspname='public' and p.proname='is_van_salesperson') v`],
+  ["salesperson is a role", `select exists (select 1 from pg_enum e join pg_type t on t.oid=e.enumtypid
+      where t.typname='user_role' and e.enumlabel='salesperson') v`],
+  ["user_role has no duplicate labels", `select (
+      select count(*) = count(distinct e.enumlabel) from pg_enum e join pg_type t on t.oid=e.enumtypid
+       where t.typname='user_role') v`],
+  ["mobile money knows its network", `select (select count(*) from information_schema.columns
+      where table_name in ('van_sale_payments','payments') and column_name='provider') = 2 v`],
+  ["the Ghanaian networks are listed", `select (select count(*) from public.momo_providers
+      where code in ('mtn','telecel','airteltigo')) = 3 v`],
+
   ["a supplier can submit their own invoice", `select exists (select 1 from pg_proc p
       join pg_namespace n on n.oid=p.pronamespace
      where n.nspname='public' and p.proname='submit_supplier_document') v`],

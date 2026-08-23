@@ -784,6 +784,166 @@ select 'submissions are server-side only',
                       or has_function_privilege('authenticated', p.oid, 'EXECUTE')))
             then 'PASS' else 'FAIL' end;`,
   },
+  {
+    migration: "0032_salesperson_role.sql",
+    out: "UPGRADE_0032_SALESPERSON_ROLE.sql",
+    title: "UPGRADE 0032 - the salesperson role",
+    summary: `-- WHAT IT ADDS
+--
+-- One line: the 'salesperson' role.
+--
+-- IT IS A FILE OF ITS OWN FOR A REASON. PostgreSQL refuses to use a new
+-- enum label in the same transaction that added it, and the Supabase SQL
+-- editor runs a whole script as one transaction. With this line at the
+-- top of UPGRADE_0033 the policies further down that mention
+-- 'salesperson' could not be created and the whole thing failed.
+--
+-- So: run this one on its own and let it finish. Then run
+-- UPGRADE_0033_VAN_CREW.sql, which needs the role to already exist.`,
+    verify: `select 'salesperson is a role' as check,
+       case when exists (select 1 from pg_enum e join pg_type t on t.oid = e.enumtypid
+                          where t.typname = 'user_role' and e.enumlabel = 'salesperson')
+            then 'PASS' else 'FAIL' end as result
+union all
+select 'user_role has no duplicate labels',
+       case when (select count(*) = count(distinct e.enumlabel)
+                    from pg_enum e join pg_type t on t.oid = e.enumtypid
+                   where t.typname = 'user_role')
+            then 'PASS' else 'FAIL' end;`,
+  },
+  {
+    migration: "0033_van_crew.sql",
+    out: "UPGRADE_0033_VAN_CREW.sql",
+    title: "UPGRADE 0033 - a van has a crew",
+    summary: `-- WHAT IT CHANGES
+--
+-- The schema assumed the driver was the salesperson. Every van record
+-- was keyed on driver_id, and the driver role could sell. That put the
+-- wrong name on every receipt and handed the till to whoever was behind
+-- the wheel.
+--
+-- A van now has a crew: one driver, and one or more people who sell
+-- from it.
+--
+--   van_assignments.driver_id becomes member_id, with a crew_role
+--   my_van_id()               resolves for any crew member
+--   is_van_salesperson()      the predicate that gates selling
+--   van_sales.salesperson_id  who sold it, beside who drove
+--   van_load_crew             who went out with a load, snapshotted
+--   salesperson_performance   sales attributed to whoever made them
+--
+-- A van with nobody crewed to sell can no longer be dispatched: the
+-- goods would leave the warehouse with no way to record what happened
+-- to them.
+--
+-- EXISTING DATA IS PRESERVED. Every assignment becomes a driver
+-- assignment, which is what it was. Every existing sale is backfilled
+-- with the driver as the salesperson, because on those rounds that
+-- person genuinely was both.
+--
+-- THE POLICIES FROM 0013 ARE DROPPED AND REPLACED, not added to. Row
+-- level security policies are permissive and OR together, so leaving
+-- the old driver rules in place would mean a driver could still open a
+-- sale however the new rules were written.
+--
+-- RUN UPGRADE_0032_SALESPERSON_ROLE.sql FIRST, on its own. This script
+-- needs the salesperson role to already exist.
+--
+-- AFTER RUNNING IT, redeploy, then crew your vans: Vans, open one, and
+-- assign a driver and at least one salesperson. Until a van has a
+-- salesperson it cannot be dispatched.`,
+    verify: `select 'crew_role enum' as check,
+       case when exists (select 1 from pg_type t join pg_namespace n on n.oid = t.typnamespace
+                          where n.nspname = 'public' and t.typname = 'crew_role')
+            then 'PASS' else 'FAIL' end as result
+union all
+select 'salesperson is a role',
+       case when exists (select 1 from pg_enum e join pg_type t on t.oid = e.enumtypid
+                          where t.typname = 'user_role' and e.enumlabel = 'salesperson')
+            then 'PASS' else 'FAIL' end
+union all
+select 'assignments carry a crew member and a job',
+       case when (select count(*) from information_schema.columns
+                   where table_name = 'van_assignments'
+                     and column_name in ('member_id','crew_role')) = 2
+            then 'PASS' else 'FAIL' end
+union all
+select 'one driver per van, many salespeople',
+       case when exists (select 1 from pg_indexes
+                          where indexname = 'van_assignments_one_active_driver_per_van')
+            then 'PASS' else 'FAIL' end
+union all
+select 'a sale records who sold it',
+       case when exists (select 1 from information_schema.columns
+                          where table_name = 'van_sales' and column_name = 'salesperson_id')
+            then 'PASS' else 'FAIL' end
+union all
+select 'no sale left unattributed',
+       case when not exists (select 1 from public.van_sales where salesperson_id is null)
+            then 'PASS' else 'FAIL' end
+union all
+select 'selling is gated on being crewed to sell',
+       case when exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                          where n.nspname = 'public' and p.proname = 'is_van_salesperson')
+            then 'PASS' else 'FAIL' end
+union all
+select 'the old driver-insert policy is gone',
+       case when not exists (select 1 from pg_policies
+                              where tablename = 'van_sales'
+                                and policyname = 'van_sales_driver_insert')
+            then 'PASS' else 'FAIL' end
+union all
+select 'load crew is snapshotted',
+       case when to_regclass('public.van_load_crew') is not null
+            then 'PASS' else 'FAIL' end;`,
+  },
+  {
+    migration: "0034_mobile_money_provider.sql",
+    out: "UPGRADE_0034_MOMO_PROVIDER.sql",
+    title: "UPGRADE 0034 - which network the mobile money came from",
+    summary: `-- WHAT IT ADDS
+--
+-- A mobile money payment recorded a reference and nothing else. In
+-- Ghana that reference only means something alongside the network that
+-- issued it: MTN, Telecel and AirtelTigo number their transactions
+-- independently, so reconciling a day's takings meant guessing which
+-- statement to look in.
+--
+--   momo_providers        the networks, as a table rather than an enum
+--                         so a rebrand does not need a migration
+--   provider              on van_sale_payments and on payments
+--   momo_reconciliation   taken by day, network, van and salesperson,
+--                         with unreferenced payments counted apart
+--
+-- Existing payments keep a null network, which is what is known about
+-- them. Nothing is invented.
+--
+-- AFTER RUNNING IT, redeploy. The till offers the network beside the
+-- reference only once this is in place.`,
+    verify: `select 'momo_providers table' as check,
+       case when to_regclass('public.momo_providers') is not null
+            then 'PASS' else 'FAIL' end as result
+union all
+select 'the Ghanaian networks are listed',
+       case when (select count(*) from public.momo_providers
+                   where code in ('mtn','telecel','airteltigo')) = 3
+            then 'PASS' else 'FAIL' end
+union all
+select 'payments carry a network',
+       case when (select count(*) from information_schema.columns
+                   where table_name in ('van_sale_payments','payments')
+                     and column_name = 'provider') = 2
+            then 'PASS' else 'FAIL' end
+union all
+select 'a network on cash is refused',
+       case when exists (select 1 from pg_constraint
+                          where conname = 'van_sale_payments_provider_matches_method')
+            then 'PASS' else 'FAIL' end
+union all
+select 'momo_reconciliation view',
+       case when to_regclass('public.momo_reconciliation') is not null
+            then 'PASS' else 'FAIL' end;`,
+  },
 ];
 
 /** Final enum members, in the order `alter type ... add value` yields. */
@@ -797,7 +957,10 @@ const ENUM_REWRITES = [
   'admin', 'manager', 'sales_rep', 'warehouse', 'accountant',
   -- Appended by migration 0010; declared here so the whole installer can
   -- run inside one transaction.
-  'driver', 'senior_manager'
+  'driver', 'senior_manager',
+  -- Appended by migration 0032, when the driver stopped being the
+  -- salesperson.
+  'salesperson'
 );`,
   },
   {
@@ -822,6 +985,31 @@ const NEUTRALISED = {
 -- enum value in the transaction that added it. Nothing to do here.`,
 };
 
+/**
+ * Enum ALTERs inside a later migration, neutralised the same way.
+ *
+ * Same reason as 0010: the value is declared up front in section 0001,
+ * and PostgreSQL refuses to use a new enum label in the transaction that
+ * added it. The rest of the migration is kept.
+ */
+const ENUM_ALTERS_TO_DROP = [];
+
+/**
+ * Migrations that are nothing but an enum ALTER.
+ *
+ * In the consolidated installer the label is already declared up front
+ * in section 0001, so the whole file becomes a note. As an upgrade
+ * script it still has to exist and still has to run on its own, because
+ * PostgreSQL refuses to use a new enum label in the transaction that
+ * added it.
+ */
+const ENUM_ONLY = {
+  "0032_salesperson_role.sql": `-- Migration 0032 adds 'salesperson' to user_role.
+-- In this consolidated installer that label is already part of the enum
+-- declaration in section 0001, because PostgreSQL cannot use a new enum
+-- value in the transaction that added it. Nothing to do here.`,
+};
+
 const banner = (title) =>
   `\n\n-- ${"=".repeat(68)}\n-- ${title}\n-- ${"=".repeat(68)}\n`;
 
@@ -835,6 +1023,25 @@ for (const file of files) {
   if (NEUTRALISED[file]) {
     parts.push(banner(file) + NEUTRALISED[file] + "\n");
     continue;
+  }
+
+  if (ENUM_ONLY[file]) {
+    parts.push(banner(file) + ENUM_ONLY[file] + "\n");
+    continue;
+  }
+
+  // Enum ALTERs in a later migration, neutralised for the same reason as
+  // 0010: the label is declared up front in section 0001, and PostgreSQL
+  // refuses to use one in the transaction that added it.
+  for (const rule of ENUM_ALTERS_TO_DROP) {
+    if (rule.file !== file) continue;
+    if (!sql.includes(rule.from)) {
+      throw new Error(
+        `Enum ALTER target not found in ${file}. The migration has changed; ` +
+          `update database/build.mjs rather than editing the installer.`,
+      );
+    }
+    sql = sql.replace(rule.from, rule.to);
   }
 
   for (const rule of ENUM_REWRITES) {

@@ -42,7 +42,26 @@ export interface DatabaseCapabilities {
   supplierPortal: boolean;
   /** Migration 0031: suppliers submit their own invoices, and we review them. */
   supplierSubmissions: boolean;
+  /** Migration 0032: a van has a crew, and a driver is not a salesperson. */
+  vanCrew: boolean;
 }
+
+/**
+ * Every capability absent.
+ *
+ * Derived from one list rather than written out, because a literal here
+ * drifts every time a capability is added and the only thing that
+ * catches it is a typecheck that has to be run.
+ */
+const CAPABILITY_NAMES = [
+  "maskedProductPricing", "batchesAndExpiry", "offlineSync", "salePaymentMethods",
+  "documents", "warehouseTransfers", "notifications", "supplierDocuments",
+  "supplierPortal", "supplierSubmissions", "vanCrew",
+] as const satisfies readonly (keyof DatabaseCapabilities)[];
+
+const NONE_AVAILABLE: DatabaseCapabilities = Object.fromEntries(
+  CAPABILITY_NAMES.map((name) => [name, false]),
+) as unknown as DatabaseCapabilities;
 
 let cached: DatabaseCapabilities | null = null;
 let inFlight: Promise<DatabaseCapabilities> | null = null;
@@ -58,7 +77,7 @@ async function probe(): Promise<DatabaseCapabilities> {
   const admin = createSupabaseAdminClient();
 
   const [priced, batches, sync, payments, documents, transfers, alerts,
-         supplierDocs, portal, submissions] = await Promise.all([
+         supplierDocs, portal, submissions, crew] = await Promise.all([
     admin.from("products_priced").select("id").limit(1),
     admin.from("products").select("track_expiry").limit(1),
     admin.from("sync_operations").select("id").limit(1),
@@ -69,6 +88,7 @@ async function probe(): Promise<DatabaseCapabilities> {
     admin.from("supplier_documents").select("id").limit(1),
     admin.from("supplier_portal_tokens").select("id").limit(1),
     admin.from("supplier_documents").select("status").limit(1),
+    admin.from("van_crew").select("van_id").limit(1),
   ]);
 
   const capabilities: DatabaseCapabilities = {
@@ -82,6 +102,7 @@ async function probe(): Promise<DatabaseCapabilities> {
     supplierDocuments: !supplierDocs.error,
     supplierPortal: !portal.error,
     supplierSubmissions: !submissions.error,
+    vanCrew: !crew.error,
   };
 
   const missing = Object.entries(capabilities)
@@ -113,12 +134,7 @@ export async function getCapabilities(): Promise<DatabaseCapabilities> {
     inFlight = null;
     console.error("[database] capability probe failed", error);
     // Assume the oldest schema. Everything degrades; nothing leaks.
-    return {
-      maskedProductPricing: false, batchesAndExpiry: false,
-      offlineSync: false, salePaymentMethods: false, documents: false,
-      warehouseTransfers: false, notifications: false,
-      supplierDocuments: false, supplierPortal: false, supplierSubmissions: false,
-    };
+    return NONE_AVAILABLE;
   });
   return inFlight;
 }

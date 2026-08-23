@@ -75,7 +75,15 @@ async function as(c, uid, fn) {
     values ($1,'VAN-99','GT-9999-24',$2) returning id`, [org, wh])).id;
   const otherVan = (await one(c, `insert into vans (org_id, code, registration_no)
     values ($1,'VAN-98','GT-9998-24') returning id`, [org])).id;
-  await q(c, `insert into van_assignments (org_id, van_id, driver_id) values ($1,$2,$3)`, [org, van, driver]);
+  await q(c, `insert into van_assignments (org_id, van_id, member_id, crew_role)
+              values ($1,$2,$3,'driver')`, [org, van, driver]);
+
+  // A van does not go out without somebody crewed to sell from it.
+  const scopeSeller = (await one(c, `insert into auth.users (email, raw_user_meta_data)
+    values ('scopesell@wdms.test', $1::jsonb) returning id`,
+    [JSON.stringify({ full_name: 'Scope Seller', role: 'salesperson', org_id: org })])).id;
+  await q(c, `insert into van_assignments (org_id, van_id, member_id, crew_role)
+              values ($1,$2,$3,'salesperson')`, [org, van, scopeSeller]);
 
   // Put two products on the driver's van.
   const load = (await one(c, `insert into van_loads (org_id, van_id, driver_id, warehouse_id, status, driver_confirmed_at)
@@ -100,16 +108,22 @@ async function as(c, uid, fn) {
   r = await as(c, driver, () => q(c, `select count(*)::int n from van_inventory`));
   ok('driver sees own van stock', r.ok && r.value[0].n === twoProds.length, `(${r.ok ? r.value[0].n : r.error})`);
 
-  r = await as(c, driver, () => q(c, `insert into customers (org_id, code, name) values ($1,'CUS-NEW','Field Customer') returning id`, [org]));
-  ok('driver can create a customer', r.ok, r.ok ? '' : `(${r.error})`);
+  r = await as(c, scopeSeller, () => q(c, `insert into customers (org_id, code, name) values ($1,'CUS-NEW','Field Customer') returning id`, [org]));
+  ok('salesperson can create a customer', r.ok, r.ok ? '' : `(${r.error})`);
 
-  r = await as(c, driver, () => q(c, `insert into van_sales (org_id, load_id, van_id, driver_id, customer_id, sale_type)
-    select $1,$2,$3,$4,id,'cash' from customers limit 1 returning id`, [org, load, van, driver]));
-  ok('driver can create a sale on own van', r.ok, r.ok ? '' : `(${r.error})`);
+  // Since the crew model, selling is the salesperson's job. The driver
+  // drives; giving them the till was the thing that change removed.
+  r = await as(c, driver, () => q(c, `insert into van_sales (org_id, load_id, van_id, customer_id, sale_type)
+    select $1,$2,$3,id,'cash' from customers limit 1 returning id`, [org, load, van]));
+  ok('driver cannot create a sale', !r.ok, r.ok ? '(ALLOWED)' : '(blocked)');
 
-  r = await as(c, driver, () => q(c, `insert into van_sales (org_id, load_id, van_id, driver_id, customer_id, sale_type)
-    select $1,$2,$3,$4,id,'cash' from customers limit 1 returning id`, [org, load, otherVan, driver]));
-  ok('driver cannot sell from another van', !r.ok, r.ok ? '(ALLOWED)' : '(blocked)');
+  r = await as(c, scopeSeller, () => q(c, `insert into van_sales (org_id, load_id, van_id, customer_id, sale_type)
+    select $1,$2,$3,id,'cash' from customers limit 1 returning id`, [org, load, van]));
+  ok('salesperson can create a sale on own van', r.ok, r.ok ? '' : `(${r.error})`);
+
+  r = await as(c, scopeSeller, () => q(c, `insert into van_sales (org_id, load_id, van_id, customer_id, sale_type)
+    select $1,$2,$3,id,'cash' from customers limit 1 returning id`, [org, load, otherVan]));
+  ok('salesperson cannot sell from another van', !r.ok, r.ok ? '(ALLOWED)' : '(blocked)');
 
   r = await as(c, driver, () => q(c, `insert into credit_transactions (org_id, customer_id, type, amount)
     select $1, id, 'payment', -50 from customers limit 1 returning id`, [org]));
@@ -125,7 +139,8 @@ async function as(c, uid, fn) {
   r = await as(c, driver, () => q(c, `update profiles set role='admin' where id=$1 returning role`, [driver]));
   ok('driver cannot manage users', !r.ok, r.ok ? '(PROMOTED)' : '(blocked)');
 
-  r = await as(c, driver, () => q(c, `insert into van_assignments (org_id, van_id, driver_id) values ($1,$2,$3) returning id`, [org, otherVan, driver]));
+  r = await as(c, driver, () => q(c, `insert into van_assignments (org_id, van_id, member_id, crew_role)
+    values ($1,$2,$3,'driver') returning id`, [org, otherVan, driver]));
   ok('driver cannot assign themselves a van', !r.ok, r.ok ? '(ASSIGNED)' : '(blocked)');
 
   r = await as(c, driver, () => q(c, `select count(*)::int n from van_reconciliations`));

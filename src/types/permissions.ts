@@ -21,6 +21,9 @@ export const PERMISSIONS = [
   // depot that signs off its own moves stock wherever it likes.
   "transfers.approve",
   "vans.view", "vans.manage",
+  // Crewing a van is a supervisory act: it decides who may sell from it
+  // and who is accountable for the vehicle.
+  "vans.crew",
   "loads.view", "loads.create", "loads.dispatch", "loads.confirm",
   "customers.view", "customers.create", "customers.edit",
   "sales.view", "sales.create",
@@ -48,6 +51,9 @@ const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "inventory.view", "inventory.transfer", "inventory.adjust",
     "transfers.approve",
     "vans.view", "vans.manage",
+  // Crewing a van is a supervisory act: it decides who may sell from it
+  // and who is accountable for the vehicle.
+  "vans.crew",
     "loads.view", "loads.create", "loads.dispatch",
     "customers.view", "customers.create", "customers.edit",
     "sales.view", "sales.create",
@@ -62,7 +68,7 @@ const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "dashboard.view",
     "products.view",
     "inventory.view", "inventory.transfer", "inventory.adjust",
-    "vans.view",
+    "vans.view", "vans.crew",
     "loads.view", "loads.create", "loads.dispatch",
     "customers.view",
     "sales.view",
@@ -93,11 +99,32 @@ const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "documents.view",
     "reports.view",
   ],
+  // The driver drives. They do not sell.
+  //
+  // This role deliberately holds neither sales.create nor
+  // payments.create. It used to hold both, because the schema treated
+  // the driver as the salesperson - which put the wrong name on every
+  // receipt and handed the till to whoever was behind the wheel.
   driver: [
     "dashboard.view",
     "products.view",
     "vans.view",
     "loads.view", "loads.confirm",
+    "customers.view",
+    // Their own van's sales, so they can see what the round did. Not
+    // the ability to make one.
+    "sales.view",
+    "documents.view",
+    "returns.view", "returns.submit",
+    "reconciliation.view", "reconciliation.submit",
+  ],
+  // The field salesperson. Sells from the van they are crewed on, takes
+  // the money, and sees nothing about what any of it cost.
+  salesperson: [
+    "dashboard.view",
+    "products.view",
+    "vans.view",
+    "loads.view",
     "customers.view", "customers.create",
     "sales.view", "sales.create",
     "credit.view",

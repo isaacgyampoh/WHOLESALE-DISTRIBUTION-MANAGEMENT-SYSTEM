@@ -6,8 +6,16 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   manager: "Manager",
   warehouse: "Warehouse",
   accountant: "Accountant",
-  sales_rep: "Sales representative",
+  // Office-based sales. Kept distinct from salesperson, who is crewed
+  // on a van and sells from it in the field.
+  sales_rep: "Sales representative (office)",
+  salesperson: "Salesperson (field)",
   driver: "Driver",
+};
+
+export const CREW_ROLE_LABELS: Record<string, string> = {
+  driver: "Driver",
+  salesperson: "Salesperson",
 };
 
 export const AUDIT_LABELS: Record<string, string> = {

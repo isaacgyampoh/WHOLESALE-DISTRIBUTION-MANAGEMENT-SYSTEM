@@ -2,6 +2,7 @@ import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { parseAmount } from "@/lib/utils/format";
 import { type Result, failed } from "@/lib/query/result";
+import { getCapabilities } from "@/lib/db/capabilities";
 
 /**
  * The driver's own round.
@@ -278,4 +279,101 @@ export interface OfflineSnapshotShape {
     id: string; code: string; name: string; phone: string | null;
     balance: number; credit_available: number;
   }[];
+}
+
+// ===================================================================
+// The van I am crewed on
+// ===================================================================
+
+export interface MyVan {
+  vanId: string;
+  vanCode: string;
+  registrationNo: string;
+  myRole: "driver" | "salesperson";
+  driverName: string | null;
+  salespeople: { memberId: string; memberName: string; memberPhone: string | null }[];
+  stockLines: number;
+  stockUnits: number;
+  openLoad: string | null;
+  loadStatus: string | null;
+  loadDate: string | null;
+}
+
+/**
+ * Whichever van this person is on, and who else is on it.
+ *
+ * Works for a driver and for a salesperson: the crew table does not care
+ * which job somebody does when answering "where are you today".
+ */
+export async function getMyVanCrew(userId: string): Promise<Result<MyVan | null>> {
+  const { vanCrew } = await getCapabilities();
+  if (!vanCrew) {
+    return {
+      ok: false,
+      message:
+        "Van crews need database upgrade 0032. " +
+        "Run database/UPGRADE_0032_VAN_CREW.sql, then reload.",
+    };
+  }
+
+  const supabase = await createSupabaseServerClient();
+
+  const { data: mine, error } = await supabase
+    .from("van_assignments")
+    .select("van_id, crew_role, vans(code, registration_no)")
+    .eq("member_id", userId)
+    .is("unassigned_at", null)
+    .maybeSingle();
+
+  if (error) return failed("driver", error, "Your van could not be loaded.");
+  if (!mine) return { ok: true, data: null };
+
+  const vanId = mine.van_id as string;
+  const van = mine.vans as { code?: string; registration_no?: string } | null;
+
+  const [crew, stock, load] = await Promise.all([
+    supabase
+      .from("van_assignments")
+      .select("member_id, crew_role, profiles(full_name, phone)")
+      .eq("van_id", vanId)
+      .is("unassigned_at", null),
+    supabase.from("van_stock_summary").select("qty_on_hand").eq("van_id", vanId),
+    supabase
+      .from("van_loads")
+      .select("load_number, status, load_date")
+      .eq("van_id", vanId)
+      .in("status", ["loaded", "dispatched"])
+      .maybeSingle(),
+  ]);
+
+  const members = ((crew.data ?? []) as unknown as Record<string, unknown>[]).map((c) => {
+    const p = c.profiles as { full_name?: string; phone?: string } | null;
+    return {
+      memberId: c.member_id as string,
+      memberName: p?.full_name ?? "Unnamed",
+      memberPhone: p?.phone ?? null,
+      crewRole: c.crew_role as string,
+    };
+  });
+
+  const lines = stock.data ?? [];
+
+  return {
+    ok: true,
+    data: {
+      vanId,
+      vanCode: van?.code ?? "Van",
+      registrationNo: van?.registration_no ?? "",
+      myRole: (mine.crew_role as "driver" | "salesperson") ?? "salesperson",
+      driverName: members.find((m) => m.crewRole === "driver")?.memberName ?? null,
+      salespeople: members
+        .filter((m) => m.crewRole === "salesperson")
+        .map(({ memberId, memberName, memberPhone }) => ({ memberId, memberName, memberPhone })),
+      stockLines: lines.length,
+      stockUnits: lines.reduce((s, l) => s + Number(l.qty_on_hand ?? 0), 0),
+      openLoad: (load.data?.load_number as string) ?? null,
+      loadStatus: (load.data?.status as string) ?? null,
+      loadDate: (load.data?.load_date as string) ?? null,
+    },
+  };
 }

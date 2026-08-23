@@ -118,7 +118,8 @@ expected_enums (typname, members) as (
     ('payment_method',        'cash,bank_transfer,cheque,card,mobile_money'),
     ('po_status',             'draft,submitted,partially_received,received,cancelled'),
     ('reconciliation_status', 'draft,submitted,approved,rejected,settled'),
-    ('user_role',             'admin,manager,sales_rep,warehouse,accountant,driver,senior_manager'),
+    ('user_role',             'admin,manager,sales_rep,warehouse,accountant,driver,senior_manager,salesperson'),
+    ('crew_role',             'driver,salesperson'),
     ('van_load_status',       'draft,loaded,dispatched,returned,reconciled,cancelled'),
     ('van_return_status',     'draft,submitted,approved,rejected'),
     ('van_sale_status',       'draft,completed,void'),
@@ -166,7 +167,7 @@ missing_tables as (
     'van_reconciliations','van_return_items','van_returns','van_sale_items',
     'van_sales','vans','warehouses','auth_pin_attempts','audit_log',
     'sync_operations','product_batches','van_sale_payments',
-    'waybills','waybill_items','notifications',
+    'waybills','waybill_items','van_load_crew','momo_providers','notifications',
     'supplier_documents','supplier_portal_tokens','supplier_portal_attempts',
     'stock_returns','stock_return_items'
   ]) as t
@@ -182,7 +183,8 @@ missing_views as (
     'invoice_ageing','reconciliation_variances','stock_summary',
     'van_load_summary','van_stock_summary','products_priced',
     'batch_expiry_status','expiry_summary','load_takings',
-    'invoice_detail','receipt_detail',
+    'invoice_detail','receipt_detail','van_crew',
+    'salesperson_performance','momo_reconciliation',
     'stock_transfer_summary','stock_in_transit','supplier_document_detail',
     'supplier_payables','stock_return_summary'
   ]) as v
@@ -193,41 +195,41 @@ missing_views as (
 ),
 report as (
   select  1 as ord, 'Tables' as check_name,
-          '42'::text as expected, c.tables::text as actual,
-          case when c.tables = 42 then 'OK' else 'CHECK' end as status,
+          '44'::text as expected, c.tables::text as actual,
+          case when c.tables = 44 then 'OK' else 'CHECK' end as status,
           ''::text as detail
   from counts c
   union all select  2, 'Expected tables all present', 'none missing',
           case when m.names = '' then 'none missing' else 'MISSING' end,
           case when m.names = '' then 'OK' else 'FAIL' end, m.names
   from missing_tables m
-  union all select  3, 'Views', '19', c.views::text,
-          case when c.views = 19 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  3, 'Views', '22', c.views::text,
+          case when c.views = 22 then 'OK' else 'CHECK' end, '' from counts c
   union all select  4, 'Expected views all present', 'none missing',
           case when v.names = '' then 'none missing' else 'MISSING' end,
           case when v.names = '' then 'OK' else 'FAIL' end, v.names
   from missing_views v
-  union all select  5, 'Enum types', '19', c.enums::text,
-          case when c.enums = 19 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  6, 'Enum members and order', '19 matching', e.n::text,
-          case when e.n = 19 then 'OK' else 'FAIL' end,
+  union all select  5, 'Enum types', '20', c.enums::text,
+          case when c.enums = 20 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  6, 'Enum members and order', '20 matching', e.n::text,
+          case when e.n = 20 then 'OK' else 'FAIL' end,
           (select names from enum_bad)
   from enum_match e
-  union all select  7, 'Functions', '73', c.functions::text,
-          case when c.functions = 73 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  8, 'Triggers', '80', c.triggers::text,
-          case when c.triggers = 80 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  9, 'RLS policies', '85', c.policies::text,
-          case when c.policies = 85 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  7, 'Functions', '78', c.functions::text,
+          case when c.functions = 78 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  8, 'Triggers', '83', c.triggers::text,
+          case when c.triggers = 83 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  9, 'RLS policies', '88', c.policies::text,
+          case when c.policies = 88 then 'OK' else 'CHECK' end, '' from counts c
   union all select 10, 'RLS enabled on every table',
           c.all_tables::text, c.rls_tables::text,
           case when c.rls_tables = c.all_tables then 'OK' else 'FAIL' end, '' from counts c
   union all select 11, 'Generated columns', '13', c.generated_cols::text,
           case when c.generated_cols = 13 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 12, 'Indexes', '160', c.indexes::text,
-          case when c.indexes = 160 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 13, 'Constraints', '286', c.constraints::text,
-          case when c.constraints = 286 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 12, 'Indexes', '167', c.indexes::text,
+          case when c.indexes = 167 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 13, 'Constraints', '300', c.constraints::text,
+          case when c.constraints = 300 then 'OK' else 'CHECK' end, '' from counts c
   union all select 14, 'Security functions present', '8', s.n::text,
           case when s.n = 8 then 'OK' else 'FAIL' end, '' from security_fns s
   union all select 15, 'Business functions present', '7', b.n::text,
@@ -699,6 +701,77 @@ report as (
                             where n.nspname = 'public' and p.proname = 'record_stock_return')
                then 'OK' else 'FAIL' end,
           'Both were being recorded as adjustments, which loses who and why'
+  -- ---- the van crew (migrations 0032, 0033) ------------------------
+  union all select 60, 'Crew: a van assignment names a job', 'member and job',
+          case when (select count(*) from information_schema.columns
+                      where table_name = 'van_assignments'
+                        and column_name in ('member_id','crew_role')) = 2
+               then 'member and job' else 'DRIVER ONLY' end,
+          case when (select count(*) from information_schema.columns
+                      where table_name = 'van_assignments'
+                        and column_name in ('member_id','crew_role')) = 2
+               then 'OK' else 'FAIL' end,
+          'A van carries a driver and the people who sell from it'
+  union all select 61, 'Crew: one driver per van, many salespeople', 'enforced',
+          case when exists (select 1 from pg_indexes
+                             where indexname = 'van_assignments_one_active_driver_per_van')
+               then 'enforced' else 'MISSING' end,
+          case when exists (select 1 from pg_indexes
+                             where indexname = 'van_assignments_one_active_driver_per_van')
+               then 'OK' else 'FAIL' end, ''
+  union all select 62, 'Crew: a sale records who sold it', 'attributed',
+          case when exists (select 1 from information_schema.columns
+                             where table_name = 'van_sales' and column_name = 'salesperson_id')
+               then 'attributed' else 'MISSING' end,
+          case when exists (select 1 from information_schema.columns
+                             where table_name = 'van_sales' and column_name = 'salesperson_id')
+               then 'OK' else 'FAIL' end,
+          'Distinct from who drove the van'
+  union all select 63, 'Crew: no sale left unattributed', 'none',
+          (select count(*)::text from public.van_sales where salesperson_id is null),
+          case when not exists (select 1 from public.van_sales where salesperson_id is null)
+               then 'OK' else 'FAIL' end,
+          'Historical sales are backfilled with the driver, who was both'
+  union all select 64, 'Crew: selling requires being crewed to sell', 'gated',
+          case when exists (select 1 from pg_proc p
+                              join pg_namespace n on n.oid = p.pronamespace
+                             where n.nspname = 'public' and p.proname = 'is_van_salesperson')
+               then 'gated' else 'MISSING' end,
+          case when exists (select 1 from pg_proc p
+                              join pg_namespace n on n.oid = p.pronamespace
+                             where n.nspname = 'public' and p.proname = 'is_van_salesperson')
+               then 'OK' else 'FAIL' end,
+          'Being aboard is not the same as being allowed to take money'
+  union all select 65, 'Crew: the old driver-insert policy is gone', 'removed',
+          case when not exists (select 1 from pg_policies
+                                 where tablename = 'van_sales'
+                                   and policyname = 'van_sales_driver_insert')
+               then 'removed' else 'STILL THERE' end,
+          case when not exists (select 1 from pg_policies
+                                 where tablename = 'van_sales'
+                                   and policyname = 'van_sales_driver_insert')
+               then 'OK' else 'FAIL' end,
+          'Policies are permissive and OR together; an old one still grants'
+  union all select 66, 'Crew: the load records who went out with it', 'present',
+          case when to_regclass('public.van_load_crew') is not null
+               then 'present' else 'MISSING' end,
+          case when to_regclass('public.van_load_crew') is not null
+               then 'OK' else 'FAIL' end, ''
+  union all select 67, 'Momo: the network is recorded', 'present',
+          case when (select count(*) from information_schema.columns
+                      where table_name in ('van_sale_payments','payments')
+                        and column_name = 'provider') = 2
+               then 'present' else 'MISSING' end,
+          case when (select count(*) from information_schema.columns
+                      where table_name in ('van_sale_payments','payments')
+                        and column_name = 'provider') = 2
+               then 'OK' else 'FAIL' end,
+          'A reference cannot be matched to a statement without it'
+  union all select 68, 'Momo: reconcilable by network, van and salesperson', 'present',
+          case when to_regclass('public.momo_reconciliation') is not null
+               then 'present' else 'MISSING' end,
+          case when to_regclass('public.momo_reconciliation') is not null
+               then 'OK' else 'FAIL' end, ''
 )
 select ord as "#", check_name as "check", expected, actual, status, detail
 from report

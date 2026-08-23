@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { formatMoney, formatQuantity } from "@/lib/utils/format";
@@ -29,6 +30,7 @@ export function VanList({
             <tr>
               <Th>Van</Th>
               <Th>Driver</Th>
+              <Th>Selling</Th>
               <Th>Home warehouse</Th>
               <Th numeric>Lines</Th>
               <Th numeric>Units</Th>
@@ -41,14 +43,24 @@ export function VanList({
             {vans.map((v) => (
               <Tr key={v.id}>
                 <Td>
-                  <span className="block font-medium">{v.code}</span>
+                  <Link href={`/vans/${v.id}/crew`} className="block font-medium hover:underline">
+                    {v.code}
+                  </Link>
                   <span className="numeric text-xs text-[var(--text-muted)]">
                     {v.registrationNo}
                     {v.make ? ` · ${v.make}${v.model ? ` ${v.model}` : ""}` : ""}
                   </span>
                 </Td>
+                {/* Two jobs, listed apart. A van with a driver and
+                    nobody selling cannot go out, and that has to be
+                    visible before somebody tries to dispatch it. */}
                 <Td className={v.driverName ? "" : "text-[var(--text-muted)]"}>
-                  {v.driverName ?? "Unassigned"}
+                  {v.driverName ?? "No driver"}
+                </Td>
+                <Td className={v.salespeople.length ? "" : "text-[var(--text-muted)]"}>
+                  {v.salespeople.length === 0
+                    ? "Nobody selling"
+                    : v.salespeople.map((p) => p.name).join(", ")}
                 </Td>
                 <Td className="text-[var(--text-secondary)]">{v.homeWarehouse ?? "-"}</Td>
                 <Td numeric>{formatQuantity(v.stockLines)}</Td>
@@ -78,7 +90,10 @@ export function VanList({
           <li key={v.id} className="px-5 py-3.5">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-[var(--text-primary)]">{v.code}</p>
+                <Link href={`/vans/${v.id}/crew`}
+                      className="block truncate text-sm font-medium text-[var(--text-primary)]">
+                  {v.code}
+                </Link>
                 <p className="numeric mt-0.5 truncate text-xs text-[var(--text-muted)]">
                   {v.registrationNo}
                 </p>
@@ -91,7 +106,12 @@ export function VanList({
               </div>
             </div>
             <p className="mt-1.5 text-xs text-[var(--text-secondary)]">
-              Driver: {v.driverName ?? "Unassigned"}
+              Driver: {v.driverName ?? "none"}
+            </p>
+            <p className="text-xs text-[var(--text-secondary)]">
+              Selling: {v.salespeople.length === 0
+                ? "nobody"
+                : v.salespeople.map((p) => p.name).join(", ")}
             </p>
             <p className="numeric mt-0.5 text-xs text-[var(--text-muted)]">
               {formatQuantity(v.stockUnits)} units on board · {formatMoney(v.stockValue)}

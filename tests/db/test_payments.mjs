@@ -32,7 +32,10 @@ const as = async (who, sql, params) => {
   finally { await c.query("rollback"); }
 };
 
+// The driver drives; the salesperson sells. Both are needed: a van
+// with nobody crewed to sell cannot be dispatched.
 const driver = await mk("paydrv", "driver");
+const seller = await mk("paysell", "salesperson");
 
 // ---- a van with a dispatched load ----------------------------------
 const wh = (await c.query(
@@ -51,8 +54,12 @@ const customer = (await c.query(
 const van = (await c.query(
   `insert into vans (org_id, code, registration_no, home_warehouse_id) values ($1,$2,$3,$4) returning id`,
   [orgA, `PAYV-${stamp}`.slice(0, 12), `GT-${stamp}`.slice(0, 14), wh])).rows[0].id;
-await c.query(`insert into van_assignments (org_id, van_id, driver_id) values ($1,$2,$3)`,
+await c.query(
+  `insert into van_assignments (org_id, van_id, member_id, crew_role) values ($1,$2,$3,'driver')`,
   [orgA, van, driver]);
+await c.query(
+  `insert into van_assignments (org_id, van_id, member_id, crew_role) values ($1,$2,$3,'salesperson')`,
+  [orgA, van, seller]);
 
 await c.query(
   `insert into stock_movements (org_id, product_id, warehouse_id, type, quantity, reason)
@@ -71,10 +78,10 @@ await c.query(`select dispatch_van_load($1)`, [load.id]);
 /** A draft sale of `qty` at 100 each. */
 const draftSale = async (qty, saleType = "cash") => {
   const sale = (await c.query(
-    `insert into van_sales (org_id, load_id, van_id, driver_id, customer_id,
+    `insert into van_sales (org_id, load_id, van_id, driver_id, salesperson_id, customer_id,
        sale_type, status, sold_at)
-     values ($1,$2,$3,$4,$5,$6,'draft',now()) returning id, total`,
-    [orgA, load.id, van, driver, customer, saleType])).rows[0];
+     values ($1,$2,$3,$4,$5,$6,$7,'draft',now()) returning id, total`,
+    [orgA, load.id, van, driver, seller, customer, saleType])).rows[0];
   await c.query(
     `insert into van_sale_items (org_id, sale_id, product_id, quantity, unit_price, tax_rate)
      values ($1,$2,$3,$4,100,0)`, [orgA, sale.id, product, qty]);
@@ -167,6 +174,14 @@ console.log("\n=== end of day counts cash and momo apart ===");
 const van2 = (await c.query(
   `insert into vans (org_id, code, registration_no, home_warehouse_id) values ($1,$2,$3,$4) returning id`,
   [orgA, `PAYV2-${stamp}`.slice(0, 12), `GT2-${stamp}`.slice(0, 14), wh])).rows[0].id;
+const driver2 = await mk("paydrv2", "driver");
+const seller2 = await mk("paysell2", "salesperson");
+await c.query(
+  `insert into van_assignments (org_id, van_id, member_id, crew_role) values ($1,$2,$3,'driver')`,
+  [orgA, van2, driver2]);
+await c.query(
+  `insert into van_assignments (org_id, van_id, member_id, crew_role) values ($1,$2,$3,'salesperson')`,
+  [orgA, van2, seller2]);
 const load2 = (await c.query(
   `insert into van_loads (org_id, van_id, driver_id, warehouse_id, status, load_date,
      driver_confirmed_at, opening_float)
@@ -179,10 +194,10 @@ await c.query(`select dispatch_van_load($1)`, [load2]);
 
 const saleOn = async (loadId, qty, payments) => {
   const s = (await c.query(
-    `insert into van_sales (org_id, load_id, van_id, driver_id, customer_id,
+    `insert into van_sales (org_id, load_id, van_id, driver_id, salesperson_id, customer_id,
        sale_type, status, sold_at)
-     values ($1,$2,$3,$4,$5,'cash','draft',now()) returning id`,
-    [orgA, loadId, van2, driver, customer])).rows[0];
+     values ($1,$2,$3,$4,$5,$6,'cash','draft',now()) returning id`,
+    [orgA, loadId, van2, driver2, seller2, customer])).rows[0];
   await c.query(
     `insert into van_sale_items (org_id, sale_id, product_id, quantity, unit_price, tax_rate)
      values ($1,$2,$3,$4,100,0)`, [orgA, s.id, product, qty]);
@@ -225,6 +240,14 @@ console.log("\n=== a round recorded before this change still reconciles ===");
 const van3 = (await c.query(
   `insert into vans (org_id, code, registration_no, home_warehouse_id) values ($1,$2,$3,$4) returning id`,
   [orgA, `PAYV3-${stamp}`.slice(0, 12), `GT3-${stamp}`.slice(0, 14), wh])).rows[0].id;
+const driver3 = await mk("paydrv3", "driver");
+const seller3 = await mk("paysell3", "salesperson");
+await c.query(
+  `insert into van_assignments (org_id, van_id, member_id, crew_role) values ($1,$2,$3,'driver')`,
+  [orgA, van3, driver3]);
+await c.query(
+  `insert into van_assignments (org_id, van_id, member_id, crew_role) values ($1,$2,$3,'salesperson')`,
+  [orgA, van3, seller3]);
 const load3 = (await c.query(
   `insert into van_loads (org_id, van_id, driver_id, warehouse_id, status, load_date,
      driver_confirmed_at, opening_float)
@@ -236,10 +259,10 @@ await c.query(
 await c.query(`select dispatch_van_load($1)`, [load3]);
 
 const legacy = (await c.query(
-  `insert into van_sales (org_id, load_id, van_id, driver_id, customer_id,
+  `insert into van_sales (org_id, load_id, van_id, driver_id, salesperson_id, customer_id,
      sale_type, status, sold_at)
-   values ($1,$2,$3,$4,$5,'cash','draft',now()) returning id`,
-  [orgA, load3, van3, driver, customer])).rows[0].id;
+   values ($1,$2,$3,$4,$5,$6,'cash','draft',now()) returning id`,
+  [orgA, load3, van3, driver3, seller3, customer])).rows[0].id;
 await c.query(
   `insert into van_sale_items (org_id, sale_id, product_id, quantity, unit_price, tax_rate)
    values ($1,$2,$3,2,100,0)`, [orgA, legacy, product]);

@@ -904,3 +904,164 @@ export async function recordStockReturnAction(
       : `${entry?.return_number ?? "The return"} recorded. The stock has left for the supplier.`,
   };
 }
+
+// ===================================================================
+// Crewing a van
+// ===================================================================
+//
+// Assigning somebody to a van decides who may sell from it and who is
+// accountable for the vehicle, so it needs vans.crew rather than the
+// van-editing permission. The database refuses a mismatch too - an
+// inactive account, another organization's staff, or a driver crewed to
+// sell - so these checks are for the message, not for the control.
+
+export async function assignCrewAction(
+  _prev: DistributionState,
+  formData: FormData,
+): Promise<DistributionState> {
+  const actor = await requirePermission("vans.crew");
+
+  if (!(await getCapabilities()).vanCrew) {
+    return {
+      status: "error",
+      message:
+        "Van crews need database upgrade 0032. " +
+        "Run database/UPGRADE_0032_VAN_CREW.sql, then reload.",
+    };
+  }
+
+  const vanId = String(formData.get("vanId") ?? "");
+  const memberId = String(formData.get("memberId") ?? "");
+  const crewRole = String(formData.get("crewRole") ?? "");
+
+  const values = { vanId, memberId, crewRole };
+  const errors: Record<string, string> = {};
+
+  if (!vanId) errors.vanId = "Choose a van.";
+  if (!memberId) errors.memberId = "Choose who to put on it.";
+  if (crewRole !== "driver" && crewRole !== "salesperson") {
+    errors.crewRole = "Choose whether they drive or sell.";
+  }
+
+  if (Object.keys(errors).length) {
+    return { status: "error", message: "Check the fields below.", values, fieldErrors: errors };
+  }
+
+  const admin = createSupabaseAdminClient();
+  const [{ data: van }, { data: member }] = await Promise.all([
+    admin.from("vans").select("id, code, org_id").eq("id", vanId).maybeSingle(),
+    admin.from("profiles").select("id, full_name, role, org_id, is_active")
+      .eq("id", memberId).maybeSingle(),
+  ]);
+
+  if (!van || van.org_id !== actor.organizationId) {
+    return { status: "error", message: "That van could not be found.", values };
+  }
+  if (!member || member.org_id !== actor.organizationId) {
+    return { status: "error", message: "That person could not be found.", values };
+  }
+
+  const supabase = await createSupabaseServerClient();
+
+  // A van takes one driver. Replacing them means standing the previous
+  // one down rather than refusing, which is what "replace driver" means
+  // to whoever is doing it.
+  if (crewRole === "driver") {
+    await supabase
+      .from("van_assignments")
+      .update({ unassigned_at: new Date().toISOString() })
+      .eq("van_id", vanId)
+      .eq("crew_role", "driver")
+      .is("unassigned_at", null);
+  }
+
+  // Somebody can only be on one van, so coming here means leaving
+  // wherever they were.
+  await supabase
+    .from("van_assignments")
+    .update({ unassigned_at: new Date().toISOString() })
+    .eq("member_id", memberId)
+    .is("unassigned_at", null);
+
+  const { error } = await supabase.from("van_assignments").insert({
+    org_id: actor.organizationId,
+    van_id: vanId,
+    member_id: memberId,
+    crew_role: crewRole,
+    assigned_by: actor.id,
+  });
+
+  if (error) {
+    console.error("[crew] assignment failed", error);
+    // The database's message names the actual problem - not active, wrong
+    // role for the job - and that is what the person needs to read.
+    return { status: "error", message: error.message, values };
+  }
+
+  await recordAudit(actor, {
+    action: "van.crew_assigned",
+    targetType: "van",
+    targetId: vanId,
+    targetLabel: van.code as string,
+    after: { member: member.full_name, crew_role: crewRole },
+  });
+
+  revalidatePath("/vans");
+  revalidatePath(`/vans/${vanId}/crew`);
+  revalidatePath("/driver");
+
+  return {
+    status: "done",
+    message: `${member.full_name} is now ${crewRole === "driver" ? "driving" : "selling from"} ${van.code}.`,
+  };
+}
+
+export async function removeCrewAction(
+  _prev: DistributionState,
+  formData: FormData,
+): Promise<DistributionState> {
+  const actor = await requirePermission("vans.crew");
+
+  const assignmentId = String(formData.get("assignmentId") ?? "");
+  if (!assignmentId) return { status: "error", message: "That assignment could not be found." };
+
+  const admin = createSupabaseAdminClient();
+  const { data: assignment } = await admin
+    .from("van_assignments")
+    .select("id, org_id, van_id, crew_role, member_id, vans(code), profiles(full_name)")
+    .eq("id", assignmentId)
+    .maybeSingle();
+
+  if (!assignment || assignment.org_id !== actor.organizationId) {
+    return { status: "error", message: "That assignment could not be found." };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase
+    .from("van_assignments")
+    .update({ unassigned_at: new Date().toISOString() })
+    .eq("id", assignmentId)
+    .is("unassigned_at", null);
+
+  if (error) {
+    console.error("[crew] stand-down failed", error);
+    return { status: "error", message: "They could not be stood down. Please try again." };
+  }
+
+  const name = (assignment.profiles as { full_name?: string } | null)?.full_name ?? "They";
+  const code = (assignment.vans as { code?: string } | null)?.code ?? "the van";
+
+  await recordAudit(actor, {
+    action: "van.crew_removed",
+    targetType: "van",
+    targetId: assignment.van_id as string,
+    targetLabel: code,
+    before: { member: name, crew_role: assignment.crew_role },
+  });
+
+  revalidatePath("/vans");
+  revalidatePath(`/vans/${assignment.van_id}/crew`);
+  revalidatePath("/driver");
+
+  return { status: "done", message: `${name} has been taken off ${code}.` };
+}

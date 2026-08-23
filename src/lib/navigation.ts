@@ -147,7 +147,14 @@ export function primaryMobileItems(sections: NavSection[], count = 4): NavItem[]
  * and by row level security; a driver who types /purchasing is refused
  * there, not here.
  */
-const DRIVER_SECTIONS: readonly NavSection[] = [
+/**
+ * The salesperson's application.
+ *
+ * A field salesperson's day is selling, taking money and settling up.
+ * That is the whole of it, and every one of those screens is built for
+ * standing outside a shop with a phone in one hand.
+ */
+const SALESPERSON_SECTIONS: readonly NavSection[] = [
   {
     label: "My round",
     items: [
@@ -160,7 +167,7 @@ const DRIVER_SECTIONS: readonly NavSection[] = [
         icon: "Receipt", mobilePriority: 1,
       },
       {
-        label: "Van stock", href: "/driver/stock", permissions: ["sales.create"],
+        label: "Van stock", href: "/driver/stock", permissions: ["sales.view"],
         icon: "Boxes", mobilePriority: 2,
       },
       {
@@ -180,30 +187,90 @@ const DRIVER_SECTIONS: readonly NavSection[] = [
     label: "My records",
     items: [
       { label: "My sales", href: "/driver/sales", permissions: ["sales.view"], icon: "Receipt" },
+      { label: "Customers", href: "/customers", permissions: ["customers.view"], icon: "Store" },
       { label: "What I have recorded", href: "/driver/queue", permissions: ["sales.create"], icon: "ClipboardList" },
     ],
   },
 ];
 
 /**
- * Whether this role runs a round rather than the office.
+ * The driver's application.
  *
- * Keyed on the permission set rather than the role name, so a role that
- * is given the driver's capabilities later gets the driver's navigation
- * without anyone remembering to update a list. A supervisor covering a
- * van still gets the full menu, because they can also do everything
- * else.
+ * Deliberately not the salesperson's with the selling removed. A driver
+ * is responsible for a vehicle and its load, and the questions they have
+ * are about the van: what is on it, who is selling from it today, what
+ * is coming back. There is no till here and no customer list, because
+ * neither is their job.
  */
-function runsARound(role: UserRole): boolean {
+const DRIVER_SECTIONS: readonly NavSection[] = [
+  {
+    label: "My van",
+    items: [
+      {
+        label: "Home", href: "/driver", permissions: ["loads.confirm"],
+        icon: "LayoutDashboard", mobilePriority: 0,
+      },
+      {
+        label: "My van", href: "/driver/van", permissions: ["vans.view"],
+        icon: "Van", mobilePriority: 1,
+      },
+      {
+        label: "Load", href: "/driver/stock", permissions: ["loads.view"],
+        icon: "Boxes", mobilePriority: 2,
+      },
+    ],
+  },
+  {
+    label: "End of round",
+    items: [
+      {
+        label: "Return goods", href: "/driver/return", permissions: ["returns.submit"],
+        icon: "Undo2", mobilePriority: 3,
+      },
+      { label: "End my day", href: "/driver/reconcile", permissions: ["reconciliation.submit"], icon: "Scale" },
+    ],
+  },
+  {
+    label: "The round",
+    items: [
+      { label: "Today's sales", href: "/driver/sales", permissions: ["sales.view"], icon: "Receipt" },
+    ],
+  },
+];
+
+/**
+ * Which application this person gets.
+ *
+ * Keyed on the permission set rather than the role name, so a role given
+ * these capabilities later gets the right navigation without anybody
+ * remembering to update a list. A supervisor covering a van still gets
+ * the full menu, because they can also do everything else.
+ *
+ * The two field cases are told apart by what the person is there to do:
+ * a salesperson can create a sale, a driver cannot. That is the whole
+ * distinction, and it is the same one the database enforces.
+ */
+function sellsInTheField(role: UserRole): boolean {
   return can(role, "sales.create")
-    && can(role, "loads.confirm")
+    && can(role, "payments.create")
     && !can(role, "products.edit")
+    && !can(role, "users.manage")
+    && !can(role, "inventory.adjust");
+}
+
+function drivesAVan(role: UserRole): boolean {
+  return can(role, "loads.confirm")
+    && !can(role, "sales.create")
     && !can(role, "users.manage");
 }
 
 /** Sections with nothing visible to this role are dropped entirely. */
 export function navigationFor(role: UserRole): NavSection[] {
-  const sections = runsARound(role) ? DRIVER_SECTIONS : NAV_SECTIONS;
+  const sections = drivesAVan(role)
+    ? DRIVER_SECTIONS
+    : sellsInTheField(role)
+      ? SALESPERSON_SECTIONS
+      : NAV_SECTIONS;
   return sections.map((section) => ({
     ...section,
     items: section.items.filter((item) => canAny(role, item.permissions)),

@@ -158,8 +158,15 @@ const van = (await c.query(
   `insert into vans (org_id, code, registration_no, home_warehouse_id)
    values ($1,$2,$3,$4) returning id`,
   [orgA, `EXPV-${stamp}`.slice(0, 12), `GT-${stamp}`.slice(0, 14), wh])).rows[0].id;
-await c.query(`insert into van_assignments (org_id, van_id, driver_id) values ($1,$2,$3)`,
+// A van needs a driver and somebody crewed to sell before it can be
+// dispatched at all.
+const expSeller = await mk("expsell", "salesperson");
+await c.query(
+  `insert into van_assignments (org_id, van_id, member_id, crew_role) values ($1,$2,$3,'driver')`,
   [orgA, van, driver]);
+await c.query(
+  `insert into van_assignments (org_id, van_id, member_id, crew_role) values ($1,$2,$3,'salesperson')`,
+  [orgA, van, expSeller]);
 
 const load = (await c.query(
   `insert into van_loads (org_id, van_id, driver_id, warehouse_id, status, load_date,
@@ -193,11 +200,20 @@ const van2 = (await c.query(
    values ($1,$2,$3,$4) returning id`,
   [orgA, `EXPV2-${stamp}`.slice(0, 12), `GT2-${stamp}`.slice(0, 14), wh])).rows[0].id;
 
+const expDriver2 = await mk("expdrv2", "driver");
+const expSeller2 = await mk("expsell2", "salesperson");
+await c.query(
+  `insert into van_assignments (org_id, van_id, member_id, crew_role) values ($1,$2,$3,'driver')`,
+  [orgA, van2, expDriver2]);
+await c.query(
+  `insert into van_assignments (org_id, van_id, member_id, crew_role) values ($1,$2,$3,'salesperson')`,
+  [orgA, van2, expSeller2]);
+
 const load2 = (await c.query(
   `insert into van_loads (org_id, van_id, driver_id, warehouse_id, status, load_date,
      driver_confirmed_at, opening_float)
    values ($1,$2,$3,$4,'loaded',current_date, now(), 0) returning id, load_number`,
-  [orgA, van2, driver, wh])).rows[0];
+  [orgA, van2, expDriver2, wh])).rows[0];
 await c.query(
   `insert into van_load_items (org_id, load_id, product_id, qty_loaded, unit_price, unit_cost)
    values ($1,$2,$3,10,20,10)`, [orgA, load2.id, perishable]);
@@ -229,11 +245,20 @@ const van3 = (await c.query(
   `insert into vans (org_id, code, registration_no, home_warehouse_id)
    values ($1,$2,$3,$4) returning id`,
   [orgA, `EXPV3-${stamp}`.slice(0, 12), `GT3-${stamp}`.slice(0, 14), wh])).rows[0].id;
+const expDriver3 = await mk("expdrv3", "driver");
+const expSeller3 = await mk("expsell3", "salesperson");
+await c.query(
+  `insert into van_assignments (org_id, van_id, member_id, crew_role) values ($1,$2,$3,'driver')`,
+  [orgA, van3, expDriver3]);
+await c.query(
+  `insert into van_assignments (org_id, van_id, member_id, crew_role) values ($1,$2,$3,'salesperson')`,
+  [orgA, van3, expSeller3]);
+
 const crateLoad = (await c.query(
   `insert into van_loads (org_id, van_id, driver_id, warehouse_id, status, load_date,
      driver_confirmed_at, opening_float)
    values ($1,$2,$3,$4,'loaded',current_date, now(), 0) returning id`,
-  [orgA, van3, driver, wh])).rows[0].id;
+  [orgA, van3, expDriver3, wh])).rows[0].id;
 await c.query(
   `insert into van_load_items (org_id, load_id, product_id, qty_loaded, unit_price, unit_cost)
    values ($1,$2,$3,10,20,10)`, [orgA, crateLoad, crate]);

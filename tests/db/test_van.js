@@ -22,13 +22,22 @@ const tryQ = async (c, s, p) => { try { return { ok: true, rows: await q(c, s, p
 
   const van = (await one(c, `insert into vans (org_id, code, registration_no, home_warehouse_id)
     values ($1,'VAN-01','GT-1234-24',$2) returning id`, [org, wh])).id;
-  await q(c, `insert into van_assignments (org_id, van_id, driver_id, assigned_by)
-              values ($1,$2,$3,$4)`, [org, van, driver, mgr]);
+  await q(c, `insert into van_assignments (org_id, van_id, member_id, crew_role, assigned_by)
+              values ($1,$2,$3,'driver',$4)`, [org, van, driver, mgr]);
   ok('van assigned to driver', true);
 
-  // Only one active assignment per van.
-  let r = await tryQ(c, `insert into van_assignments (org_id, van_id, driver_id) values ($1,$2,$3)`,
-                     [org, van, mgr]);
+  // A van goes out with somebody to sell from it, or it does not go out.
+  const seller = (await one(c, `insert into auth.users (email, raw_user_meta_data)
+    values ('vansell@wdms.test', $1::jsonb) returning id`,
+    [JSON.stringify({ full_name: 'Van Seller', role: 'salesperson', org_id: org })])).id;
+  await q(c, `insert into van_assignments (org_id, van_id, member_id, crew_role)
+              values ($1,$2,$3,'salesperson')`, [org, van, seller]);
+  ok('and a salesperson crewed alongside them', true);
+
+  // Only one driver per van, however many people are selling.
+  let r = await tryQ(c,
+    `insert into van_assignments (org_id, van_id, member_id, crew_role) values ($1,$2,$3,'driver')`,
+    [org, van, mgr]);
   ok('van cannot have two active drivers', !r.ok, r.ok ? '(ALLOWED)' : '(blocked)');
 
   console.log('\n=== van loading ===');
@@ -63,8 +72,10 @@ const tryQ = async (c, s, p) => { try { return { ok: true, rows: await q(c, s, p
      `(${legs.map(l => l.type + (l.at_wh ? '@wh' : '@van')).join(', ')})`);
 
   console.log('\n=== cash sale ===');
-  const s1 = (await one(c, `insert into van_sales (org_id, load_id, van_id, driver_id, customer_id, sale_type)
-    values ($1,$2,$3,$4,$5,'cash') returning id, sale_number`, [org, load.id, van, driver, cus.id])).id;
+  const s1 = (await one(c, `insert into van_sales
+      (org_id, load_id, van_id, driver_id, salesperson_id, customer_id, sale_type)
+    values ($1,$2,$3,$4,$5,$6,'cash') returning id, sale_number`,
+    [org, load.id, van, driver, seller, cus.id])).id;
   await q(c, `insert into van_sale_items (org_id, sale_id, product_id, quantity, unit_price, tax_rate)
               values ($1,$2,$3,10,$4,15)`, [org, s1, p1.id, p1.list_price]);
   const t1 = await one(c, `select total from van_sales where id=$1`, [s1]);
@@ -81,8 +92,10 @@ const tryQ = async (c, s, p) => { try { return { ok: true, rows: await q(c, s, p
   ok('van stock reduced by sale', vanQty2 === 50, `(van=${vanQty2})`);
 
   console.log('\n=== credit sale and credit limit ===');
-  const s2 = (await one(c, `insert into van_sales (org_id, load_id, van_id, driver_id, customer_id, sale_type)
-    values ($1,$2,$3,$4,$5,'credit') returning id`, [org, load.id, van, driver, cus.id])).id;
+  const s2 = (await one(c, `insert into van_sales
+      (org_id, load_id, van_id, driver_id, salesperson_id, customer_id, sale_type)
+    values ($1,$2,$3,$4,$5,$6,'credit') returning id`,
+    [org, load.id, van, driver, seller, cus.id])).id;
   await q(c, `insert into van_sale_items (org_id, sale_id, product_id, quantity, unit_price, tax_rate)
               values ($1,$2,$3,10,$4,15)`, [org, s2, p2.id, p2.list_price]);
   r = await tryQ(c, `select status, due_date from complete_van_sale($1)`, [s2]);
@@ -93,16 +106,18 @@ const tryQ = async (c, s, p) => { try { return { ok: true, rows: await q(c, s, p
   ok('credit ledger charged', ct && ct.type === 'charge' && Number(ct.amount) > 0, `(${ct && ct.amount})`);
 
   // Blow through the credit limit.
-  const s3 = (await one(c, `insert into van_sales (org_id, load_id, van_id, driver_id, customer_id, sale_type)
-    values ($1,$2,$3,$4,$5,'credit') returning id`, [org, load.id, van, driver, cus.id])).id;
+  const s3 = (await one(c, `insert into van_sales
+      (org_id, load_id, van_id, driver_id, salesperson_id, customer_id, sale_type)
+    values ($1,$2,$3,$4,$5,$6,'credit') returning id`, [org, load.id, van, driver, seller, cus.id])).id;
   await q(c, `insert into van_sale_items (org_id, sale_id, product_id, quantity, unit_price)
               values ($1,$2,$3,25,$4)`, [org, s3, p2.id, 2000]);
   r = await tryQ(c, `select * from complete_van_sale($1)`, [s3]);
   ok('credit sale beyond limit rejected', !r.ok, r.ok ? '(ALLOWED)' : `-> "${r.error.slice(0,44)}"`);
 
   // Overselling the van.
-  const s4 = (await one(c, `insert into van_sales (org_id, load_id, van_id, driver_id, customer_id, sale_type)
-    values ($1,$2,$3,$4,$5,'cash') returning id`, [org, load.id, van, driver, cus.id])).id;
+  const s4 = (await one(c, `insert into van_sales
+      (org_id, load_id, van_id, driver_id, salesperson_id, customer_id, sale_type)
+    values ($1,$2,$3,$4,$5,$6,'cash') returning id`, [org, load.id, van, driver, seller, cus.id])).id;
   await q(c, `insert into van_sale_items (org_id, sale_id, product_id, quantity, unit_price)
               values ($1,$2,$3,9999,$4)`, [org, s4, p1.id, 10]);
   r = await tryQ(c, `select * from complete_van_sale($1, 99999999)`, [s4]);

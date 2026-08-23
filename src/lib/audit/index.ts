@@ -48,6 +48,8 @@ export type AuditAction =
   | "van.activated"
   | "van.deactivated"
   | "van.driver_assigned"
+  | "van.crew_assigned"
+  | "van.crew_removed"
   | "customer.created"
   | "customer.updated"
   | "customer.activated"

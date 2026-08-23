@@ -264,6 +264,8 @@ export async function recordVanSaleAction(input: {
     cashPart?: number;
     /** A momo transaction id, where there is one. */
     reference?: string | null;
+    /** Which mobile money network. Meaningless on a cash payment. */
+    provider?: string | null;
   };
 }): Promise<{
   ok: boolean;
@@ -328,6 +330,11 @@ export async function recordVanSaleAction(input: {
       org_id: actor.organizationId,
       load_id: load.id,
       van_id: load.van_id,
+      // Two different people. The salesperson is whoever is recording
+      // this; the driver comes from the load. Before the crew model
+      // these were the same column, which put the driver's name on
+      // every receipt whoever actually made the sale.
+      salesperson_id: actor.id,
       driver_id: load.driver_id,
       customer_id: input.customerId,
       sale_type: input.saleType,
@@ -378,17 +385,22 @@ export async function recordVanSaleAction(input: {
 
   const kind = input.payment?.kind ?? (input.saleType === "credit" ? "credit" : "cash");
   const reference = input.payment?.reference?.trim() || null;
+  // Which network. A reference is only matchable against a statement
+  // once you know whose system issued it.
+  const provider = input.payment?.provider?.trim() || null;
 
-  const breakdown: { method: string; amount: number; reference?: string | null }[] = [];
+  const breakdown: {
+    method: string; amount: number; reference?: string | null; provider?: string | null;
+  }[] = [];
   if (kind === "cash") {
     breakdown.push({ method: "cash", amount: payable });
   } else if (kind === "momo") {
-    breakdown.push({ method: "mobile_money", amount: payable, reference });
+    breakdown.push({ method: "mobile_money", amount: payable, reference, provider });
   } else if (kind === "split") {
     const cash = Math.min(Math.max(Number(input.payment?.cashPart ?? 0), 0), payable);
     const momo = Number((payable - cash).toFixed(2));
     if (cash > 0) breakdown.push({ method: "cash", amount: Number(cash.toFixed(2)) });
-    if (momo > 0) breakdown.push({ method: "mobile_money", amount: momo, reference });
+    if (momo > 0) breakdown.push({ method: "mobile_money", amount: momo, reference, provider });
     if (!breakdown.length) {
       await admin.from("van_sale_items").delete().eq("sale_id", sale.id);
       await admin.from("van_sales").delete().eq("id", sale.id);

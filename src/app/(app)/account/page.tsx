@@ -8,7 +8,9 @@ export const metadata: Metadata = { title: "Your account" };
 
 const ROLE_LABELS: Record<string, string> = {
   admin: "Administrator", senior_manager: "Senior manager", manager: "Manager",
-  warehouse: "Warehouse", accountant: "Accountant", sales_rep: "Sales rep", driver: "Driver",
+  warehouse: "Warehouse", accountant: "Accountant",
+  sales_rep: "Sales representative (office)", salesperson: "Salesperson (field)",
+  driver: "Driver",
 };
 
 export default async function AccountPage() {

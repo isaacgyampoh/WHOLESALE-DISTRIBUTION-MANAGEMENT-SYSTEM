@@ -29,6 +29,8 @@ export interface VanRow {
   isActive: boolean;
   driverName: string | null;
   driverId: string | null;
+  /** Everybody selling from this van today. A van may have several. */
+  salespeople: { id: string; name: string }[];
   stockLines: number;
   stockUnits: number;
   stockValue: number;
@@ -47,7 +49,7 @@ export async function listVans(): Promise<Result<VanRow[]>> {
       .order("code"),
     supabase
       .from("van_assignments")
-      .select("van_id, driver_id, profiles(full_name)")
+      .select("van_id, member_id, crew_role, profiles(full_name)")
       .is("unassigned_at", null),
     supabase.from("van_stock_summary").select("van_id, qty_on_hand, stock_value"),
     supabase
@@ -58,12 +60,18 @@ export async function listVans(): Promise<Result<VanRow[]>> {
 
   if (vans.error) return failed("vans", vans.error, "Vans could not be loaded.");
 
+  // One driver per van, any number of people selling from it.
   const driverBy = new Map<string, { id: string; name: string }>();
+  const sellersBy = new Map<string, { id: string; name: string }[]>();
+
   for (const a of (assignments.data ?? []) as unknown as Record<string, unknown>[]) {
-    driverBy.set(a.van_id as string, {
-      id: a.driver_id as string,
-      name: (a.profiles as { full_name?: string } | null)?.full_name ?? "Unnamed driver",
-    });
+    const vanId = a.van_id as string;
+    const member = {
+      id: a.member_id as string,
+      name: (a.profiles as { full_name?: string } | null)?.full_name ?? "Unnamed",
+    };
+    if (a.crew_role === "driver") driverBy.set(vanId, member);
+    else sellersBy.set(vanId, [...(sellersBy.get(vanId) ?? []), member]);
   }
 
   const stockBy = new Map<string, { lines: number; units: number; value: number }>();
@@ -96,6 +104,7 @@ export async function listVans(): Promise<Result<VanRow[]>> {
         isActive: v.is_active as boolean,
         driverName: driver?.name ?? null,
         driverId: driver?.id ?? null,
+        salespeople: sellersBy.get(id) ?? [],
         stockLines: totals.lines,
         stockUnits: totals.units,
         stockValue: totals.value,
@@ -338,24 +347,31 @@ export async function listVanStock(vanId?: string): Promise<Result<VanStockRow[]
 }
 
 export interface DriverOption { id: string; fullName: string; role: string }
+export interface CrewOption { id: string; fullName: string; role: string }
 
 /**
- * People who can be given a van.
+ * People who can be crewed onto a van, by the job they would do.
  *
- * Not only the driver role: a sales rep or a manager covering a round is
- * ordinary, and the database's own driver policies key on the
- * assignment rather than on the role name.
+ * The two lists differ because the jobs differ: a driver drives and a
+ * salesperson handles the money. The database refuses a mismatch, so
+ * offering the wrong people here would only produce a form that fails
+ * on submit.
+ *
+ * Managers appear on both, because covering a round is ordinary.
  */
-export async function listAssignableDrivers(): Promise<Result<DriverOption[]>> {
+const DRIVER_ROLES = ["driver", "admin", "senior_manager", "manager"];
+const SELLER_ROLES = ["salesperson", "sales_rep", "admin", "senior_manager", "manager"];
+
+async function crewCandidates(roles: string[]): Promise<Result<CrewOption[]>> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("profiles")
     .select("id, full_name, role")
     .eq("is_active", true)
-    .in("role", ["driver", "sales_rep", "manager"])
+    .in("role", roles)
     .order("full_name");
 
-  if (error) return failed("drivers", error, "Drivers could not be loaded.");
+  if (error) return failed("crew", error, "Staff could not be loaded.");
 
   return {
     ok: true,
@@ -366,6 +382,9 @@ export async function listAssignableDrivers(): Promise<Result<DriverOption[]>> {
     })),
   };
 }
+
+export const listAssignableDrivers = () => crewCandidates(DRIVER_ROLES);
+export const listAssignableSalespeople = () => crewCandidates(SELLER_ROLES);
 
 // ===================================================================
 // Returns that are not a van coming back
@@ -484,6 +503,147 @@ export async function getStockReturnOptions(): Promise<Result<{
         id: p.id as string,
         label: label(p as Record<string, unknown>, "sku"),
       })),
+    },
+  };
+}
+
+// ===================================================================
+// The crew on a van
+// ===================================================================
+
+export interface CrewMember {
+  assignmentId: string;
+  memberId: string;
+  memberName: string;
+  memberPhone: string | null;
+  crewRole: "driver" | "salesperson";
+  assignedAt: string;
+}
+
+export interface VanCrewDetail {
+  vanId: string;
+  vanCode: string;
+  registrationNo: string;
+  isActive: boolean;
+  homeWarehouse: string | null;
+  driver: CrewMember | null;
+  salespeople: CrewMember[];
+  /** Who has been on this van before, newest first. */
+  history: {
+    memberName: string;
+    crewRole: string;
+    assignedAt: string;
+    unassignedAt: string;
+  }[];
+  /** Today, so the crew page answers "how is this van doing". */
+  today: {
+    saleCount: number;
+    revenue: number;
+    cash: number;
+    mobileMoney: number;
+    credit: number;
+    stockUnits: number;
+  };
+  openLoad: string | null;
+  loadStatus: string | null;
+}
+
+export async function getVanCrew(vanId: string): Promise<Result<VanCrewDetail | null>> {
+  const { vanCrew } = await getCapabilities();
+  if (!vanCrew) {
+    return {
+      ok: false,
+      message:
+        "Van crews need database upgrade 0032. " +
+        "Run database/UPGRADE_0032_VAN_CREW.sql, then reload.",
+    };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+
+  const [van, active, past, sales, stock, load] = await Promise.all([
+    supabase
+      .from("vans")
+      .select("id, code, registration_no, is_active, warehouses(name)")
+      .eq("id", vanId)
+      .maybeSingle(),
+    supabase
+      .from("van_assignments")
+      .select("id, member_id, crew_role, assigned_at, profiles(full_name, phone)")
+      .eq("van_id", vanId)
+      .is("unassigned_at", null),
+    supabase
+      .from("van_assignments")
+      .select("crew_role, assigned_at, unassigned_at, profiles(full_name)")
+      .eq("van_id", vanId)
+      .not("unassigned_at", "is", null)
+      .order("unassigned_at", { ascending: false })
+      .limit(20),
+    supabase
+      .from("van_sales")
+      .select("total, amount_paid, sale_type, status")
+      .eq("van_id", vanId)
+      .eq("status", "completed")
+      .gte("sold_at", startOfDay.toISOString()),
+    supabase.from("van_stock_summary").select("qty_on_hand").eq("van_id", vanId),
+    supabase
+      .from("van_loads")
+      .select("load_number, status")
+      .eq("van_id", vanId)
+      .in("status", ["loaded", "dispatched"])
+      .maybeSingle(),
+  ]);
+
+  if (van.error) return failed("crew", van.error, "This van could not be loaded.");
+  if (!van.data) return { ok: true, data: null };
+
+  const crew = ((active.data ?? []) as unknown as Record<string, unknown>[]).map((a) => {
+    const p = a.profiles as { full_name?: string; phone?: string } | null;
+    return {
+      assignmentId: a.id as string,
+      memberId: a.member_id as string,
+      memberName: p?.full_name ?? "Unnamed",
+      memberPhone: p?.phone ?? null,
+      crewRole: (a.crew_role as "driver" | "salesperson") ?? "salesperson",
+      assignedAt: a.assigned_at as string,
+    };
+  });
+
+  const rows = (sales.data ?? []) as unknown as Record<string, unknown>[];
+  const sum = (f: (r: Record<string, unknown>) => number) => rows.reduce((s, r) => s + f(r), 0);
+
+  const row = van.data as unknown as Record<string, unknown>;
+
+  return {
+    ok: true,
+    data: {
+      vanId: row.id as string,
+      vanCode: row.code as string,
+      registrationNo: row.registration_no as string,
+      isActive: row.is_active as boolean,
+      homeWarehouse: (row.warehouses as { name?: string } | null)?.name ?? null,
+      driver: crew.find((c) => c.crewRole === "driver") ?? null,
+      salespeople: crew.filter((c) => c.crewRole === "salesperson"),
+      history: ((past.data ?? []) as unknown as Record<string, unknown>[]).map((h) => ({
+        memberName: (h.profiles as { full_name?: string } | null)?.full_name ?? "Unnamed",
+        crewRole: (h.crew_role as string) ?? "salesperson",
+        assignedAt: h.assigned_at as string,
+        unassignedAt: h.unassigned_at as string,
+      })),
+      today: {
+        saleCount: rows.length,
+        revenue: sum((r) => parseAmount(r.total as string)),
+        // Cash and mobile money are told apart by the payment breakdown
+        // where there is one; without it a cash sale is just cash.
+        cash: sum((r) => (r.sale_type === "cash" ? parseAmount(r.amount_paid as string) : 0)),
+        mobileMoney: 0,
+        credit: sum((r) => (r.sale_type === "credit" ? parseAmount(r.total as string) : 0)),
+        stockUnits: (stock.data ?? []).reduce((s, x) => s + Number(x.qty_on_hand ?? 0), 0),
+      },
+      openLoad: (load.data?.load_number as string) ?? null,
+      loadStatus: (load.data?.status as string) ?? null,
     },
   };
 }

@@ -1,0 +1,20 @@
+-- ===================================================================
+-- 0032  The salesperson role
+-- ===================================================================
+--
+-- One statement, in a migration of its own, and that is deliberate.
+--
+-- PostgreSQL refuses to *use* a new enum label in the same transaction
+-- that added it - "unsafe use of new value of enum type". The Supabase
+-- SQL editor runs a whole script as one transaction, so putting this
+-- ALTER at the top of the crew migration meant the policies further down
+-- that mention 'salesperson' could not be created, and the entire
+-- upgrade failed on arrival.
+--
+-- Splitting it out gives the label its own transaction. Migration 0033
+-- then runs against a database where the role already exists.
+--
+-- The field sales role. Deliberately not `sales_rep`, which already
+-- exists and is an office role with no van and no round: merging them
+-- would give office staff a van and field staff the office's reach.
+alter type public.user_role add value if not exists 'salesperson';

@@ -41,6 +41,7 @@ const as = async (who, sql, params) => {
 };
 
 const driver   = await mk("docdrv", "driver");
+const seller   = await mk("docsell", "salesperson");
 const other    = await mk("docdrv2", "driver");
 const manager  = await mk("docmgr", "manager");
 const rival    = await mk("docrival", "admin", orgB);
@@ -64,8 +65,12 @@ const customer = (await c.query(
 const van = (await c.query(
   `insert into vans (org_id, code, registration_no, home_warehouse_id) values ($1,$2,$3,$4) returning id`,
   [orgA, `DOCV-${stamp}`.slice(0, 12), `GD-${stamp}`.slice(0, 14), wh])).rows[0].id;
-await c.query(`insert into van_assignments (org_id, van_id, driver_id) values ($1,$2,$3)`,
+await c.query(
+  `insert into van_assignments (org_id, van_id, member_id, crew_role) values ($1,$2,$3,'driver')`,
   [orgA, van, driver]);
+await c.query(
+  `insert into van_assignments (org_id, van_id, member_id, crew_role) values ($1,$2,$3,'salesperson')`,
+  [orgA, van, seller]);
 await c.query(
   `insert into stock_movements (org_id, product_id, warehouse_id, type, quantity, reason)
    values ($1,$2,$3,'receipt',2000,'Opening')`, [orgA, product, wh]);
@@ -83,10 +88,10 @@ await c.query(`select dispatch_van_load($1)`, [load.id]);
 /** A completed sale of `qty` at ₵100 each. */
 const sell = async (qty, saleType, paid = 0, payments = null, buyer = customer) => {
   const sale = (await c.query(
-    `insert into van_sales (org_id, load_id, van_id, driver_id, customer_id,
+    `insert into van_sales (org_id, load_id, van_id, driver_id, salesperson_id, customer_id,
        sale_type, status, sold_at)
-     values ($1,$2,$3,$4,$5,$6,'draft',now()) returning id`,
-    [orgA, load.id, van, driver, buyer, saleType])).rows[0];
+     values ($1,$2,$3,$4,$5,$6,$7,'draft',now()) returning id`,
+    [orgA, load.id, van, driver, seller, buyer, saleType])).rows[0];
   await c.query(
     `insert into van_sale_items (org_id, sale_id, product_id, quantity, unit_price, tax_rate)
      values ($1,$2,$3,$4,100,0)`, [orgA, sale.id, product, qty]);
