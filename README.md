@@ -147,13 +147,14 @@ deliberately: a migration is never applied by a code deploy.
 |---|---|
 | `docs/SUPABASE_SETUP.md` | The database, from an empty project |
 | `docs/VERCEL_DEPLOYMENT.md` | Getting it online |
+| `docs/VERCEL_PRODUCTION_SETUP.md` | Production deployment, environment separation, secret checks |
 | `docs/DEMO_TO_PRODUCTION.md` | Demonstration → real client |
 | `docs/PWA.md` | The driver app |
 | `docs/OFFLINE_SYNC.md` | The queue, idempotency and conflicts |
 | `docs/SECURITY.md` | What is enforced, where, and how to test it |
 | `docs/PRODUCTION_CHECKLIST.md` | Every step from an empty project to real use, in order |
 | `docs/ROLE_GUIDE.md` | Who can do what, and the separations that stop one person completing a loop |
-| `docs/DRIVER_GUIDE.md` | For whoever runs a van |
+| `docs/DRIVER_GUIDE.md` | For whoever goes out with a van — driver and salesperson |
 | `docs/ADMIN_GUIDE.md` | For whoever administers it |
 | `docs/SUPPLIER_PORTAL.md` | The link you give a supplier, and what protects it |
 | `docs/FINAL_PRODUCTION_AUDIT.md` | Every area, traced end to end, with what was fixed |

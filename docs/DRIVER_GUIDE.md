@@ -1,9 +1,23 @@
-# The driver's guide
+# The field guide
 
 GAB Premium Ent
 
-For whoever runs a van. Everything here is on the phone, and most of it
-works with no signal.
+For whoever goes out with a van. Everything here is on the phone, and
+most of it works with no signal.
+
+**There are two jobs on a van, and this guide covers both.**
+
+The **driver** drives it and answers for the vehicle and its load. They
+sign for the goods before the van leaves the yard, and they bring back
+what did not sell.
+
+The **salesperson** sells from it. They pick the customer, take the
+money, and close their own day.
+
+You will see one of two applications depending on which you are. A
+driver has no till and no customer list, because neither is their job. A
+salesperson cannot sign for a load. If you are shown the wrong one, your
+role is set wrong — tell the office rather than working around it.
 
 ---
 
@@ -24,13 +38,20 @@ has not switched it on yet. That is not something you can fix from here.
 
 ## Your day
 
-The bottom of the screen has four things: **Home**, **Sell**, **Van
-stock** and **Collect**. Everything else is under **More**.
+The bottom of the screen has four things, and which four depends on your
+job. Everything else is under **More**.
+
+**Selling:** Home · Sell · Van stock · Collect
+
+**Driving:** Home · My van · Load · Return goods
 
 ### Home
 
-What you have on board, what you have taken today, and what is still
-owed to you. The figures are for your round only.
+**If you sell:** what you have on board, what you have taken today, and
+what is still owed to you. The figures are for your round only.
+
+**If you drive:** your van, today's load, and who is selling from it.
+Tap a name to ring them.
 
 ### Van stock
 
@@ -44,6 +65,9 @@ it is not a mistake.
 ---
 
 ## Making a sale
+
+*Salespeople only. A driver has no Sell screen — the system will refuse a
+sale from them even if they find a way to ask for one.*
 
 **Sell** → pick the customer → add what they are buying → take the money.
 
@@ -67,9 +91,11 @@ you more, type what they gave and the screen shows the change to hand
 back. If they hand you less, it will tell you — take the balance, or
 record it as a credit sale instead.
 
-**Mobile money.** Type the transaction id if you have it. It is optional,
-but it is what a disputed payment gets matched against three weeks later,
-so it is worth the ten seconds.
+**Mobile money.** Tap the network — MTN, Telecel or AirtelTigo — and type
+the transaction id if you have it. Both are optional and both are worth
+the ten seconds: the id is what a disputed payment gets matched against
+three weeks later, and it can only be matched against the right network's
+statement, so the id alone is half an answer.
 
 **Split.** For when they pay part in cash and part on momo. Type the cash
 part and the screen works out the rest — read that figure out to them,
@@ -119,6 +145,9 @@ Three things worth knowing:
 
 ## Bringing the van back
 
+*Either of you can do this. The driver has the vehicle; the salesperson
+knows what went out.*
+
 **Return goods.** Count what is coming back, split into good stock and
 damaged, and say what was wrong with the damaged ones. Anything you
 cannot account for goes in as missing — writing a number you have not
@@ -149,6 +178,14 @@ You cannot approve your own end of day. Somebody in the office does that.
 Because it is not information you need to sell, and it is the kind of
 thing that causes trouble if it gets out. You see the selling price,
 which is what the customer pays.
+
+**I am the driver and there is no Sell button.**
+That is right. The salesperson on your van does the selling. If nobody is
+crewed to sell, the van cannot be dispatched at all — ring the office.
+
+**Two of us are selling from the same van.**
+That is fine and it is supported. Each sale is recorded against whoever
+made it, so your figures are yours.
 
 **A customer wants credit and it is refused.**
 They are at their limit. Ring the office — they can raise it, and the

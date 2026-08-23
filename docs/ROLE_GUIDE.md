@@ -2,8 +2,15 @@
 
 GAB Premium Ent
 
-Seven roles. This is what each one can reach and, more usefully, what
+Eight roles. This is what each one can reach and, more usefully, what
 each one deliberately cannot.
+
+**A driver is not a salesperson.** A van goes out with a driver who
+drives it and one or more people who sell from it. Those are different
+jobs, different accountability, and different people — the driver
+answers for the vehicle and its load, the salespeople for the money.
+This is enforced in the database, not by which buttons each one is
+shown: a driver cannot open a sale even by calling the API directly.
 
 Everything below is enforced by the database, not by the menu. Hiding a
 button is not security — a person who types the address of a screen they
@@ -14,32 +21,44 @@ application entirely is still refused by row level security.
 
 ## The roles at a glance
 
-| | Super Administrator | Senior manager | Manager | Warehouse | Accountant | Sales rep | Driver |
-|---|---|---|---|---|---|---|---|
-| Sees cost price and margin | ● | ● | ● | ● | ● | | |
-| Creates and edits products | ● | ● | ● | | | | |
-| Adjusts stock | ● | ● | ● | ● | | | |
-| **Approves a transfer** | ● | ● | ● | | | | |
-| Dispatches and receives transfers | ● | ● | ● | ● | | | |
-| Builds and dispatches van loads | ● | ● | ● | ● | | | |
-| Approves returns | ● | ● | ● | ● | | | |
-| Approves an end of day | ● | ● | ● | | ● | | |
-| Sells from a van | ● | ● | ● | | | ● | ● |
-| Takes payments | ● | ● | ● | | ● | | ● |
-| **Approves a supplier invoice** | ● | ● | ● | | ● | | |
-| Issues a waybill | ● | ● | ● | ● | | | |
-| Issues a supplier portal link | ● | ● | | | | | |
-| Manages staff and PINs | ● | ● | | | | | |
-| **Changes what a role can do** | ● | | | | | | |
-| Reads the audit trail | ● | ● | | | | | |
+| | Super Admin | Senior mgr | Manager | Warehouse | Accountant | Sales rep | **Salesperson** | **Driver** |
+|---|---|---|---|---|---|---|---|---|
+| Sees cost price and margin | ● | ● | ● | ● | ● | | | |
+| Creates and edits products | ● | ● | ● | | | | | |
+| Adjusts stock | ● | ● | ● | ● | | | | |
+| **Approves a transfer** | ● | ● | ● | | | | | |
+| Dispatches and receives transfers | ● | ● | ● | ● | | | | |
+| Builds and dispatches van loads | ● | ● | ● | ● | | | | |
+| **Crews a van** | ● | ● | ● | ● | | | | |
+| Approves returns | ● | ● | ● | ● | | | | |
+| Approves an end of day | ● | ● | ● | | ● | | | |
+| **Sells from a van** | ● | ● | ● | | | ● | ● | |
+| **Takes payments** | ● | ● | ● | | ● | | ● | |
+| Creates a customer | ● | ● | ● | | | ● | ● | |
+| Confirms a load for the road | ● | ● | ● | | | | | ● |
+| Submits a return | ● | ● | ● | ● | | | ● | ● |
+| Submits an end of day | ● | ● | ● | | | | ● | ● |
+| **Approves a supplier invoice** | ● | ● | ● | | ● | | | |
+| Issues a waybill | ● | ● | ● | ● | | | | |
+| Issues a supplier portal link | ● | ● | | | | | | |
+| Manages staff and PINs | ● | ● | | | | | | |
+| **Changes what a role can do** | ● | | | | | | | |
+| Reads the audit trail | ● | ● | | | | | | |
 
 ---
 
 ## The separations that matter
 
-Four rules exist specifically so that one person cannot complete a loop
+Five rules exist specifically so that one person cannot complete a loop
 on their own. They are the reason several roles look narrower than you
 might expect.
+
+**A driver cannot sell, and a salesperson cannot drive.**
+The van's crew list says which job each person holds, and the database
+checks it: selling requires being crewed *to sell*, not merely being
+aboard. A van with nobody crewed to sell cannot be dispatched at all —
+goods would leave the warehouse with no way to record what happened to
+them.
 
 **A driver cannot approve their own end of day.**
 Counting the cash and agreeing the count are two jobs. Enforced by a
@@ -66,13 +85,13 @@ somebody senior has to make.
 Visible to: Super Administrator, senior manager, manager, warehouse,
 accountant.
 
-Never visible to: sales rep, driver.
+Never visible to: sales rep, salesperson, driver.
 
 This is not a hidden column. Cost is withdrawn from the API entirely for
 those roles, so it is not in the response a browser receives, not in the
-snapshot a driver's phone caches, and not in any report they can export.
-A driver who inspected the network traffic would find no cost figure to
-read.
+snapshot a field phone caches, and not in any report they can export. A
+salesperson who inspected the network traffic would find no cost figure
+to read.
 
 The same rule covers unit cost on a van load, purchase prices, supplier
 terms, warehouse valuation and gross margin.
@@ -133,18 +152,35 @@ figure, because a total hides the only thing that matters about a debt —
 forty thousand cedi inside terms is a healthy book and the same figure at
 ninety days is a write-off waiting to be admitted.
 
-### Sales rep
+### Salesperson
 
-Sells, creates customers, sees what is in stock and what customers owe.
-No cost, no margin, no stock movements, no approvals.
+The field seller. Sells from the van they are crewed on, creates
+customers at the roadside, takes cash, mobile money, split payments and
+approved credit, collects on account, and closes their day.
+
+Their application is the round and nothing else, built for a phone used
+one-handed outside a shop, and it works with no signal.
+
+No cost price anywhere, by any route. See `docs/DRIVER_GUIDE.md`.
 
 ### Driver
 
-The round, and nothing else. Sell, take money, collect on credit, return
-goods, close the day. Their whole application is built for a phone used
-one-handed outside a shop, and it works with no signal.
+The vehicle. Which van is mine, what is on it, who is selling from it
+today, what is coming back. They sign for the load before it leaves the
+yard — the goods are their responsibility on the road.
 
-No cost anywhere. See `docs/DRIVER_GUIDE.md`.
+They deliberately hold neither `sales.create` nor `payments.create`.
+They can see what the round sold, because it is their van, but they
+cannot record a sale or take a payment. Before the crew model they could
+do both, which put the wrong name on every receipt.
+
+No cost price anywhere.
+
+### Sales rep
+
+Office-based sales. Customers, orders, what is in stock, what is owed.
+No van, no round, no crew. Distinct from a salesperson, who is crewed on
+a vehicle and sells from it in the field.
 
 ---
 
