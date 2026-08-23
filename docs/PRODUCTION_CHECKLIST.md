@@ -8,20 +8,64 @@ Tick each box before moving on. The order matters: the database has to
 be right before the application is deployed against it, and the
 application has to be up before anybody is given a PIN.
 
+
+---
+
+## 0. What is on your database right now
+
+Inspected read-only. **No real client business data was found anywhere** —
+so nothing below is destructive to work anybody has done.
+
+| Organization | What is in it |
+|---|---|
+| `gab-premium-ent-demo` | The demonstration: 27 staff, 16 sales, 247 stock movements, 24 vans |
+| `default` | 3 customers, 6 products, 2 suppliers, 2 warehouses, **no staff, no sales** — leftover seed data from the original installer |
+| `purge-probe-tmp` | Empty. A probe I left behind in an earlier session; remove it |
+
+**Three things to deal with before go-live:**
+
+- [ ] **23 leftover test accounts have working PINs.** Named "Offline
+      Tester" and "Flow Tester", created by hosted test runs. They sit in
+      the demonstration organization and every one can sign in. They go
+      when the demonstration organization does — but until then they are
+      23 live credentials.
+
+- [ ] **`npm run production:clean` currently refuses**, and it is right
+      to. It found a sale recorded the previous day and 23 accounts the
+      seed did not create, which is exactly the pattern of somebody
+      trading in the demonstration organization. In this case they are
+      test artefacts rather than real work — but the script cannot know
+      that, and a script that guesses is one you cannot trust later.
+
+      To proceed, remove the test accounts first, or delete the
+      demonstration organization by hand knowing what is in it.
+
+- [ ] **`purge-probe-tmp` is mine and should go.** It holds nothing.
+
+- [ ] **Decide about `default`.** It has no staff and no sales, only seed
+      products and customers. If the client is not going to use it, it is
+      clutter; if they are, those six products are placeholders.
+
 ---
 
 ## 1. The database
 
 - [ ] **Open your Supabase project** → SQL Editor → New query.
 
-- [ ] **Paste `database/WHOLESALE_DISTRIBUTION_DATABASE.sql`** in full and
-      run it. It is one transaction: it either installs completely or
-      changes nothing.
+- [ ] **New project?** Paste `database/WHOLESALE_DISTRIBUTION_DATABASE.sql`
+      in full and run it. It is one transaction: it either installs
+      completely or changes nothing.
 
-      *Already have an older version of this schema?* Do not run the
-      installer again. Run only the `database/UPGRADE_*.sql` files newer
-      than what you have, **in number order**. Each one is safe to run
-      twice.
+- [ ] **The project you already have?** Do **not** run the installer.
+      `docs/HOSTED_DATABASE_MIGRATION_PLAN.md` lists exactly which
+      upgrade scripts are missing, verified object by object rather than
+      by migration number — which matters, because that database has 0022
+      applied but not 0020 or 0021.
+
+      **`UPGRADE_0032_SALESPERSON_ROLE.sql` must be run entirely on its
+      own**, before 0033. PostgreSQL will not use a new enum label in the
+      transaction that added it, and the SQL editor runs whatever is in
+      it as one transaction. Tested both ways; the plan shows the result.
 
 - [ ] **Run `database/VERIFY_DATABASE.sql`.** Every row must read **OK**
       or **INFO**. A **CHECK** row means the schema does not match this
