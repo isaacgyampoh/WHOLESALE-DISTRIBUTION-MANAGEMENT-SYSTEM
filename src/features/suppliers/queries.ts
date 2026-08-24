@@ -302,3 +302,64 @@ export async function listAwaitingReview(): Promise<Result<
     })),
   };
 }
+
+export interface SupplierPortalStatus {
+  supplierId: string;
+  /** Links that still work: not revoked, not past their date. */
+  activeLinks: number;
+  /** The soonest expiry among those, so the list can warn before it lapses. */
+  nextExpiry: string | null;
+  documentsAwaiting: number;
+}
+
+/**
+ * Where each supplier stands on the portal, for the supplier list.
+ *
+ * One query for every supplier rather than one per row: the list is the
+ * page an administrator opens to answer "who has a link and who has
+ * sent us something", and doing that per row makes it N round trips.
+ */
+export async function listPortalStatus(): Promise<Result<Map<string, SupplierPortalStatus>>> {
+  const { supplierPortal, supplierDocuments } = await getCapabilities();
+  const supabase = await createSupabaseServerClient();
+  const status = new Map<string, SupplierPortalStatus>();
+
+  const get = (id: string) => {
+    let row = status.get(id);
+    if (!row) {
+      row = { supplierId: id, activeLinks: 0, nextExpiry: null, documentsAwaiting: 0 };
+      status.set(id, row);
+    }
+    return row;
+  };
+
+  if (supplierPortal) {
+    const { data, error } = await supabase
+      .from("supplier_portal_tokens")
+      .select("supplier_id, expires_at, revoked_at")
+      .is("revoked_at", null)
+      .gt("expires_at", new Date().toISOString());
+
+    // A failure here costs the badges, not the list of suppliers.
+    if (error) console.error("[suppliers] portal status failed", error);
+
+    for (const row of data ?? []) {
+      const entry = get(row.supplier_id as string);
+      entry.activeLinks++;
+      const expires = row.expires_at as string;
+      if (!entry.nextExpiry || expires < entry.nextExpiry) entry.nextExpiry = expires;
+    }
+  }
+
+  if (supplierDocuments) {
+    const { data, error } = await supabase
+      .from("supplier_documents")
+      .select("supplier_id, status")
+      .in("status", ["received", "reviewing"]);
+
+    if (error) console.error("[suppliers] awaiting-review counts failed", error);
+    for (const row of data ?? []) get(row.supplier_id as string).documentsAwaiting++;
+  }
+
+  return { ok: true, data: status };
+}

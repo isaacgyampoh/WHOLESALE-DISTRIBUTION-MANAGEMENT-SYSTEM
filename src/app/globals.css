@@ -22,6 +22,17 @@
   --color-ink-900: oklch(0.208 0.017 254);
   --color-ink-950: oklch(0.139 0.014 254);
 
+  /*
+   * Gold. Used only where the company signs its name - the sign-in
+   * panel, and nothing operational. Deliberately separate from
+   * --color-caution, which is amber because it means "look at this":
+   * if the two shared a token, a warning would inherit whatever the
+   * brand did next.
+   */
+  --color-gold-300: oklch(0.855 0.115 84);
+  --color-gold-400: oklch(0.795 0.135 79);
+  --color-gold-500: oklch(0.735 0.145 75);
+
   /* Accent - deep teal. Distinct from the default-blue dashboard look. */
   --color-brand-50: oklch(0.977 0.017 183);
   --color-brand-100: oklch(0.947 0.036 181);
@@ -175,4 +186,17 @@
   thead { display: table-header-group; }
 
   @page { margin: 14mm; }
+}
+
+/*
+  A wrong PIN, felt as well as read.
+
+  Two small movements and done - not a bounce, and nothing that outlives
+  the moment it belongs to. Applied through motion-safe:, so a person who
+  has asked their system for reduced motion simply never sees it.
+*/
+@keyframes pin-refused {
+  0%, 100% { transform: translateX(0); }
+  25%      { transform: translateX(-4px); }
+  75%      { transform: translateX(4px); }
 }

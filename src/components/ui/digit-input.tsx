@@ -25,6 +25,7 @@ export function DigitInput({
   label,
   idPrefix,
   describedBy,
+  scale = "default",
   onComplete,
   onChangeValue,
 }: {
@@ -38,6 +39,12 @@ export function DigitInput({
   /** Gives each box a stable id so a <label> can point at the first one. */
   idPrefix?: string;
   describedBy?: string;
+  /**
+   * "counter" is the sign-in treatment: taller cells, a heavy rule under
+   * each, and a shake when the PIN is refused. Everywhere else the
+   * compact default sits inside a dialog beside other fields.
+   */
+  scale?: "default" | "counter";
   onComplete?: (code: string) => void;
   /** Every change, so a caller can enable its own submit button. */
   onChangeValue?: (value: string) => void;
@@ -101,7 +108,13 @@ export function DigitInput({
     <div>
       <input type="hidden" name={name} value={value} />
       <div
-        className="flex justify-between gap-2"
+        className={cn(
+          "flex justify-between",
+          scale === "counter" ? "gap-2.5 sm:gap-3" : "gap-2",
+          // One quick shake on a refusal, so a wrong PIN is felt as well
+          // as read. Suppressed for anyone who has asked for less motion.
+          invalid && scale === "counter" && "motion-safe:animate-[pin-refused_360ms_ease-in-out]",
+        )}
         role="group"
         aria-label={label ?? `${length}-digit PIN`}
       >
@@ -129,15 +142,32 @@ export function DigitInput({
             aria-invalid={invalid || undefined}
             aria-describedby={describedBy}
             className={cn(
-              "h-16 w-full min-w-0 rounded-[var(--radius-panel)] border text-center",
-              "numeric text-2xl font-semibold text-[var(--text-primary)]",
-              "bg-[var(--surface-raised)] transition-colors",
+              "w-full min-w-0 text-center numeric font-semibold text-[var(--text-primary)]",
+              "transition-[border-color,box-shadow,background-color] duration-150",
               // A visible ring, not just a border tint: on a bright
               // screen in a warehouse the tint alone is not findable.
-              "outline-none focus-visible:border-brand-600",
-              "focus-visible:ring-2 focus-visible:ring-brand-600/40",
-              "disabled:opacity-60",
-              invalid ? "border-critical" : "border-[var(--border-strong)]",
+              "outline-none disabled:opacity-60",
+              scale === "counter"
+                ? cn(
+                    // A field stamped on a docket: square, ruled heavily
+                    // underneath, and the rule is what carries the state.
+                    "h-[4.25rem] rounded-t-[6px] rounded-b-none text-[1.75rem]",
+                    "border-x border-t border-b-[3px]",
+                    // The rule underneath carries the state; the cell
+                    // itself stays quiet so four of them read as one
+                    // field rather than four buttons.
+                    "bg-[var(--surface-raised)]",
+                    "focus-visible:bg-brand-50/60 dark:focus-visible:bg-brand-950/30",
+                    invalid
+                      ? "border-x-critical/25 border-t-critical/25 border-b-critical"
+                      : "border-x-[var(--border-subtle)] border-t-[var(--border-subtle)] border-b-[var(--border-strong)] focus-visible:border-x-brand-500/40 focus-visible:border-t-brand-500/40 focus-visible:border-b-brand-700",
+                  )
+                : cn(
+                    "h-16 rounded-[var(--radius-panel)] border text-2xl",
+                    "bg-[var(--surface-raised)]",
+                    "focus-visible:border-brand-600 focus-visible:ring-2 focus-visible:ring-brand-600/40",
+                    invalid ? "border-critical" : "border-[var(--border-strong)]",
+                  ),
             )}
           />
         ))}

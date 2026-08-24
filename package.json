@@ -34,7 +34,9 @@
     "db:set-password": "node scripts/db/set-password.mjs",
     "db:check": "node scripts/db/check.mjs",
     "production:bootstrap": "node scripts/production/bootstrap.mjs",
-    "production:auth-flow": "node tests/production/auth-flow.mjs"
+    "production:auth-flow": "node tests/production/auth-flow.mjs",
+    "production:supplier-portal": "node tests/production/supplier-portal.mjs",
+    "production:smoke": "node tests/production/smoke.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",

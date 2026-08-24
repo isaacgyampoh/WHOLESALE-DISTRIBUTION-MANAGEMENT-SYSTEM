@@ -11,7 +11,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/field";
 import { Alert } from "@/components/ui/states";
-import { Upload, Link2, Trash2, Download, Copy, Check } from "lucide-react";
+import { Upload, Link2, Trash2, Download, Copy, Check, ExternalLink } from "lucide-react";
 
 const KINDS = [
   { value: "invoice", label: "Invoice" },
@@ -244,9 +244,13 @@ export function DeleteDocumentButton({ documentId, title }: {
  * is kept. That is stated on the dialog rather than discovered later by
  * somebody looking for where it went.
  */
-export function IssuePortalLinkButton({ supplierId, supplierName }: {
+export function IssuePortalLinkButton({
+  supplierId, supplierName, size, label = "Issue a portal link",
+}: {
   supplierId: string;
   supplierName: string;
+  size?: "sm" | "md" | "lg";
+  label?: string;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -269,16 +273,16 @@ export function IssuePortalLinkButton({ supplierId, supplierName }: {
 
   return (
     <>
-      <Button variant="secondary" onClick={() => setOpen(true)}>
+      <Button variant="secondary" size={size} onClick={() => setOpen(true)}>
         <Link2 className="size-4" aria-hidden />
-        Issue a portal link
+        {label}
       </Button>
 
       <Dialog
         open={open}
         onClose={close}
-        title={`Portal link for ${supplierName}`}
-        description="A link they can open to see their own orders. No account, no password."
+        title={`Invoice portal for ${supplierName}`}
+        description="Send this secure link to the supplier so they can submit invoice documents. No account, no password."
         className="sm:max-w-lg"
       >
         {state.status === "done" && state.issuedLink ? (
@@ -309,7 +313,18 @@ export function IssuePortalLinkButton({ supplierId, supplierName }: {
               {copied ? <Check className="size-4" aria-hidden /> : <Copy className="size-4" aria-hidden />}
               {copied ? "Copied" : "Copy link"}
             </Button>
-            <Button variant="outline" className="w-full" onClick={close}>Done</Button>
+            {/* Opening it here is how somebody checks the link works
+                before sending it; it is the supplier's own page, and
+                holding it is the whole of the access it grants. */}
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
+            >
+              <ExternalLink className="size-4" aria-hidden />
+              Open portal
+            </Button>
+            <Button variant="ghost" className="w-full" onClick={close}>Done</Button>
           </div>
         ) : (
           <form action={formAction} className="space-y-4">

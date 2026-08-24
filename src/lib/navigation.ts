@@ -71,6 +71,10 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       { label: "Expiry", href: "/inventory/expiry", permissions: ["inventory.view"], icon: "CalendarClock" },
       { label: "Transfers", href: "/transfers", permissions: ["inventory.transfer"], icon: "ArrowLeftRight" },
       { label: "Purchasing", href: "/purchasing", permissions: ["inventory.transfer"], icon: "Truck" },
+      // Where a supplier's invoice link is issued. It used to be
+      // reachable only by clicking a supplier's name inside Purchasing,
+      // which meant the portal was built, working and unfindable.
+      { label: "Suppliers", href: "/suppliers", permissions: ["inventory.transfer"], icon: "Building2" },
       {
         label: "Supplier invoices", href: "/suppliers/review",
         permissions: ["payments.view"], icon: "Inbox",
