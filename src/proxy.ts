@@ -16,7 +16,13 @@ import { createServerClient } from "@supabase/ssr";
 // account, so sending them to a sign-in page would make the link
 // useless. The link itself is the authorisation, checked and rate
 // limited in the database by the route that serves it.
-const PUBLIC_PATHS = ["/sign-in", "/auth", "/_next", "/favicon.ico", "/portal"];
+// /receipt is here for the same reason as /portal: the customer holds a
+// link, not an account. The token is the whole of their authorization
+// and it reaches exactly one receipt - so sending them to sign in would
+// be sending them nowhere, which is what it did before this line.
+const PUBLIC_PATHS = [
+  "/sign-in", "/auth", "/_next", "/favicon.ico", "/portal", "/receipt",
+];
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });

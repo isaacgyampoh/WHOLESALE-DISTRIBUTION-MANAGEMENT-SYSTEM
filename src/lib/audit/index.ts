@@ -82,7 +82,11 @@ export type AuditAction =
   | "supplier.invoice_submitted"
   | "supplier.invoice_reviewing"
   | "supplier.invoice_approved"
-  | "supplier.invoice_rejected";
+  | "supplier.invoice_rejected"
+  // Who sent a customer their receipt, and to which number. Worth
+  // keeping: "we never got it" is a common enough dispute, and the
+  // answer is a fact rather than a memory.
+  | "receipt.issued";
 
 export interface AuditEntry {
   action: AuditAction;
@@ -90,6 +94,7 @@ export interface AuditEntry {
     | "profile" | "product" | "category" | "customer"
     | "van" | "van_load" | "van_return" | "reconciliation"
     | "warehouse" | "supplier" | "purchase_order" | "van_sale"
+    | "credit_transaction"
     | "waybill" | "stock_transfer";
   targetId?: string;
   targetLabel?: string;

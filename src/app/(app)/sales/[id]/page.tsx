@@ -10,6 +10,7 @@ import {
 import { ShareButton } from "@/features/documents/share-button";
 import { Forbidden } from "@/components/layout/forbidden";
 import { Card } from "@/components/ui/card";
+import { ShareReceipt } from "@/features/receipts/share-receipt";
 import { Badge } from "@/components/ui/badge";
 import { ErrorState } from "@/components/ui/states";
 import { formatMoney, formatDateTime, formatDate, formatQuantity } from "@/lib/utils/format";
@@ -59,6 +60,31 @@ export default async function SaleReceiptPage({
       : [];
 
   return (
+    <>
+      {/*
+        Above the document, because this is what somebody opening a past
+        sale came to do: the customer is on the phone asking for their
+        receipt again, and re-sending it must not mean reading the page
+        first. Issuing a link records no money and creates no sale - it
+        prepares the same receipt again.
+      */}
+      <Card className="mb-6">
+        <div className="mb-4">
+          <h2 className="text-base font-semibold text-[var(--text-primary)]">
+            Send this receipt to the customer
+          </h2>
+          <p className="mt-1 text-sm text-[var(--text-secondary)]">
+            They get a link to open, read and download it. No printer, no
+            account, nothing to install.
+          </p>
+        </div>
+        <ShareReceipt
+          kind="sale"
+          subjectId={sale.id}
+          customerPhone={sale.customerPhone}
+        />
+      </Card>
+
     <DocumentShell
       title={onCredit ? "Sales receipt" : "Receipt"}
       reference={sale.saleNumber}
@@ -203,5 +229,6 @@ export default async function SaleReceiptPage({
         </p>
       )}
     </DocumentShell>
+    </>
   );
 }

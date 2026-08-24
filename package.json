@@ -36,7 +36,8 @@
     "production:bootstrap": "node scripts/production/bootstrap.mjs",
     "production:auth-flow": "node tests/production/auth-flow.mjs",
     "production:supplier-portal": "node tests/production/supplier-portal.mjs",
-    "production:smoke": "node tests/production/smoke.mjs"
+    "production:smoke": "node tests/production/smoke.mjs",
+    "production:receipts": "node tests/production/receipts.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",
@@ -44,6 +45,7 @@
     "clsx": "^2.1.1",
     "lucide-react": "^1.33.0",
     "next": "16.3.1",
+    "pdf-lib": "^1.17.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "server-only": "^0.0.1",

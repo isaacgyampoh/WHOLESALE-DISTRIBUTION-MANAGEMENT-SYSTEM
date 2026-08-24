@@ -1314,6 +1314,73 @@ select 'one PIN still cannot open two accounts',
                           where schemaname = 'public' and indexname = 'profiles_active_pin_key')
             then 'PASS' else 'FAIL' end;`,
   },
+  {
+    migration: "0041_a_receipt_the_customer_can_open.sql",
+    out: "UPGRADE_0041_RECEIPTS.sql",
+    title: "UPGRADE 0041 - a receipt the customer can actually open",
+    summary: `-- WHAT IT ADDS
+--
+-- Receipts existed and no customer had ever seen one. A sale produced a
+-- page inside the application, and the only way to hand it over was the
+-- printer - which a salesperson standing in a yard does not have.
+--
+--   receipt_tokens          one unguessable link per receipt
+--   issue_receipt_token()   mint one for a sale or a credit payment
+--   resolve_receipt_token() trade the digest for exactly one receipt
+--
+-- The same shape as the supplier portal: 32 random bytes, only the
+-- SHA-256 digest stored, and a SECURITY DEFINER function that returns
+-- one document and nothing else. The link exists in the WhatsApp
+-- message it was sent in and nowhere else.
+--
+-- WHAT A RECEIPT DELIBERATELY DOES NOT CARRY
+--
+-- Cost price, margin, supplier, the van, the load, or any internal
+-- identifier. The document is assembled inside resolve_receipt_token,
+-- so no query written later can widen it by accident.
+--
+-- Receipt numbers are a single series across sales and credit payments,
+-- so RCP-2026-000123 names one document.
+--
+-- Nothing is dropped and no policy is relaxed.
+--
+-- AFTER RUNNING IT, redeploy. Sales and credit collections then offer
+-- "Send receipt on WhatsApp".`,
+    verify: `select 'receipt links exist' as check,
+       case when to_regclass('public.receipt_tokens') is not null
+            then 'PASS' else 'FAIL' end as result
+union all
+select 'only the digest is stored',
+       case when exists (select 1 from information_schema.columns
+                          where table_name = 'receipt_tokens' and column_name = 'token_hash')
+             and not exists (select 1 from information_schema.columns
+                              where table_name = 'receipt_tokens' and column_name = 'token')
+            then 'PASS' else 'FAIL' end
+union all
+select 'a link cannot be reused for another receipt',
+       case when exists (select 1 from pg_indexes
+                          where tablename = 'receipt_tokens' and indexdef like '%UNIQUE%token_hash%')
+            then 'PASS' else 'FAIL' end
+union all
+select 'issuing and resolving are both present',
+       case when (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                   where n.nspname = 'public'
+                     and p.proname in ('issue_receipt_token','resolve_receipt_token')) = 2
+            then 'PASS' else 'FAIL' end
+union all
+select 'the receipt carries no cost price',
+       case when position('cost' in
+              coalesce((select pg_get_functiondef(p.oid) from pg_proc p
+                          join pg_namespace n on n.oid = p.pronamespace
+                         where n.nspname = 'public' and p.proname = 'resolve_receipt_token'
+                         limit 1), '')) = 0
+            then 'PASS' else 'FAIL' end
+union all
+select 'nobody signed out can read the table',
+       case when exists (select 1 from pg_policies
+                          where tablename = 'receipt_tokens' and policyname = 'receipt_tokens_select')
+            then 'PASS' else 'FAIL' end;`,
+  },
 ];
 
 /** Final enum members, in the order `alter type ... add value` yields. */

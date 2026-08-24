@@ -27,4 +27,5 @@ export const AUDIT_LABELS: Record<string, string> = {
   "user.pin_reset": "Reset PIN",
   "user.pin_changed": "Changed own PIN",
   "user.categories_changed": "Changed category access",
+  "receipt.issued": "Sent a receipt",
 };
