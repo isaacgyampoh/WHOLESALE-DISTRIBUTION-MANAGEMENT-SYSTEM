@@ -30,7 +30,9 @@
     "icons": "node scripts/icons/generate.mjs",
     "visual:audit": "node tests/visual/audit.mjs",
     "production:clean": "node scripts/production/clean.mjs",
-    "production:verify": "node scripts/production/verify.mjs"
+    "production:verify": "node scripts/production/verify.mjs",
+    "db:set-password": "node scripts/db/set-password.mjs",
+    "db:check": "node scripts/db/check.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",
