@@ -6,6 +6,7 @@ import {
   getProduct, listCategories, listWarehouses, listMovements
 } from "@/features/catalogue/queries";
 import { ProductActions } from "@/features/catalogue/product-detail";
+import { ProductImageForm } from "@/features/catalogue/product-image-form";
 import { getCapabilities } from "@/lib/db/capabilities";
 import { StockBadge } from "@/features/catalogue/stock-badge";
 import { MovementList } from "@/features/catalogue/movement-list";
@@ -86,6 +87,22 @@ export default async function ProductPage({
       </div>
 
       <div className="mb-5 grid gap-5 lg:grid-cols-2">
+        {can(user.role, "products.edit") && (
+          <Card>
+            <CardHeader
+              title="Picture"
+              description="What a salesperson sees on the till."
+            />
+            <CardBody>
+              <ProductImageForm
+                productId={product.id}
+                productName={product.name}
+                imagePath={product.imagePath}
+              />
+            </CardBody>
+          </Card>
+        )}
+
         <Card>
           <CardHeader title="Details" />
           <CardBody className="space-y-3 text-sm">

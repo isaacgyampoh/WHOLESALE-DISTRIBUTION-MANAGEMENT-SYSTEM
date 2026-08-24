@@ -69,6 +69,8 @@ holds nothing and should be removed, but I have not touched it.
 | **0033** | `van_assignments.member_id` | **column absent** | **apply** |
 | **0034** | `momo_providers` | **missing** | **apply** |
 | **0035** | ledger purge guard | not readable over the API | **apply** |
+| **0036** | salesperson role lists | not readable over the API | **apply** |
+| **0037** | `products.image_path` | **column absent** | **apply** |
 
 **0022 was applied out of order**, before 0020 and 0021. Neither depends
 on it, so applying them now is safe — but it is why the number alone
@@ -139,7 +141,6 @@ and read the result of each before starting the next.
 11.  UPGRADE_0032_SALESPERSON_ROLE.sql   <-- ON ITS OWN. See below.
 12.  UPGRADE_0033_VAN_CREW.sql
 13.  UPGRADE_0034_MOMO_PROVIDER.sql
-14.  UPGRADE_0035_LEDGER_PURGE.sql
 15.  VERIFY_DATABASE.sql
 ```
 
@@ -188,7 +189,7 @@ enums and their exact members, functions, triggers, indexes, constraints,
 row level security, grants, storage, cost-price protection, the crew
 model, payments, invoices, expiry and offline sync.
 
-**Expected: 77 checks, every row OK or INFO.** A `CHECK` row means a
+**Expected: 81 checks, every row OK or INFO.** A `CHECK` row means a
 count differs from this build; a `FAIL` row means something is missing or
 a security rule is not in place.
 
@@ -213,10 +214,20 @@ database's real state, and the fix belongs in the script.
 accounts are made under Authentication → Users, and PINs are set in the
 application.
 
-**Storage.** `UPGRADE_0029` creates the `supplier-documents` bucket and
-its policies. After running it, confirm in Storage that the bucket exists
-and is **private**. It must never be public: the files in it carry
-purchase prices.
+**Storage.** Two buckets, and the difference between them is deliberate.
+
+`UPGRADE_0029` creates `supplier-documents` — **private**. The files in
+it carry purchase prices.
+
+`UPGRADE_0037` creates `product-images` — **public**. A product
+photograph is the thing the customer is holding, and it has to be public
+because a signed URL expires: a phone that cached its round at six in the
+morning and has had no signal since cannot mint a new one. The service
+worker also caches by URL, which a signed URL defeats by being different
+every time.
+
+After running both, confirm in Storage that each shows the right
+visibility.
 
 **The demonstration data.** Removing it is a separate step —
 `npm run production:clean`, or `database/PRODUCTION_CLEAN.sql`. See

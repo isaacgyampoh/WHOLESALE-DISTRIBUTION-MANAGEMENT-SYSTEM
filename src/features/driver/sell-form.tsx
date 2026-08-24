@@ -15,6 +15,7 @@ import { Card, CardBody } from "@/components/ui/card";
 import { Alert, EmptyState } from "@/components/ui/states";
 import { Badge } from "@/components/ui/badge";
 import { formatMoney, formatQuantity } from "@/lib/utils/format";
+import { productImageUrl } from "@/lib/catalogue/image";
 import type { OfflineSnapshot } from "@/lib/offline/queue";
 import {
   Minus, Plus, PackageX, Search, Check, Banknote, CreditCard, ShoppingCart,
@@ -141,6 +142,16 @@ export function SellForm({
     return stock.filter((s) =>
       s.name.toLowerCase().includes(q) || s.sku.toLowerCase().includes(q));
   }, [stock, query]);
+
+  /**
+   * The picture for a line, if the snapshot carried one.
+   *
+   * Comes from the same price list the till already holds, so it works
+   * with no signal - the bucket is public precisely so this URL is
+   * stable and cacheable.
+   */
+  const imageFor = (productId: string) =>
+    productImageUrl(priceBy.get(productId)?.image_path ?? null);
 
   const setQty = (productId: string, next: number, available: number) =>
     setQuantities((current) => ({
@@ -466,7 +477,21 @@ export function SellForm({
                   }
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
+                    {/* A picture where there is one. Half a wholesale
+                        catalogue is "500ml", "1L", "Crate of 24" of
+                        things that read alike and look nothing alike on
+                        a shelf, and the wrong line picked in a hurry is
+                        an argument at the next delivery. */}
+                    {imageFor(s.product_id) && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={imageFor(s.product_id) as string}
+                        alt=""
+                        loading="lazy"
+                        className="size-12 shrink-0 rounded-[var(--radius-panel)] border border-[var(--border-subtle)] object-cover"
+                      />
+                    )}
+                    <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-[var(--text-primary)]">
                         {s.name}
                       </p>

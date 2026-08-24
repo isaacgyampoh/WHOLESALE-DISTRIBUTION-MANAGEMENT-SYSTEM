@@ -201,7 +201,7 @@ export async function getSellingRound(): Promise<Result<OfflineSnapshotShape | n
     load
       ? supabase
           .from("van_load_items")
-          .select("product_id, unit_price, products(tax_rate)")
+          .select("product_id, unit_price, products(tax_rate, image_path)")
           .eq("load_id", load.id)
       : Promise.resolve({ data: [] as unknown[] }),
     supabase
@@ -248,6 +248,8 @@ export async function getSellingRound(): Promise<Result<OfflineSnapshotShape | n
         product_id: p.product_id as string,
         unit_price: parseAmount(p.unit_price as string),
         tax_rate: parseAmount((p.products as { tax_rate?: string } | null)?.tax_rate),
+        image_path:
+          (p.products as { image_path?: string } | null)?.image_path ?? null,
       })),
       customers: ((customerRes.data ?? []) as unknown as Record<string, unknown>[]).map((c) => {
         const position = positionBy.get(c.id as string);
@@ -274,7 +276,11 @@ export interface OfflineSnapshotShape {
   van: { id: string; code: string; registration_no: string } | null;
   load: { id: string; load_number: string; status: string; opening_float: number } | null;
   stock: { product_id: string; sku: string; name: string; qty_on_hand: number }[];
-  prices: { product_id: string; unit_price: number; tax_rate: number }[];
+  prices: {
+    product_id: string; unit_price: number; tax_rate: number;
+    /** Public bucket path, so the till can show it with no signal. */
+    image_path: string | null;
+  }[];
   customers: {
     id: string; code: string; name: string; phone: string | null;
     balance: number; credit_available: number;

@@ -31,6 +31,8 @@ export interface ProductRow {
    */
   costPrice: number | null;
   listPrice: number;
+  /** Path in the public product-images bucket, or null. */
+  imagePath: string | null;
   reorderPoint: number;
   reorderQty: number;
   isActive: boolean;
@@ -82,6 +84,7 @@ function toProduct(row: Record<string, unknown>): ProductRow {
       ? null
       : parseAmount(row.cost_price as string),
     listPrice: parseAmount(row.list_price as string),
+    imagePath: (row.image_path as string) ?? null,
     reorderPoint,
     reorderQty: Number(row.reorder_qty ?? 0),
     isActive: row.is_active as boolean,
@@ -111,13 +114,17 @@ function toProduct(row: Record<string, unknown>): ProductRow {
  * than falling back to the raw column and showing everybody.
  */
 function productSelect(capabilities: {
-  maskedProductPricing: boolean; batchesAndExpiry: boolean;
+  maskedProductPricing: boolean; batchesAndExpiry: boolean; productImages: boolean;
 }): string {
   const columns = [
     "id", "sku", "barcode", "name", "description", "category_id",
     "unit_of_measure", "units_per_case", "list_price", "tax_rate",
     "reorder_point", "reorder_qty", "is_active", "created_at", "updated_at",
   ];
+  // Absent before migration 0037. Asked for only when it is there, so a
+  // database behind the application returns products rather than an
+  // error about an unknown column.
+  if (capabilities.productImages) columns.push("image_path");
   if (capabilities.maskedProductPricing) columns.push("cost_price");
   if (capabilities.batchesAndExpiry) {
     columns.push("track_batches", "track_expiry", "shelf_life_days");

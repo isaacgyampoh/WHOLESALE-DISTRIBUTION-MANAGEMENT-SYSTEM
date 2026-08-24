@@ -39,6 +39,7 @@ const UPGRADE_CREW = path.join("..", "..", "database", "UPGRADE_0033_VAN_CREW.sq
 const UPGRADE_MOMO = path.join("..", "..", "database", "UPGRADE_0034_MOMO_PROVIDER.sql");
 const UPGRADE_PURGE = path.join("..", "..", "database", "UPGRADE_0035_LEDGER_PURGE.sql");
 const UPGRADE_REACH = path.join("..", "..", "database", "UPGRADE_0036_SALESPERSON_REACH.sql");
+const UPGRADE_IMAGES = path.join("..", "..", "database", "UPGRADE_0037_PRODUCT_IMAGES.sql");
 
 let pass = 0, fail = 0;
 const ok = (n, c, x = "") => { c ? (pass++, console.log(`  PASS  ${n} ${x}`)) : (fail++, console.log(`  FAIL  ${n} ${x}`)); };
@@ -57,7 +58,7 @@ for (const s of splitStatements(shim)) await c.query(s);
 const files = fs.readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort()
   .filter((f) => !["0022", "0023", "0024", "0025", "0026", "0027", "0028", "0029", "0030",
                    "0031", "0032", "0033", "0034", "0035",
-                   "0036"].some((n) => f.startsWith(n)));
+                   "0036", "0037"].some((n) => f.startsWith(n)));
 for (const f of files) {
   const sql = fs.readFileSync(path.join(MIGRATIONS, f), "utf8");
   for (const s of splitStatements(sql)) {
@@ -352,7 +353,7 @@ for (const [name, file] of [["0029", UPGRADE_DOCS_SUP], ["0030", UPGRADE_PORTAL]
                             // transaction that created it.
                             ["0032", UPGRADE_ROLE], ["0033", UPGRADE_CREW],
                             ["0034", UPGRADE_MOMO], ["0035", UPGRADE_PURGE],
-                            ["0036", UPGRADE_REACH]]) {
+                            ["0036", UPGRADE_REACH], ["0037", UPGRADE_IMAGES]]) {
   const sql = fs.readFileSync(file, "utf8");
   for (const attempt of ["runs in order", "runs a second time"]) {
     try {
@@ -422,6 +423,14 @@ for (const [what, sql] of [
   ["a salesperson can sync offline sales", `select position('salesperson' in
       (select pg_get_functiondef(p.oid) from pg_proc p join pg_namespace n on n.oid=p.pronamespace
         where n.nspname='public' and p.proname='sync_submit' limit 1)) > 0 v`],
+  ["product pictures are public and cacheable", `select exists (
+      select 1 from storage.buckets where id='product-images' and public) v`],
+  ["supplier documents stayed private", `select exists (
+      select 1 from storage.buckets where id='supplier-documents' and not public) v`],
+  ["the picture reaches the offline snapshot", `select position('image_path' in
+      coalesce((select pg_get_functiondef(p.oid) from pg_proc p
+        join pg_namespace n on n.oid=p.pronamespace
+       where n.nspname='public' and p.proname='sync_bootstrap' limit 1),'')) > 0 v`],
   ["a salesperson is scoped to their van", `select position('salesperson' in
       (select pg_get_functiondef(p.oid) from pg_proc p join pg_namespace n on n.oid=p.pronamespace
         where n.nspname='public' and p.proname='can_access_product' limit 1)) > 0 v`],

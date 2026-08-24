@@ -772,6 +772,48 @@ report as (
                then 'present' else 'MISSING' end,
           case when to_regclass('public.momo_reconciliation') is not null
                then 'OK' else 'FAIL' end, ''
+  -- ---- product pictures (migration 0037) ---------------------------
+  union all select 69, 'Pictures: the bucket exists and is public', 'public',
+          case when exists (select 1 from storage.buckets
+                             where id = 'product-images' and public)
+               then 'public' else 'MISSING' end,
+          case when exists (select 1 from storage.buckets
+                             where id = 'product-images' and public)
+               then 'OK' else 'FAIL' end,
+          'Public on purpose: a signed URL expires, and a phone offline in a van cannot mint one'
+  union all select 70, 'Pictures: supplier documents are still private', 'private',
+          case when exists (select 1 from storage.buckets
+                             where id = 'supplier-documents' and not public)
+               then 'private' else 'PUBLIC' end,
+          case when exists (select 1 from storage.buckets
+                             where id = 'supplier-documents' and not public)
+               then 'OK' else 'FAIL' end,
+          'Those carry purchase prices and must never be public'
+  union all select 71, 'Pictures: only product editors may upload', 'role-gated',
+          case when exists (select 1 from pg_policies
+                             where schemaname = 'storage' and tablename = 'objects'
+                               and policyname = 'product_images_write'
+                               and with_check like '%has_role%')
+               then 'role-gated' else 'OPEN' end,
+          case when exists (select 1 from pg_policies
+                             where schemaname = 'storage' and tablename = 'objects'
+                               and policyname = 'product_images_write'
+                               and with_check like '%has_role%')
+               then 'OK' else 'FAIL' end, ''
+  union all select 72, 'Pictures: the picture reaches the field', 'in the snapshot',
+          case when position('image_path' in
+                 coalesce((select pg_get_functiondef(p.oid) from pg_proc p
+                             join pg_namespace n on n.oid = p.pronamespace
+                            where n.nspname = 'public' and p.proname = 'sync_bootstrap'
+                            limit 1), '')) > 0
+               then 'in the snapshot' else 'MISSING' end,
+          case when position('image_path' in
+                 coalesce((select pg_get_functiondef(p.oid) from pg_proc p
+                             join pg_namespace n on n.oid = p.pronamespace
+                            where n.nspname = 'public' and p.proname = 'sync_bootstrap'
+                            limit 1), '')) > 0
+               then 'OK' else 'FAIL' end,
+          'Otherwise the field catalogue is text again the moment the signal goes'
 )
 select ord as "#", check_name as "check", expected, actual, status, detail
 from report

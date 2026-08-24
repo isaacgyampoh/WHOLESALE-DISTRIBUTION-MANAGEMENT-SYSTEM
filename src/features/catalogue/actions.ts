@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { requirePermission } from "@/lib/auth/session";
 import { recordAudit } from "@/lib/audit";
+import { describeImageRefusal } from "@/lib/catalogue/image";
+import { getCapabilities } from "@/lib/db/capabilities";
 import { UNITS } from "@/lib/catalogue/units";
 import type { AuthenticatedUser } from "@/types/domain";
 import type { CatalogueState } from "./state";
@@ -429,4 +431,148 @@ export async function adjustStockAction(
   revalidatePath("/inventory");
   revalidatePath(`/products/${productId}`);
   return { status: "done", message: "Stock adjusted." };
+}
+
+// ===================================================================
+// A photograph of the product
+// ===================================================================
+//
+// Uploaded through a server action rather than straight from the
+// browser to Storage. The browser holds only the anon key, and while
+// the bucket's policies would refuse an unauthorised write anyway, the
+// file is checked here first: type, size, and that the product is one
+// of ours. A refusal with a sentence beats a 403 with none.
+
+export async function uploadProductImageAction(
+  _prev: CatalogueState,
+  formData: FormData,
+): Promise<CatalogueState> {
+  const actor = await requirePermission("products.edit");
+
+  if (!(await getCapabilities()).productImages) {
+    return {
+      status: "error",
+      message:
+        "Product pictures need database upgrade 0037. " +
+        "Run database/UPGRADE_0037_PRODUCT_IMAGES.sql, then reload.",
+    };
+  }
+
+  const productId = String(formData.get("productId") ?? "");
+  const file = formData.get("image");
+
+  if (!productId) return { status: "error", message: "That product could not be found." };
+  if (!(file instanceof File) || file.size === 0) {
+    return {
+      status: "error",
+      message: "Choose a picture.",
+      fieldErrors: { image: "Choose a JPEG, PNG or WebP." },
+    };
+  }
+
+  const refusal = describeImageRefusal({ type: file.type, size: file.size });
+  if (refusal) {
+    return { status: "error", message: refusal, fieldErrors: { image: refusal } };
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data: product } = await admin
+    .from("products").select("id, sku, name, org_id, image_path")
+    .eq("id", productId).maybeSingle();
+
+  if (!product || product.org_id !== actor.organizationId) {
+    return { status: "error", message: "That product could not be found." };
+  }
+
+  // Named by product and organization, with a timestamp so replacing a
+  // picture does not leave the old one cached under the same URL.
+  const extension = file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : "jpg";
+  const path = `${actor.organizationId}/${productId}/${Date.now()}.${extension}`;
+
+  const { error: uploadError } = await admin.storage
+    .from("product-images")
+    .upload(path, file, { contentType: file.type, upsert: false });
+
+  if (uploadError) {
+    console.error("[catalogue] product image upload failed", uploadError);
+    return { status: "error", message: "The picture could not be stored. Please try again." };
+  }
+
+  const { error } = await admin
+    .from("products").update({ image_path: path }).eq("id", productId);
+
+  if (error) {
+    console.error("[catalogue] product image could not be attached", error);
+    // The file is up but unreferenced. Remove it rather than leave an
+    // orphan nothing points at.
+    await admin.storage.from("product-images").remove([path]);
+    return { status: "error", message: "The picture could not be attached. Please try again." };
+  }
+
+  // The one it replaced. Left until now so a failure above did not
+  // destroy the picture that was working.
+  const previous = product.image_path as string | null;
+  if (previous && previous !== path && !/^https?:\/\//i.test(previous)) {
+    await admin.storage.from("product-images").remove([previous]);
+  }
+
+  await recordAudit(actor, {
+    action: "product.updated",
+    targetType: "product",
+    targetId: productId,
+    targetLabel: `${product.sku} ${product.name}`,
+    after: { image: "replaced" },
+  });
+
+  revalidatePath("/products");
+  revalidatePath(`/products/${productId}`);
+  revalidatePath("/driver/sell");
+
+  return { status: "done", message: `Picture set for ${product.name}.` };
+}
+
+export async function removeProductImageAction(
+  _prev: CatalogueState,
+  formData: FormData,
+): Promise<CatalogueState> {
+  const actor = await requirePermission("products.edit");
+
+  const productId = String(formData.get("productId") ?? "");
+  if (!productId) return { status: "error", message: "That product could not be found." };
+
+  const admin = createSupabaseAdminClient();
+  const { data: product } = await admin
+    .from("products").select("id, name, org_id, image_path")
+    .eq("id", productId).maybeSingle();
+
+  if (!product || product.org_id !== actor.organizationId) {
+    return { status: "error", message: "That product could not be found." };
+  }
+
+  const { error } = await admin
+    .from("products").update({ image_path: null }).eq("id", productId);
+
+  if (error) {
+    console.error("[catalogue] product image could not be removed", error);
+    return { status: "error", message: "The picture could not be removed. Please try again." };
+  }
+
+  const path = product.image_path as string | null;
+  if (path && !/^https?:\/\//i.test(path)) {
+    await admin.storage.from("product-images").remove([path]);
+  }
+
+  await recordAudit(actor, {
+    action: "product.updated",
+    targetType: "product",
+    targetId: productId,
+    targetLabel: product.name as string,
+    after: { image: "removed" },
+  });
+
+  revalidatePath("/products");
+  revalidatePath(`/products/${productId}`);
+  revalidatePath("/driver/sell");
+
+  return { status: "done", message: "Picture removed." };
 }

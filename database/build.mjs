@@ -1063,6 +1063,70 @@ select 'a salesperson is scoped to their van',
                 limit 1)) > 0
             then 'PASS' else 'FAIL' end;`,
   },
+  {
+    migration: "0037_product_images.sql",
+    out: "UPGRADE_0037_PRODUCT_IMAGES.sql",
+    title: "UPGRADE 0037 - a picture of what is being sold",
+    summary: `-- WHAT IT ADDS
+--
+-- A salesperson outside a shop scrolls a list of names. Half a wholesale
+-- catalogue is "500ml", "1L", "Crate of 24" of things that read alike
+-- and look nothing alike on a shelf, and the wrong line picked in a
+-- hurry is an argument at the next delivery.
+--
+--   product-images        a storage bucket, 5 MB, JPEG/PNG/WebP
+--   products.image_path   where the picture lives
+--
+-- and sync_bootstrap carries the path, so the picture is still there
+-- when the signal is not.
+--
+-- THE BUCKET IS PUBLIC, deliberately. Supplier documents are private
+-- because they carry purchase prices; a product photograph is the thing
+-- the customer is holding. It has to be public because a signed URL
+-- expires - a phone that cached the round at 6am and has had no signal
+-- since cannot mint a new one - and because the service worker caches by
+-- URL, which a signed URL defeats by being different every time.
+--
+-- Writing is still restricted to the roles that may edit products. Only
+-- reading is open.
+--
+-- AFTER RUNNING IT, redeploy, then set pictures on the lines that need
+-- them: Products, open one, Picture.`,
+    verify: `select 'the bucket exists and is public' as check,
+       case when exists (select 1 from storage.buckets
+                          where id = 'product-images' and public)
+            then 'PASS' else 'FAIL' end as result
+union all
+select 'only images are accepted',
+       case when (select allowed_mime_types from storage.buckets where id = 'product-images')
+              @> array['image/jpeg','image/png','image/webp']
+            then 'PASS' else 'FAIL' end
+union all
+select 'products carry a picture',
+       case when exists (select 1 from information_schema.columns
+                          where table_name = 'products' and column_name = 'image_path')
+            then 'PASS' else 'FAIL' end
+union all
+select 'only product editors may upload',
+       case when exists (select 1 from pg_policies
+                          where schemaname = 'storage' and tablename = 'objects'
+                            and policyname = 'product_images_write'
+                            and with_check like '%has_role%')
+            then 'PASS' else 'FAIL' end
+union all
+select 'the picture reaches the field',
+       case when position('image_path' in
+              coalesce((select pg_get_functiondef(p.oid) from pg_proc p
+                          join pg_namespace n on n.oid = p.pronamespace
+                         where n.nspname = 'public' and p.proname = 'sync_bootstrap'
+                         limit 1), '')) > 0
+            then 'PASS' else 'FAIL' end
+union all
+select 'supplier documents are still private',
+       case when exists (select 1 from storage.buckets
+                          where id = 'supplier-documents' and not public)
+            then 'PASS' else 'FAIL' end;`,
+  },
 ];
 
 /** Final enum members, in the order `alter type ... add value` yields. */

@@ -207,7 +207,11 @@ export interface OfflineSnapshot {
   van: { id: string; code: string; registration_no: string } | null;
   load: { id: string; load_number: string; status: string; opening_float: number } | null;
   stock: { product_id: string; sku: string; name: string; qty_on_hand: number }[];
-  prices: { product_id: string; unit_price: number; tax_rate: number }[];
+  prices: {
+    product_id: string; unit_price: number; tax_rate: number;
+    /** Public bucket path. Cacheable, so the picture survives the signal going. */
+    image_path?: string | null;
+  }[];
   customers: {
     id: string; code: string; name: string; phone: string | null;
     balance: number; credit_available: number;

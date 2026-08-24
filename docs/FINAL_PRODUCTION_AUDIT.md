@@ -479,13 +479,13 @@ Everything else in this document is complete and verified.
 
 | | |
 |---|---|
-| Database assertions | 818 across 25 suites |
+| Database assertions | 823 across 25 suites |
 | Unit assertions | 27 |
 | Routes | 51 |
-| Migrations | 36 |
-| Upgrade scripts | 20, each idempotent |
-| Upgrade path | 0022 → 0036 applied in order and re-applied; `VERIFY_DATABASE.sql` clean after both |
-| `VERIFY_DATABASE.sql` | 77 checks, 0 not OK |
+| Migrations | 37 |
+| Upgrade scripts | 21, each idempotent |
+| Upgrade path | 0022 → 0037 applied in order and re-applied; `VERIFY_DATABASE.sql` clean after both |
+| `VERIFY_DATABASE.sql` | 81 checks, 0 not OK |
 | Schema | 44 tables, 22 views, 20 enums, 161 functions, 81 triggers, 91 row level security policies, 167 indexes, 300 constraints |
 | Lint / typecheck / build | Clean |
 
