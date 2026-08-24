@@ -119,6 +119,89 @@ const strangerSees = await asUser(stranger, `select count(*)::int n from product
 ok("another organization's staff still see nothing here",
    strangerSees.ok && strangerSees.rows[0].n === 0);
 
+// ==================================================================
+// A username says who you are; the PIN proves it (migration 0039)
+// ==================================================================
+
+console.log("\n=== every account is given a username ===");
+
+const named = await mkUser("Ama Mensah", "driver");
+const amaRow = (await c.query(
+  "select username, must_change_pin from profiles where id=$1", [named])).rows[0];
+ok("a username is derived from the name", amaRow.username === "ama.mensah",
+   `(${amaRow.username})`);
+ok("and an account is not provisional unless something says so",
+   amaRow.must_change_pin === false);
+
+// The trigger cannot retry a failed insert, so it has to settle the
+// collision itself rather than raise. A distinct address, because
+// mkUser derives one from the name and auth.users requires it unique -
+// it is the same *person's name*, not the same account.
+const twin = (await c.query(
+  `insert into auth.users (email, raw_user_meta_data) values ($1,$2::jsonb) returning id`,
+  ["ama.second@pin.test",
+   JSON.stringify({ full_name: "Ama Mensah", role: "driver", org_id: org })]
+)).rows[0].id;
+const twinName = (await c.query("select username from profiles where id=$1", [twin])).rows[0].username;
+ok("a second person of the same name gets a distinct one",
+   twinName !== "ama.mensah" && twinName.startsWith("ama.mensah"), `(${twinName})`);
+
+console.log("\n=== a username an administrator chose is honoured ===");
+const chosen = (await c.query(
+  `insert into auth.users (email, raw_user_meta_data) values ($1,$2::jsonb) returning id`,
+  ["chosen@pin.test", JSON.stringify(
+    { full_name: "Kofi Boateng", role: "driver", org_id: org, username: "kofi.b" })]
+)).rows[0].id;
+ok("the name supplied is the name used",
+   (await c.query("select username from profiles where id=$1", [chosen])).rows[0].username === "kofi.b");
+
+console.log("\n=== no two people may hold one username ===");
+let duplicate = false;
+try {
+  await c.query("update profiles set username='ama.mensah' where id=$1", [chosen]);
+} catch (e) { duplicate = /profiles_username_key/.test(e.message); }
+ok("a duplicate username is refused", duplicate);
+
+// citext: the same name in different case is the same name, so nobody
+// can register a lookalike account.
+let differentCase = false;
+try {
+  await c.query("update profiles set username='AMA.MENSAH' where id=$1", [chosen]);
+} catch (e) { differentCase = /profiles_username_key/.test(e.message); }
+ok("and so is the same name in another case", differentCase);
+
+ok("a username matches regardless of how it is typed",
+   (await c.query("select id from profiles where username='AmA.MeNsAh'")).rows[0]?.id === named);
+
+console.log("\n=== nobody may be left without one ===");
+let nullName = false;
+try {
+  await c.query("update profiles set username=null where id=$1", [chosen]);
+} catch (e) { nullName = /null value in column "username"/.test(e.message); }
+ok("a username cannot be removed", nullName);
+ok("and no existing account is missing one",
+   (await c.query("select count(*)::int n from profiles where username is null")).rows[0].n === 0);
+
+console.log("\n=== the PIN is no longer what identifies somebody ===");
+//
+// This is the whole point of 0039. Before it, four digits selected the
+// account; now the username does, and the digest is only compared
+// against that one row.
+await c.query("update profiles set pin_hash=$1, must_change_pin=true where id=$2",
+  [digest("5150"), chosen]);
+
+const byName = (await c.query(
+  "select id, pin_hash, must_change_pin from profiles where username='kofi.b'")).rows[0];
+ok("an account is found by its username", byName.id === chosen);
+ok("and its PIN is then compared, not searched for", byName.pin_hash === digest("5150"));
+ok("a PIN belonging to somebody else does not match it",
+   byName.pin_hash !== digest("1024"));
+
+console.log("\n=== an issued PIN is marked provisional ===");
+ok("the flag is readable on the account", byName.must_change_pin === true);
+ok("and defaults to false, so no ordinary account is trapped",
+   (await c.query("select count(*)::int n from profiles where must_change_pin is null")).rows[0].n === 0);
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 await c.end();
 process.exit(fail ? 1 : 0);

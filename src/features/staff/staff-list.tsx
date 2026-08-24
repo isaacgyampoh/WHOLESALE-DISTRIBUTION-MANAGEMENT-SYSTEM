@@ -13,7 +13,7 @@ import { Input, Select, Field } from "@/components/ui/field";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/table";
 import { PinReveal } from "./pin-reveal";
 import { ROLE_LABELS } from "./shared";
-import { PIN_LENGTH } from "@/lib/auth/pin";
+import { PIN_LENGTH, suggestUsername } from "@/lib/auth/pin";
 import { USER_ROLES } from "@/types/domain";
 import { formatDate } from "@/lib/utils/format";
 import type { StaffMember } from "./queries";
@@ -54,6 +54,11 @@ export function StaffList({ staff }: { staff: StaffMember[] }) {
                   >
                     {person.fullName}
                   </Link>
+                  {person.username && (
+                    <span className="block text-xs text-[var(--text-secondary)]">
+                      {person.username}
+                    </span>
+                  )}
                   {person.phone && (
                     <span className="numeric block text-xs text-[var(--text-muted)]">
                       {person.phone}
@@ -100,6 +105,7 @@ export function StaffList({ staff }: { staff: StaffMember[] }) {
                 </p>
                 <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
                   {ROLE_LABELS[person.role] ?? person.role}
+                  {person.username ? ` · ${person.username}` : ""}
                 </p>
                 <div className="mt-2 flex gap-1.5">
                   {person.isActive
@@ -124,8 +130,26 @@ export function StaffList({ staff }: { staff: StaffMember[] }) {
 export function CreateStaffButton({ canManageRoles }: { canManageRoles: boolean }) {
   const [open, setOpen] = useState(false);
   const [state, submit, pending] = useActionState(createStaffAction, INITIAL_STAFF_STATE);
-  const onClose = () => setOpen(false);
   const done = state.status === "done" && state.revealedPin;
+
+  // The username follows the name until somebody types one, so the
+  // common case needs no thought and the unusual case is still possible.
+  const [fullName, setFullName] = useState("");
+  const [username, setUsernameRaw] = useState("");
+  const [usernameEdited, setUsernameEdited] = useState(false);
+  const setUsername = (v: string) => setUsernameRaw(v.toLowerCase());
+
+  const onNameChange = (value: string) => {
+    setFullName(value);
+    if (!usernameEdited) setUsernameRaw(suggestUsername(value));
+  };
+
+  const onClose = () => {
+    setOpen(false);
+    setFullName("");
+    setUsernameRaw("");
+    setUsernameEdited(false);
+  };
 
   return (
     <>
@@ -137,11 +161,12 @@ export function CreateStaffButton({ canManageRoles }: { canManageRoles: boolean 
       open={open}
       onClose={onClose}
       title={done ? "Staff created" : "Create staff"}
-      description={done ? undefined : "They will sign in with the PIN you set here."}
+      description={done ? undefined : "They will sign in with the username and PIN you set here."}
     >
       {done ? (
         <PinReveal
           staffName={state.staffName ?? "Staff member"}
+          username={state.username}
           pin={state.revealedPin!}
           onDone={onClose}
         />
@@ -150,7 +175,35 @@ export function CreateStaffButton({ canManageRoles }: { canManageRoles: boolean 
           {state.status === "error" && <Alert tone="danger">{state.message}</Alert>}
 
           <Field label="Full name" htmlFor="fullName" required>
-            <Input id="fullName" name="fullName" required autoComplete="off" placeholder="John Mensah" />
+            <Input
+              id="fullName"
+              name="fullName"
+              required
+              autoComplete="off"
+              placeholder="John Mensah"
+              value={fullName}
+              onChange={(e) => onNameChange(e.target.value)}
+            />
+          </Field>
+
+          <Field
+            label="Username"
+            htmlFor="username"
+            required
+            hint="What they type to sign in. Letters and numbers, with dots, hyphens or underscores between them."
+          >
+            <Input
+              id="username"
+              name="username"
+              required
+              autoComplete="off"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              placeholder="john.mensah"
+              value={username}
+              onChange={(e) => { setUsername(e.target.value); setUsernameEdited(true); }}
+            />
           </Field>
 
           <Field label="Role" htmlFor="role" required>
@@ -170,17 +223,39 @@ export function CreateStaffButton({ canManageRoles }: { canManageRoles: boolean 
           </Field>
 
           <div>
-            <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
+            <label
+              htmlFor="new-staff-pin-0"
+              className="mb-2 block text-sm font-medium text-[var(--text-primary)]"
+            >
               {PIN_LENGTH}-digit PIN
             </label>
-            <DigitInput length={PIN_LENGTH} name="pin" disabled={pending} />
+            <DigitInput
+              idPrefix="new-staff-pin"
+              label="PIN"
+              length={PIN_LENGTH}
+              name="pin"
+              disabled={pending}
+            />
+            <p className="mt-2 text-xs text-[var(--text-muted)]">
+              A starting PIN. They will be asked to choose their own the first
+              time they sign in, and this one stops working then.
+            </p>
           </div>
 
           <div>
-            <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">
+            <label
+              htmlFor="new-staff-confirm-0"
+              className="mb-2 block text-sm font-medium text-[var(--text-primary)]"
+            >
               Confirm PIN
             </label>
-            <DigitInput length={PIN_LENGTH} name="confirmPin" disabled={pending} />
+            <DigitInput
+              idPrefix="new-staff-confirm"
+              label="Confirm PIN"
+              length={PIN_LENGTH}
+              name="confirmPin"
+              disabled={pending}
+            />
           </div>
 
           <Button type="submit" size="lg" loading={pending} className="w-full">
@@ -212,6 +287,7 @@ function ResetPinDialog({
       {done ? (
         <PinReveal
           staffName={state.staffName ?? "Staff member"}
+          username={state.username}
           pin={state.revealedPin!}
           onDone={onClose}
         />

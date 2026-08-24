@@ -4,7 +4,9 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { requirePermission } from "@/lib/auth/session";
 import { assignPin } from "@/lib/auth/pin-server";
-import { isValidPinFormat, PIN_LENGTH } from "@/lib/auth/pin";
+import {
+  isValidPinFormat, PIN_LENGTH, normaliseUsername, usernameProblem,
+} from "@/lib/auth/pin";
 import { recordAudit } from "@/lib/audit";
 import { USER_ROLES, type UserRole } from "@/types/domain";
 import type { AuthenticatedUser } from "@/types/domain";
@@ -30,7 +32,7 @@ async function loadTarget(actor: AuthenticatedUser, profileId: string) {
   const admin = createSupabaseAdminClient();
   const { data } = await admin
     .from("profiles")
-    .select("id, full_name, role, is_active, org_id, email")
+    .select("id, full_name, username, role, is_active, org_id, email")
     .eq("id", profileId)
     .maybeSingle();
 
@@ -45,12 +47,17 @@ export async function createStaffAction(
   const actor = await requirePermission("users.manage");
 
   const fullName = String(formData.get("fullName") ?? "").trim();
+  const username = normaliseUsername(String(formData.get("username") ?? ""));
   const role = String(formData.get("role") ?? "") as UserRole;
   const pin = String(formData.get("pin") ?? "").replace(/\D/g, "");
   const confirm = String(formData.get("confirmPin") ?? "").replace(/\D/g, "");
   const phone = String(formData.get("phone") ?? "").trim();
 
   if (!fullName) return { status: "error", message: "Enter the staff member's full name." };
+
+  const badUsername = usernameProblem(username);
+  if (badUsername) return { status: "error", message: badUsername };
+
   if (!USER_ROLES.includes(role)) return { status: "error", message: "Choose a role." };
   if (!isValidPinFormat(pin)) {
     return { status: "error", message: `A PIN must be exactly ${PIN_LENGTH} digits.` };
@@ -69,6 +76,15 @@ export async function createStaffAction(
 
   const admin = createSupabaseAdminClient();
 
+  // Checked here for a sentence worth reading; enforced underneath by
+  // the unique index, so two administrators creating the same username
+  // at once cannot both succeed.
+  const { data: taken } = await admin
+    .from("profiles").select("id").eq("username", username).maybeSingle();
+  if (taken) {
+    return { status: "error", message: `The username "${username}" is already taken.` };
+  }
+
   // Supabase Auth identifies an account by email and the session depends
   // on one, so a stable internal address is minted. It is never used to
   // sign in and never shown.
@@ -80,7 +96,7 @@ export async function createStaffAction(
     email_confirm: true,
     // org_id here is what migration 0017 reads to mark the account
     // active. It comes from the server's view of the actor.
-    user_metadata: { full_name: fullName, role, org_id: actor.organizationId },
+    user_metadata: { full_name: fullName, role, org_id: actor.organizationId, username },
   });
 
   if (createError || !created?.user) {
@@ -95,8 +111,17 @@ export async function createStaffAction(
     return { status: "error", message: assigned.message };
   }
 
-  if (phone) {
-    await admin.from("profiles").update({ phone }).eq("id", created.user.id);
+  // The PIN was chosen by the administrator creating this account, so
+  // it is a way in rather than a credential: the application will let
+  // this person do nothing but replace it. assignPin above cleared the
+  // flag, so it is set after, not before.
+  const { error: flagError } = await admin
+    .from("profiles")
+    .update({ must_change_pin: true, ...(phone ? { phone } : {}) })
+    .eq("id", created.user.id);
+
+  if (flagError) {
+    console.error("[staff] could not flag the new PIN as provisional", flagError);
   }
 
   await recordAudit(actor, {
@@ -104,7 +129,7 @@ export async function createStaffAction(
     targetType: "profile",
     targetId: created.user.id,
     targetLabel: fullName,
-    after: { full_name: fullName, role, is_active: true },
+    after: { full_name: fullName, username, role, is_active: true },
   });
 
   revalidatePath("/users");
@@ -113,6 +138,7 @@ export async function createStaffAction(
     message: "Staff created.",
     revealedPin: pin,
     staffName: fullName,
+    username,
   };
 }
 
@@ -134,6 +160,12 @@ export async function resetStaffPinAction(
   const assigned = await assignPin(profileId, pin);
   if (!assigned.ok) return { status: "error", message: assigned.message };
 
+  // Same reasoning as creating an account: a PIN read out by somebody
+  // else gets this person through the door once.
+  const { error: flagError } = await createSupabaseAdminClient()
+    .from("profiles").update({ must_change_pin: true }).eq("id", profileId);
+  if (flagError) console.error("[staff] could not flag the reset PIN as provisional", flagError);
+
   await recordAudit(actor, {
     action: "user.pin_reset",
     targetType: "profile",
@@ -148,6 +180,7 @@ export async function resetStaffPinAction(
     message: "PIN updated.",
     revealedPin: pin,
     staffName: (target.full_name as string) || "Staff member",
+    username: (target.username as string) ?? undefined,
   };
 }
 

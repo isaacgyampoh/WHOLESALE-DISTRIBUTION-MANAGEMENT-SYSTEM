@@ -17,7 +17,7 @@ import { can, canAny, type Permission } from "@/types/permissions";
 export type SessionState =
   | { status: "anonymous" }
   | { status: "pending"; email: string | null }
-  | { status: "active"; user: AuthenticatedUser };
+  | { status: "active"; user: AuthenticatedUser; mustChangePin: boolean };
 
 export const getSessionState = cache(async (): Promise<SessionState> => {
   const supabase = await createSupabaseServerClient();
@@ -27,7 +27,7 @@ export const getSessionState = cache(async (): Promise<SessionState> => {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("id, email, full_name, role, org_id, is_active")
+    .select("id, email, full_name, role, org_id, is_active, must_change_pin")
     .eq("id", auth.user.id)
     .maybeSingle();
 
@@ -37,6 +37,11 @@ export const getSessionState = cache(async (): Promise<SessionState> => {
 
   return {
     status: "active",
+    // The PIN was issued by somebody else - bootstrap, or an
+    // administrator creating this account or resetting it - so it is a
+    // way in rather than a credential. The shell sends this person to
+    // choose their own before anything else. See migration 0039.
+    mustChangePin: Boolean(profile.must_change_pin),
     user: {
       id: profile.id as string,
       email: (profile.email as string) ?? auth.user.email ?? "",

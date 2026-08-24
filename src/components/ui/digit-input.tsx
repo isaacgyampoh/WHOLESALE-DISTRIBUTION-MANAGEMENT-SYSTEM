@@ -23,6 +23,8 @@ export function DigitInput({
   masked = false,
   autoFocus = false,
   label,
+  idPrefix,
+  describedBy,
   onComplete,
 }: {
   length?: number;
@@ -32,6 +34,9 @@ export function DigitInput({
   masked?: boolean;
   autoFocus?: boolean;
   label?: string;
+  /** Gives each box a stable id so a <label> can point at the first one. */
+  idPrefix?: string;
+  describedBy?: string;
   onComplete?: (code: string) => void;
 }) {
   const [digits, setDigits] = useState<string[]>(() => Array(length).fill(""));
@@ -94,25 +99,35 @@ export function DigitInput({
         {digits.map((digit, i) => (
           <input
             key={i}
+            id={idPrefix ? `${idPrefix}-${i}` : undefined}
             ref={(el) => { boxes.current[i] = el; }}
             value={masked && digit ? "•" : digit}
             onChange={(e) => onChange(i, e.target.value)}
             onKeyDown={(e) => onKeyDown(i, e)}
             onFocus={(e) => e.target.select()}
             disabled={disabled}
-            // One-time-code lets iOS and Android offer the SMS directly.
+            // Off, not one-time-code: this is a standing PIN rather than
+            // a texted code, and offering to remember it across four
+            // separate boxes produces nonsense.
             autoComplete="off"
             autoFocus={autoFocus && i === 0}
-            type={masked ? "text" : "text"}
+            // Always text. A number input would show a spinner, and a
+            // password input cannot render the dot we draw ourselves.
+            type="text"
             inputMode="numeric"
             // Not maxLength=1: a paste must be allowed to arrive whole.
-            aria-label={`Digit ${i + 1}`}
+            aria-label={`${label ?? "PIN"}, digit ${i + 1} of ${length}`}
             aria-invalid={invalid || undefined}
+            aria-describedby={describedBy}
             className={cn(
               "h-16 w-full min-w-0 rounded-[var(--radius-panel)] border text-center",
               "numeric text-2xl font-semibold text-[var(--text-primary)]",
               "bg-[var(--surface-raised)] transition-colors",
-              "focus:border-brand-600 disabled:opacity-60",
+              // A visible ring, not just a border tint: on a bright
+              // screen in a warehouse the tint alone is not findable.
+              "outline-none focus-visible:border-brand-600",
+              "focus-visible:ring-2 focus-visible:ring-brand-600/40",
+              "disabled:opacity-60",
               invalid ? "border-critical" : "border-[var(--border-strong)]",
             )}
           />

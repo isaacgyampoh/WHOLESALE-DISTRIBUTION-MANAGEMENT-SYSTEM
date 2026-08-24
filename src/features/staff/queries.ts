@@ -16,6 +16,7 @@ import type { UserRole } from "@/types/domain";
 export interface StaffMember {
   id: string;
   fullName: string;
+  username: string;
   role: UserRole;
   isActive: boolean;
   hasPin: boolean;
@@ -23,6 +24,7 @@ export interface StaffMember {
   createdAt: string;
   updatedAt: string;
   pinSetAt: string | null;
+  mustChangePin: boolean;
 }
 
 export interface StaffFilters {
@@ -41,6 +43,7 @@ function toStaff(row: Record<string, unknown>): StaffMember {
   return {
     id: row.id as string,
     fullName: (row.full_name as string) || "Unnamed",
+    username: (row.username as string) ?? "",
     role: row.role as UserRole,
     isActive: row.is_active as boolean,
     hasPin: Boolean(row.pin_set_at),
@@ -48,6 +51,10 @@ function toStaff(row: Record<string, unknown>): StaffMember {
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
     pinSetAt: (row.pin_set_at as string | null) ?? null,
+    // Signed in on a PIN somebody else chose, and has not yet replaced
+    // it. Worth showing: it is the difference between "not set up" and
+    // "set up and in use".
+    mustChangePin: Boolean(row.must_change_pin),
   };
 }
 
@@ -56,7 +63,7 @@ export async function listStaff(filters: StaffFilters = {}): Promise<Result<Staf
 
   let query = supabase
     .from("profiles")
-    .select("id, full_name, role, is_active, phone, created_at, updated_at, pin_set_at")
+    .select("id, full_name, username, role, is_active, phone, created_at, updated_at, pin_set_at, must_change_pin")
     .order("full_name", { ascending: true });
 
   // Filtering happens in the database, so a large roster does not have
@@ -70,7 +77,8 @@ export async function listStaff(filters: StaffFilters = {}): Promise<Result<Staf
     // Escape the characters PostgREST treats as pattern syntax so a
     // search for "a,b" cannot become two conditions.
     const safe = search.replace(/[%,()]/g, " ");
-    query = query.or(`full_name.ilike.%${safe}%,phone.ilike.%${safe}%`);
+    query = query.or(
+      `full_name.ilike.%${safe}%,username.ilike.%${safe}%,phone.ilike.%${safe}%`);
   }
 
   const { data, error } = await query;
@@ -87,7 +95,7 @@ export async function getStaffMember(id: string): Promise<Result<StaffMember | n
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, full_name, role, is_active, phone, created_at, updated_at, pin_set_at")
+    .select("id, full_name, username, role, is_active, phone, created_at, updated_at, pin_set_at, must_change_pin")
     .eq("id", id)
     .maybeSingle();
 

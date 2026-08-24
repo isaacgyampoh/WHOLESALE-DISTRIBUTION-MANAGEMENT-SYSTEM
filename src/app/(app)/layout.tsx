@@ -33,6 +33,10 @@ export default async function AppLayout({
   if (session.status === "pending") return <AccountPending email={session.email} />;
   if (session.status === "anonymous") redirect("/sign-in");
 
+  // A PIN somebody else chose gets you exactly one screen: the one that
+  // replaces it. Nothing here renders until it has been.
+  if (session.mustChangePin) redirect("/set-pin");
+
   const { user } = session;
   const sections = navigationFor(user.role);
 

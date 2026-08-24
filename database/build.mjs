@@ -1199,6 +1199,70 @@ select 'table-level select is still withdrawn',
                                 and privilege_type = 'SELECT')
             then 'PASS' else 'FAIL' end;`,
   },
+  {
+    migration: "0039_a_name_to_sign_in_with.sql",
+    out: "UPGRADE_0039_USERNAMES.sql",
+    title: "UPGRADE 0039 - a name to sign in with",
+    summary: `-- WHAT IT CHANGES
+--
+-- Until now sign-in looked an account up *by* its PIN digest: whoever
+-- typed four digits became whoever those digits belonged to. The PIN was
+-- the identifier as well as the credential, which meant a guess that
+-- landed landed on somebody, no two people could hold the same PIN, and
+-- the business could never have more staff than there are PINs.
+--
+--   profiles.username         what the person types to say who they are
+--   profiles.must_change_pin  this PIN was issued, not chosen
+--
+-- Existing accounts are given a username derived from the name they are
+-- already known by - "Ama Mensah" becomes "ama.mensah" - with a number
+-- appended if two people would collide. Nobody is locked out, but
+-- EVERYONE MUST BE TOLD THEIR USERNAME, because the sign-in screen now
+-- asks for it. The list is printed by the verification block below.
+--
+-- must_change_pin marks a PIN somebody else chose: the one bootstrap
+-- creates the first administrator with, and any an administrator hands
+-- out when creating an account or resetting a forgotten one. The
+-- application allows such an account nothing but choosing its own PIN,
+-- and clears the flag when it does.
+--
+-- Nothing is dropped and no policy is relaxed. The unique index on
+-- pin_hash is deliberately left in place: it is no longer needed to tell
+-- people apart, but it still keeps two of them from sharing a credential.
+--
+-- AFTER RUNNING IT, redeploy, then give each person their username.`,
+    verify: `select 'every account has a username' as check,
+       case when not exists (select 1 from public.profiles where username is null)
+            then 'PASS' else 'FAIL' end as result
+union all
+select 'no two accounts share one',
+       case when exists (select 1 from pg_indexes
+                          where schemaname = 'public' and indexname = 'profiles_username_key')
+            then 'PASS' else 'FAIL' end
+union all
+select 'an issued PIN can be marked provisional',
+       case when exists (select 1 from information_schema.columns
+                          where table_name = 'profiles' and column_name = 'must_change_pin')
+            then 'PASS' else 'FAIL' end
+union all
+select 'new accounts are given one automatically',
+       case when position('unique_username' in
+              coalesce((select pg_get_functiondef(p.oid) from pg_proc p
+                          join pg_namespace n on n.oid = p.pronamespace
+                         where n.nspname = 'public' and p.proname = 'handle_new_user'
+                         limit 1), '')) > 0
+            then 'PASS' else 'FAIL' end
+union all
+select 'the PIN is no longer the only credential',
+       case when exists (select 1 from information_schema.columns
+                          where table_name = 'profiles' and column_name = 'username'
+                            and is_nullable = 'NO')
+            then 'PASS' else 'FAIL' end;
+
+-- TELL EACH PERSON THE NAME IN THIS LIST. They cannot sign in without it.
+select full_name as "who", username as "signs in as", role as "role"
+  from public.profiles where is_active order by full_name;`,
+  },
 ];
 
 /** Final enum members, in the order `alter type ... add value` yields. */

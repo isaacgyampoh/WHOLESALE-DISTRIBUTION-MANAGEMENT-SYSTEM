@@ -11,6 +11,8 @@ export interface StaffActionState {
   /** Shown once after creation or reset, never retrievable later. */
   revealedPin?: string;
   staffName?: string;
+  /** Shown beside the PIN so both halves are handed over together. */
+  username?: string;
 }
 
 export const INITIAL_STAFF_STATE: StaffActionState = { status: "idle" };

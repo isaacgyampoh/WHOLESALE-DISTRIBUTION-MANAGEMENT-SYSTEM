@@ -1,7 +1,7 @@
 import "server-only";
 import { createHmac, timingSafeEqual, randomInt } from "node:crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
-import { isValidPinFormat, isWeakPin, PIN_LENGTH } from "./pin";
+import { isValidPinFormat, isWeakPin, normaliseUsername, PIN_LENGTH } from "./pin";
 
 /**
  * PIN verification and assignment.
@@ -20,8 +20,12 @@ export const MAX_FAILED_ATTEMPTS = 5;
 export const COOLDOWN_MINUTES = 15;
 export const ATTEMPT_WINDOW_MINUTES = 15;
 
-/** Identical for every failure, so nothing can be learned from the wording. */
-export const INCORRECT_PIN = "Incorrect PIN. Please try again.";
+/**
+ * Identical for every failure, so nothing can be learned from the
+ * wording: a username that does not exist, one that does with the wrong
+ * PIN, and a deactivated account all say this.
+ */
+export const INCORRECT_CREDENTIALS = "Incorrect username or PIN. Please try again.";
 
 function pepper(): string {
   const value = process.env.PIN_PEPPER;
@@ -40,6 +44,13 @@ export function digestPin(pin: string): string {
   return createHmac("sha256", pepper()).update(pin).digest("hex");
 }
 
+/**
+ * Stands in for the digest of an account that does not exist or has no
+ * PIN set. A digest of a value nothing can produce, so it never matches;
+ * the point is only that it is the right length.
+ */
+const NO_SUCH_PIN = "0".repeat(64);
+
 export function digestsMatch(a: string, b: string): boolean {
   const left = Buffer.from(a, "utf8");
   const right = Buffer.from(b, "utf8");
@@ -57,6 +68,8 @@ export interface PinCheck {
   message: string;
   profileId?: string;
   cooldownSeconds?: number;
+  /** The PIN was issued by somebody else and must be replaced. */
+  mustChangePin?: boolean;
 }
 
 /**
@@ -113,12 +126,24 @@ async function record(
 }
 
 /**
- * Check a PIN and, if it belongs to an active person, say who.
+ * Check a username and PIN, and if they belong to an active person, say
+ * who.
  *
- * Deliberately says the same thing for a PIN that matches nobody, a PIN
- * belonging to a deactivated account, and a PIN that is simply wrong.
+ * Before migration 0039 this looked the account up *by* the PIN digest,
+ * which made four digits both the name and the proof: a lucky guess
+ * landed on whoever happened to hold it, and no username was needed.
+ * Now the username selects exactly one row and the PIN is compared
+ * against that row alone.
+ *
+ * Every failure is reported identically. A wrong username, a wrong PIN
+ * and a deactivated account are indistinguishable from outside, so the
+ * screen cannot be used to find out who works here.
  */
-export async function checkPin(pin: string, context: AttemptContext = {}): Promise<PinCheck> {
+export async function checkCredentials(
+  username: string,
+  pin: string,
+  context: AttemptContext = {},
+): Promise<PinCheck> {
   const waiting = await cooldownRemaining(context.ip);
   if (waiting > 0) {
     return {
@@ -128,18 +153,20 @@ export async function checkPin(pin: string, context: AttemptContext = {}): Promi
     };
   }
 
+  const name = normaliseUsername(username);
+
+  // Not recorded: an empty or malformed entry is a slip, not a guess,
+  // and counting it would let someone lock themselves out by fumbling.
+  if (!name) return { ok: false, message: "Enter your username." };
   if (!isValidPinFormat(pin)) {
-    // Not recorded: a malformed entry is a typo, not a guess, and
-    // counting it would let a clumsy user lock themselves out.
     return { ok: false, message: `Enter your ${PIN_LENGTH}-digit PIN.` };
   }
 
   const admin = createSupabaseAdminClient();
   const { data: profile, error } = await admin
     .from("profiles")
-    .select("id, is_active")
-    .eq("pin_hash", digestPin(pin))
-    .eq("is_active", true)
+    .select("id, pin_hash, is_active, must_change_pin")
+    .eq("username", name)
     .maybeSingle();
 
   if (error) {
@@ -149,17 +176,31 @@ export async function checkPin(pin: string, context: AttemptContext = {}): Promi
     console.error("[pin] could not look up the credential", error);
     return {
       ok: false,
-      message: "Sign-in is temporarily unavailable. Please try again shortly.",
+      message: "We couldn't complete your sign-in right now. Please try again shortly.",
     };
   }
 
-  if (!profile) {
-    await record(false, context);
-    return { ok: false, message: INCORRECT_PIN };
+  // Compared even when there is no such account, and even when it holds
+  // no PIN, so that an unknown username costs the same as a wrong PIN.
+  // Without this, response time answers "does this person work here?"
+  // on its own. NO_SUCH_PIN is the same length as a real digest, so the
+  // comparison below is the same work either way.
+  const supplied = digestPin(pin);
+  const stored = (profile?.pin_hash as string | null) || NO_SUCH_PIN;
+  const matches = digestsMatch(stored, supplied);
+
+  if (!profile || !profile.is_active || !matches) {
+    await record(false, context, profile?.id as string | undefined);
+    return { ok: false, message: INCORRECT_CREDENTIALS };
   }
 
   await record(true, context, profile.id as string);
-  return { ok: true, message: "Verified.", profileId: profile.id as string };
+  return {
+    ok: true,
+    message: "Verified.",
+    profileId: profile.id as string,
+    mustChangePin: Boolean(profile.must_change_pin),
+  };
 }
 
 export interface AssignResult {
@@ -199,7 +240,14 @@ export async function assignPin(profileId: string, pin: string): Promise<AssignR
 
   const { error } = await admin
     .from("profiles")
-    .update({ pin_hash: digest })
+    .update({
+      pin_hash: digest,
+      pin_set_at: new Date().toISOString(),
+      // Whoever this belongs to has now chosen it themselves, so it is
+      // a credential rather than a way in. Callers handing out a PIN on
+      // somebody else's behalf set the flag again afterwards.
+      must_change_pin: false,
+    })
     .eq("id", profileId);
 
   if (error) {

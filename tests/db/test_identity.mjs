@@ -46,7 +46,12 @@ if (phoneId) {
 
 console.log("\n=== a profile must carry some identity ===");
 try {
-  await c.query(`insert into profiles (id, org_id) values (gen_random_uuid(), $1)`, [org]);
+  // A username is supplied so that the identity constraint is the one
+  // that fires. Without it the NOT NULL on username (0039) rejects the
+  // row first, which would pass this test for the wrong reason.
+  await c.query(
+    `insert into profiles (id, org_id, username)
+     values (gen_random_uuid(), $1, 'no.identity.probe')`, [org]);
   ok("row with neither email nor phone rejected", false, "(INSERT SUCCEEDED)");
 } catch (e) {
   ok("row with neither email nor phone rejected", /profiles_needs_an_identity/.test(e.message));

@@ -223,8 +223,8 @@ report as (
           case when e.n = 20 then 'OK' else 'FAIL' end,
           (select names from enum_bad)
   from enum_match e
-  union all select  7, 'Functions', '78', c.functions::text,
-          case when c.functions = 78 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  7, 'Functions', '79', c.functions::text,
+          case when c.functions = 79 then 'OK' else 'CHECK' end, '' from counts c
   union all select  8, 'Triggers', '83', c.triggers::text,
           case when c.triggers = 83 then 'OK' else 'CHECK' end, '' from counts c
   union all select  9, 'RLS policies', '88', c.policies::text,
@@ -234,8 +234,8 @@ report as (
           case when c.rls_tables = c.all_tables then 'OK' else 'FAIL' end, '' from counts c
   union all select 11, 'Generated columns', '13', c.generated_cols::text,
           case when c.generated_cols = 13 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 12, 'Indexes', '167', c.indexes::text,
-          case when c.indexes = 167 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 12, 'Indexes', '168', c.indexes::text,
+          case when c.indexes = 168 then 'OK' else 'CHECK' end, '' from counts c
   union all select 13, 'Constraints', '300', c.constraints::text,
           case when c.constraints = 300 then 'OK' else 'CHECK' end, '' from counts c
   union all select 14, 'Security functions present', '8', s.n::text,
@@ -853,6 +853,36 @@ report as (
                                             'track_batches','track_expiry','shelf_life_days')) = 6
                then 'OK' else 'FAIL' end,
           'Table-level SELECT was withdrawn in 0023, so the view is the only route'
+  -- ---- a name to sign in with (migration 0039) --------------------
+  union all select 75, 'Sign-in: every account has a unique username', 'unique, not null',
+          case when exists (select 1 from information_schema.columns
+                             where table_schema = 'public' and table_name = 'profiles'
+                               and column_name = 'username' and is_nullable = 'NO')
+                and exists (select 1 from pg_indexes
+                             where schemaname = 'public' and indexname = 'profiles_username_key')
+               then 'unique, not null' else 'MISSING' end,
+          case when exists (select 1 from information_schema.columns
+                             where table_schema = 'public' and table_name = 'profiles'
+                               and column_name = 'username' and is_nullable = 'NO')
+                and exists (select 1 from pg_indexes
+                             where schemaname = 'public' and indexname = 'profiles_username_key')
+               then 'OK' else 'FAIL' end,
+          'Without it the PIN is the identifier again and a lucky guess lands on somebody'
+  union all select 76, 'Sign-in: an issued PIN can be marked provisional', 'present',
+          case when exists (select 1 from information_schema.columns
+                             where table_schema = 'public' and table_name = 'profiles'
+                               and column_name = 'must_change_pin')
+               then 'present' else 'MISSING' end,
+          case when exists (select 1 from information_schema.columns
+                             where table_schema = 'public' and table_name = 'profiles'
+                               and column_name = 'must_change_pin')
+               then 'OK' else 'FAIL' end,
+          'The bootstrap PIN is documented, so it must not survive first sign-in'
+  union all select 77, 'Sign-in: nobody is left without a username', '0',
+          (select count(*)::text from public.profiles where username is null),
+          case when not exists (select 1 from public.profiles where username is null)
+               then 'OK' else 'FAIL' end,
+          'An account with no username cannot sign in at all'
 )
 select ord as "#", check_name as "check", expected, actual, status, detail
 from report
