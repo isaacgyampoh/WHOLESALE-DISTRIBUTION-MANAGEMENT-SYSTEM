@@ -1,124 +1,110 @@
 "use client";
 
-import { useActionState, useId, useRef, useState } from "react";
+import { useActionState, useEffect, useId, useRef, useState } from "react";
 import { signInWithPinAction, type SignInState } from "@/lib/auth/actions";
 import { DigitInput } from "@/components/ui/digit-input";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/states";
-import { PIN_LENGTH } from "@/lib/auth/pin";
+import { PIN_LENGTH, attemptsRemainingLabel } from "@/lib/auth/pin";
 import { Eye, EyeOff } from "lucide-react";
 
 const INITIAL: SignInState = { status: "idle" };
 
 /**
- * Username, then four digits.
+ * Four digits and nothing else.
  *
- * Every failure says the same thing - an unknown username and a wrong
- * PIN are indistinguishable - so the screen cannot be used to find out
- * who works here.
+ * No name is asked for: the PIN identifies the account on its own. Every
+ * failure says the same thing, so the screen cannot be used to learn
+ * whose PINs exist - the only extra it gives away is how many tries
+ * remain, which the person who owns the PIN needs and a guesser could
+ * count for themselves anyway.
  */
 export function SignInForm({ nextPath }: { nextPath?: string }) {
   const [state, submit, pending] = useActionState(signInWithPinAction, INITIAL);
   const [reveal, setReveal] = useState(false);
-  const [username, setUsername] = useState("");
+  const [filled, setFilled] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
-  const usernameRef = useRef<HTMLInputElement>(null);
+  // Latches so a re-render while the request is in flight cannot post a
+  // second time: a duplicate submission fails on a spent nonce and, worse,
+  // spends one of the five tries.
+  const sent = useRef(false);
   const errorId = useId();
 
   const safeNext = nextPath?.startsWith("/") && !nextPath.startsWith("//") ? nextPath : "/";
   const failed = state.status === "error";
+  const locked = Boolean(state.cooldownSeconds);
+
+  // A new answer from the server means the next entry may be sent.
+  useEffect(() => { sent.current = false; }, [state]);
 
   return (
-    <form action={submit} ref={formRef} className="space-y-5">
+    <form action={submit} ref={formRef} className="space-y-6">
       <input type="hidden" name="next" value={safeNext} />
 
       {failed && (
-        <Alert tone="danger">
-          {/* role=alert so it is announced, not just drawn. */}
-          <span id={errorId} role="alert">{state.message}</span>
+        <Alert tone={locked ? "warning" : "danger"}>
+          <span id={errorId} role="alert">
+            {state.message}
+            {typeof state.attemptsRemaining === "number" && (
+              <span className="mt-1 block text-xs opacity-90">
+                {attemptsRemainingLabel(state.attemptsRemaining)}
+              </span>
+            )}
+          </span>
         </Alert>
       )}
 
       <div>
-        <label
-          htmlFor="username"
-          className="mb-2 block text-sm font-medium text-[var(--text-primary)]"
-        >
-          Username
-        </label>
-        <input
-          id="username"
-          name="username"
-          ref={usernameRef}
-          type="text"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          placeholder="Enter your username"
-          required
-          autoFocus
-          disabled={pending}
-          autoComplete="username"
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck={false}
-          enterKeyHint="next"
-          aria-invalid={failed || undefined}
-          aria-describedby={failed ? errorId : undefined}
-          className={[
-            "h-12 w-full rounded-[var(--radius-panel)] border px-3.5",
-            "bg-[var(--surface-raised)] text-base text-[var(--text-primary)]",
-            "placeholder:text-[var(--text-muted)] transition-colors",
-            "outline-none focus-visible:border-brand-600",
-            "focus-visible:ring-2 focus-visible:ring-brand-600/40",
-            "disabled:opacity-60",
-            failed ? "border-critical" : "border-[var(--border-strong)]",
-          ].join(" ")}
-        />
-      </div>
-
-      <div>
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-3 flex items-baseline justify-between gap-3">
           <label
             htmlFor="pin-0"
             className="text-sm font-medium text-[var(--text-primary)]"
           >
-            {PIN_LENGTH}-digit PIN
+            Enter your {PIN_LENGTH}-digit PIN
           </label>
           <button
             type="button"
             onClick={() => setReveal((v) => !v)}
             aria-pressed={reveal}
-            className="flex min-h-11 items-center gap-1.5 rounded-md px-2 text-xs text-[var(--text-muted)] transition-colors hover:text-[var(--text-primary)] focus-visible:ring-2 focus-visible:ring-brand-600/40 focus-visible:outline-none pointer-fine:min-h-0 pointer-fine:py-1"
+            className="flex min-h-11 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs text-[var(--text-muted)] transition-colors hover:text-[var(--text-primary)] focus-visible:ring-2 focus-visible:ring-brand-600/40 focus-visible:outline-none pointer-fine:min-h-0 pointer-fine:py-1"
           >
             {reveal ? <EyeOff className="size-3.5" aria-hidden /> : <Eye className="size-3.5" aria-hidden />}
-            {reveal ? "Hide PIN" : "Show PIN"}
+            {reveal ? "Hide" : "Show"}
           </button>
         </div>
 
         <DigitInput
-          key={failed ? `retry-${state.message}` : "pin"}
+          // Remounted on every answer so the boxes clear themselves and
+          // the next try starts from an empty field.
+          key={failed ? `retry-${state.message}-${state.attemptsRemaining ?? ""}` : "pin"}
           idPrefix="pin"
           length={PIN_LENGTH}
           name="pin"
           masked={!reveal}
-          disabled={pending}
+          autoFocus
+          disabled={pending || locked}
           invalid={failed}
           label={`${PIN_LENGTH}-digit PIN`}
           describedBy={failed ? errorId : undefined}
+          onChangeValue={(v) => setFilled(v.length === PIN_LENGTH)}
           onComplete={() => {
-            if (pending) return;
-            // Submitted for them once the last digit lands. If they
-            // filled the PIN first, sending it would be a certain
-            // failure that also clears what they typed, so the cursor
-            // goes to the field they still have to fill instead - which
-            // is the only thing on screen that would explain the wait.
-            if (username.trim()) formRef.current?.requestSubmit();
-            else usernameRef.current?.focus();
+            // Sent on the fourth digit, so the usual case is four taps
+            // and nothing else. The button stays for anyone who paused,
+            // corrected a digit, or is working by keyboard.
+            if (pending || locked || sent.current) return;
+            sent.current = true;
+            formRef.current?.requestSubmit();
           }}
         />
       </div>
 
-      <Button type="submit" size="lg" loading={pending} className="w-full">
+      <Button
+        type="submit"
+        size="lg"
+        loading={pending}
+        disabled={locked || (!filled && !pending)}
+        className="w-full"
+      >
         {pending ? "Signing in…" : "Sign in"}
       </Button>
 

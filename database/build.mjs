@@ -1263,6 +1263,57 @@ select 'the PIN is no longer the only credential',
 select full_name as "who", username as "signs in as", role as "role"
   from public.profiles where is_active order by full_name;`,
   },
+  {
+    migration: "0040_counting_attempts_by_device_too.sql",
+    out: "UPGRADE_0040_ATTEMPT_LIMIT.sql",
+    title: "UPGRADE 0040 - counting attempts by device as well as address",
+    summary: `-- WHAT IT FIXES
+--
+-- Sign-in is by PIN alone: four digits, ten thousand possibilities, and
+-- nothing else at the door. What makes that safe is the five-attempt
+-- limit, and the limit was counted per IP address only - which fails in
+-- both directions on the networks this is used on.
+--
+--   Too lax. A phone on a mobile network does not keep one address.
+--   Ghanaian carriers rotate them, sometimes between one request and the
+--   next, and each new address starts a fresh count of five. Three wrong
+--   PINs in a row reported "4 attempts remaining" every time.
+--
+--   Too strict. The same carriers put thousands of subscribers behind
+--   one address, so one person fumbling five times locked out everybody
+--   else on that network.
+--
+--   auth_pin_attempts.device_id   an opaque per-browser identifier
+--
+-- set by the server in an httpOnly cookie. It is not a credential and
+-- grants nothing; it exists only to be counted against. Failures now
+-- count against either key and a success against either clears both, so
+-- clearing cookies leaves the address, changing address leaves the
+-- cookie, and a new tab changes neither.
+--
+-- Two indexes come with it, including one on request_ip that was missing
+-- all along - every sign-in was scanning this table.
+--
+-- Nothing is dropped and no policy is relaxed.
+--
+-- AFTER RUNNING IT, redeploy, or the application will not set the cookie
+-- and the column stays empty.`,
+    verify: `select 'attempts carry a device' as check,
+       case when exists (select 1 from information_schema.columns
+                          where table_name = 'auth_pin_attempts' and column_name = 'device_id')
+            then 'PASS' else 'FAIL' end as result
+union all
+select 'the limiter has its indexes',
+       case when (select count(*) from pg_indexes
+                   where schemaname = 'public'
+                     and indexname in ('auth_pin_attempts_device_time','auth_pin_attempts_ip_time')) = 2
+            then 'PASS' else 'FAIL' end
+union all
+select 'one PIN still cannot open two accounts',
+       case when exists (select 1 from pg_indexes
+                          where schemaname = 'public' and indexname = 'profiles_active_pin_key')
+            then 'PASS' else 'FAIL' end;`,
+  },
 ];
 
 /** Final enum members, in the order `alter type ... add value` yields. */

@@ -34,6 +34,7 @@ const ok = (n, c, x = "") => { c ? (pass++, console.log(`  PASS  ${n} ${x}`)) : 
 const head = (t) => console.log(`\n=== ${t} ===`);
 
 const stamp = Date.now().toString(36).slice(-5);
+const PIN_BOXES = 4;
 const made = [];        // temp profiles to remove
 let tempProductId = null, tempCategoryId = null, tempVanId = null;
 let tempWarehouseId = null, tempLoadId = null, bossId = null;
@@ -72,6 +73,29 @@ async function clearAttempts() {
     .delete().gte("attempted_at", new Date(Date.now() - 86_400_000).toISOString());
 }
 await clearAttempts();
+
+/**
+ * Remove anything a previous run left behind.
+ *
+ * Not tidiness: PINs are unique across active accounts, so a stray test
+ * account still holding one makes the next run collide on it and fail
+ * for a reason that has nothing to do with the code.
+ */
+async function removeStrays() {
+  const { data: strays } = await db.from("profiles").select("id, username").like("username", "zz.%");
+  for (const stray of strays ?? []) {
+    await db.from("auth_pin_attempts").delete().eq("profile_id", stray.id);
+    await db.from("audit_log").delete().eq("actor_id", stray.id);
+    await db.from("audit_log").delete().eq("target_id", stray.id);
+    await db.from("manager_category_scopes").delete().eq("profile_id", stray.id);
+    await db.from("van_assignments").delete().eq("member_id", stray.id);
+    await db.from("profiles").delete().eq("id", stray.id);
+    await db.auth.admin.deleteUser(stray.id).catch(() => {});
+  }
+  if (strays?.length) console.log(`removed ${strays.length} account(s) left by an earlier run`);
+}
+await removeStrays();
+
 console.log("sign-in attempt history cleared for this run\n");
 
 /** A temporary account holding a PIN somebody else chose. */
@@ -93,67 +117,66 @@ async function makeAccount(username, name, role, pin, provisional = true) {
 
 let lastSignInError = "";
 
-async function signIn(page, username, pin) {
-  // networkidle, not domcontentloaded: typing into a controlled input
-  // before React has hydrated leaves the component's state empty, so the
-  // form falls back to a plain POST that simply re-renders the page -
-  // no navigation, no error, nothing to see.
+async function signIn(page, pin) {
   await page.goto(`${BASE}/sign-in`, { waitUntil: "domcontentloaded", timeout: 60000 });
-  await page.getByLabel("Username").waitFor({ state: "visible", timeout: 30000 });
-  // React must have hydrated before anything is typed: a controlled
-  // input written to beforehand leaves component state empty, and the
-  // form then posts natively and simply re-renders the page.
+  const firstBox = page.getByLabel(/digit 1 of 4/i).first();
+  await firstBox.waitFor({ state: "visible", timeout: 30000 });
+  // React must have hydrated before anything is typed, or the boxes take
+  // the digits and the component's state never sees them.
   await page.waitForTimeout(900);
-  await page.getByLabel("Username").fill(username);
-  await page.getByLabel(/digit 1 of 4/i).first().click({ timeout: 20000 });
+  await firstBox.click({ timeout: 20000 });
   for (const d of pin) await page.keyboard.type(d, { delay: 60 });
 
-  const submit = page.getByRole("button", { name: /sign(ing)? in/i }).first();
-
-  // The form submits itself on the last digit. Pressing the button while
-  // that is in flight posts a second time against a spent nonce, which
-  // fails with nothing on screen - so this waits for the first attempt
-  // to finish, and only presses if nothing was ever sent.
+  // The form sends itself on the fourth digit and latches, so there is
+  // nothing to press and nothing that could send it twice.
   const settled = await page
-    .waitForURL((u) => !u.pathname.includes("sign-in"), { timeout: 12000 })
+    .waitForURL((u) => !u.pathname.includes("sign-in"), { timeout: 20000 })
     .then(() => true).catch(() => false);
 
   if (!settled) {
-    const pending = await submit.isDisabled().catch(() => false);
-    const alerted = await page.getByRole("alert").count().catch(() => 0);
-    if (!pending && !alerted) {
-      await submit.click({ timeout: 10000 }).catch(() => {});
-      await page.waitForURL((u) => !u.pathname.includes("sign-in"), { timeout: 30000 }).catch(() => {});
-    } else if (pending) {
-      await page.waitForURL((u) => !u.pathname.includes("sign-in"), { timeout: 30000 }).catch(() => {});
-    }
+    await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
+    const why = await page.getByRole("alert").first().innerText().catch(() => "");
+    lastSignInError = why.replace(/\s+/g, " ").trim() || "(no message shown)";
+    return false;
   }
 
   await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
-
-  // The action redirects to "/", which the shell redirects again for a
-  // provisional account. Catching it mid-chain shows an error frame that
-  // is gone a moment later; settle before reading anything.
+  // The action lands on "/", and for a provisional account the shell
+  // redirects again; catching it mid-chain shows a frame that is gone a
+  // moment later.
   for (let i = 0; i < 3; i++) {
     const body = await page.locator("body").innerText().catch(() => "");
     if (!/page couldn.t load/i.test(body)) break;
     await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
     await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
   }
-
-  if (page.url().includes("sign-in")) {
-    const why = await page.getByRole("alert").first().innerText().catch(() => "");
-    lastSignInError = why.trim() || "(no message shown)";
-    return false;
-  }
-  // The action redirects to "/", and for a provisional account the shell
-  // redirects again to /set-pin. Wait for that to land, or the URL is
-  // read a beat too early and reports "/".
   await page.waitForURL((u) => u.pathname !== "/", { timeout: 8000 }).catch(() => {});
   await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
 
   lastSignInError = "";
   return true;
+}
+
+/**
+ * Open the create-staff dialog.
+ *
+ * The button is server-rendered and inert until React attaches, so a
+ * click that lands too early does nothing at all and the wait that
+ * follows times out on a page that looks perfectly correct.
+ */
+async function openCreateStaff(page) {
+  await page.goto(`${BASE}/users`, { waitUntil: "domcontentloaded", timeout: 60000 });
+  const opener = page.getByRole("button", { name: /create staff/i }).first();
+  await opener.waitFor({ state: "visible", timeout: 30000 });
+
+  for (let attempt = 0; attempt < 4; attempt++) {
+    await page.waitForTimeout(700);
+    await opener.click({ timeout: 10000 }).catch(() => {});
+    const open = await page.getByLabel("Full name")
+      .waitFor({ state: "visible", timeout: 5000 }).then(() => true).catch(() => false);
+    if (open) return true;
+  }
+  return false;
 }
 
 async function setPin(page, pin) {
@@ -172,6 +195,15 @@ async function setPin(page, pin) {
   await page.getByRole("button", { name: /set my pin/i }).click();
   await page.waitForURL((u) => !u.pathname.includes("set-pin"), { timeout: 45000 }).catch(() => {});
   await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
+
+  // Landing on "/" sends the shell redirecting again; caught mid-chain
+  // it shows an error frame that is gone a moment later.
+  for (let i = 0; i < 3; i++) {
+    const body = await page.locator("body").innerText().catch(() => "");
+    if (!/page couldn.t load|server error occurred/i.test(body)) break;
+    await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
+    await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
+  }
 }
 
 // The sign-out route only accepts POST, so the test drops the session
@@ -231,7 +263,7 @@ try {
   bossId = await makeAccount(bossUser, "ZZ Flow Administrator", "admin", "7315");
   {
     const page = await newPage();
-    ok("a provisional account signs in", await signIn(page, bossUser, "7315"), lastSignInError);
+    ok("a provisional account signs in", await signIn(page, "7315"), lastSignInError);
     ok("and is trapped on set-pin", page.url().includes("/set-pin"));
 
     // Refuses to keep the PIN it was given.
@@ -244,7 +276,7 @@ try {
     await setPin(page, "1024");
     body = await page.locator("body").innerText().catch(() => "");
     ok("the bootstrap PIN cannot be adopted as permanent",
-       page.url().includes("/set-pin") && /too easy to guess|already assigned/i.test(body),
+       page.url().includes("/set-pin") && /too easy to guess|already in use/i.test(body),
        body.replace(/\s+/g, " ").slice(0, 70));
 
     await setPin(page, "6482");
@@ -259,13 +291,13 @@ try {
        after.pin_hash === digest("6482") && after.pin_hash.length === 64);
 
     await signOut(page);
-    ok("the old PIN no longer works", !(await signIn(page, bossUser, "7315")), lastSignInError);
+    ok("the old PIN no longer works", !(await signIn(page, "7315")), lastSignInError);
     // Supabase rate-limits minting a session for the same address, so a
     // third sign-in inside a few seconds can be refused for a reason
     // that has nothing to do with the PIN. Give it room.
     await breathe(page);
-    let backIn = await signIn(page, bossUser, "6482");
-    if (!backIn) { await page.waitForTimeout(8000); backIn = await signIn(page, bossUser, "6482"); }
+    let backIn = await signIn(page, "6482");
+    if (!backIn) { await page.waitForTimeout(8000); backIn = await signIn(page, "6482"); }
     ok("the new PIN does", backIn, lastSignInError);
     await page.context().close();
   }
@@ -277,17 +309,13 @@ try {
   const drvUser = `zz.drv.${stamp}`;
   {
     const page = await newPage();
-    await signIn(page, bossUser, "6482");
+    await signIn(page, "6482");
 
     for (const [username, name, role, pin] of [
       [mgrUser, "ZZ Flow Manager", "Manager", "5127"],
       [drvUser, "ZZ Flow Driver", "Driver", "9043"],
     ]) {
-      await page.goto(`${BASE}/users`, { waitUntil: "domcontentloaded", timeout: 60000 });
-      const opener = page.getByRole("button", { name: /create staff/i }).first();
-      await opener.waitFor({ state: "visible", timeout: 30000 });
-      await page.waitForTimeout(600);   // let the handler attach
-      await opener.click();
+      ok(`the create-staff form opens for the ${role.toLowerCase()}`, await openCreateStaff(page));
       await page.getByLabel("Full name").fill(name);
       await page.getByLabel("Username").fill(username);
       await page.locator("#role").selectOption({ label: role });
@@ -321,11 +349,7 @@ try {
     }
 
     // A username already taken is refused.
-    await page.goto(`${BASE}/users`, { waitUntil: "domcontentloaded", timeout: 60000 });
-    const opener2 = page.getByRole("button", { name: /create staff/i }).first();
-    await opener2.waitFor({ state: "visible", timeout: 30000 });
-    await page.waitForTimeout(600);
-    await opener2.click();
+    await openCreateStaff(page);
     await page.getByLabel("Full name").fill("ZZ Duplicate");
     await page.getByLabel("Username").fill(mgrUser);
     await page.getByLabel(/^PIN, digit 1 of 4$/i).first().click({ timeout: 20000 });
@@ -361,7 +385,7 @@ try {
     tempProductId = prod?.id ?? null;
 
     const page = await newPage();
-    await signIn(page, bossUser, "6482");
+    await signIn(page, "6482");
     await page.goto(`${BASE}/products`, { waitUntil: "domcontentloaded", timeout: 60000 });
     await page.getByText("ZZ Flow Test Item").first().waitFor({ state: "visible", timeout: 30000 }).catch(() => {});
     const adminBody = await page.locator("body").innerText().catch(() => "");
@@ -376,7 +400,7 @@ try {
       .insert({ org_id: org.id, profile_id: mgr.id, category_id: tempCategoryId });
 
     const mgrPage = await newPage();
-    await signIn(mgrPage, mgrUser, "5127");
+    await signIn(mgrPage, "5127");
     ok("the manager is made to set their own PIN", mgrPage.url().includes("/set-pin"));
     await setPin(mgrPage, "8264");
     ok("the manager reaches the application", !mgrPage.url().includes("/set-pin"));
@@ -423,7 +447,7 @@ try {
     });
 
     const drvPage = await newPage();
-    await signIn(drvPage, drvUser, "9043");
+    await signIn(drvPage, "9043");
     ok("the driver is made to set their own PIN", drvPage.url().includes("/set-pin"));
     await setPin(drvPage, "7758");
     ok("the driver reaches the application", !drvPage.url().includes("/set-pin"),
@@ -467,19 +491,105 @@ try {
   head("what a failed sign-in says");
   // ================================================================
   {
+    await clearAttempts();
+    const { data: existingAccounts } = await db.from("profiles").select("username, full_name");
     const page = await newPage();
-    for (const [label, user, pin] of [
-      ["an unknown username", `zz.nobody.${stamp}`, "1357"],
-      ["a wrong PIN for a real account", bossUser, "1357"],
+    // A PIN nobody holds, and the wrong PIN while a real account exists:
+    // both must read identically, or the screen answers "does this PIN
+    // belong to somebody?" for anyone who cares to ask.
+    for (const [label, pin] of [
+      ["a PIN belonging to nobody", "1357"],
+      ["another PIN belonging to nobody", "2468"],
     ]) {
-      await signIn(page, user, pin);
+      await signIn(page, pin);
       const body = await page.locator("body").innerText().catch(() => "");
       ok(`${label} is refused`, page.url().includes("/sign-in"));
-      ok(`${label} says the same thing`, /Incorrect username or PIN/i.test(body), body.slice(0, 60));
+      ok(`${label} says only "Incorrect PIN"`,
+         /Incorrect PIN\. Please try again\./i.test(body), lastSignInError);
+      // The standing text may say "ask your administrator" - that is
+      // guidance. What must never appear is a real account: somebody's
+      // username, their name, or the organisation they belong to.
+      const names = (existingAccounts ?? []).flatMap((a) => [a.username, a.full_name])
+        .filter((v) => typeof v === "string" && v.length > 2);
+      const leaked = names.filter((n) =>
+        new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(body));
+      ok(`${label} names no existing account`, leaked.length === 0, leaked.join(", "));
+      ok(`${label} names no role or organisation`,
+         !/\b(salesperson|warehouse|accountant|Default Organization)\b/i.test(body));
       ok(`${label} leaks no technical detail`,
-         !/(PostgREST|supabase|JWT|SQL|postgres|relation |column )/i.test(body));
+         !/(PostgREST|supabase|JWT|SQL|postgres|relation |column |token)/i.test(body));
     }
     await page.context().close();
+    await clearAttempts();
+  }
+
+  // ================================================================
+  head("five tries, then a quarter of an hour");
+  // ================================================================
+  //
+  // The whole door rests on this: with sign-in by PIN alone, four digits
+  // is ten thousand guesses and nothing else stands in the way.
+  {
+    await clearAttempts();
+    const page = await newPage();
+    const seen = [];
+
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      await signIn(page, "1357");           // never anybody's PIN
+      seen.push(lastSignInError);
+    }
+
+    // Four refusals that each leave a try in hand, counting down.
+    for (let i = 0; i < 4; i++) {
+      const expected = 4 - i;
+      ok(`attempt ${i + 1} is refused with ${expected} remaining`,
+         /Incorrect PIN/i.test(seen[i])
+           && new RegExp(`${expected} attempts? remaining`, "i").test(seen[i]),
+         seen[i]);
+      ok(`attempt ${i + 1} does not lock`, !/too many/i.test(seen[i]), seen[i]);
+    }
+
+    // The fifth is the one that closes it.
+    ok("the fifth failure locks, and not before",
+       /too many attempts/i.test(seen[4]), seen[4]);
+    ok("and says how long to wait, in minutes",
+       /try again in 1[0-5] minutes/i.test(seen[4]), seen[4]);
+    ok("the lockout message stays free of technical detail",
+       !/(supabase|postgrest|sql|jwt|database|server|token)/i.test(seen[4]), seen[4]);
+
+    // A correct PIN is refused too - the lock is on the door, not on a
+    // guess, so refreshing or reopening the page cannot get past it.
+    await page.context().clearCookies();
+    const evenCorrect = await signIn(page, "6482");
+    ok("even the correct PIN is refused while locked", !evenCorrect, lastSignInError);
+    ok("and refreshing does not clear it", /too many attempts/i.test(lastSignInError),
+       lastSignInError);
+
+    const fresh = await newPage();          // a different browser context
+    await signIn(fresh, "6482");
+    ok("nor does a new browser session, the count being kept server-side",
+       /too many attempts/i.test(lastSignInError), lastSignInError);
+    await fresh.context().close();
+    await page.context().close();
+
+    // ---- a success wipes the slate ----
+    await clearAttempts();
+    const after = await newPage();
+    await signIn(after, "1357");
+    await signIn(after, "1357");
+    await signIn(after, "1357");
+    ok("three failures still leave two tries", /2 attempts remaining/i.test(lastSignInError),
+       lastSignInError);
+
+    const recovered = await signIn(after, "6482");
+    ok("a correct PIN still gets in after three failures", recovered, lastSignInError);
+    await signOut(after);
+
+    await signIn(after, "1357");
+    ok("and the next failure counts as the first of a new run, not the fourth",
+       /4 attempts remaining/i.test(lastSignInError), lastSignInError);
+    await after.context().close();
+    await clearAttempts();
   }
 
   // ================================================================
@@ -495,12 +605,17 @@ try {
     ok("states what the system is", /Wholesale Distribution Management System/i.test(body));
     ok("shows no development or database branding",
        !/supabase|next\.js|localhost|demo/i.test(body));
-    ok("asks for a username", /username/i.test(body));
-    ok("asks for a 4-digit PIN", /4-digit PIN/i.test(body));
+    ok("asks for a 4-digit PIN", /Enter your 4-digit PIN/i.test(body));
 
-    // Labels, not placeholders alone.
-    ok("the username field has a real label",
-       await page.getByLabel("Username").count() > 0);
+    // The point of this change: nothing but the PIN is asked for.
+    ok("asks for no username", await page.getByLabel(/username/i).count() === 0);
+    ok("asks for no email or phone",
+       await page.locator('input[type="email"], input[type="tel"]').count() === 0);
+    ok("has exactly one visible text control - none",
+       await page.locator('input:not([type="hidden"]):visible').count() === PIN_BOXES,
+       `${await page.locator('input:not([type="hidden"]):visible').count()} visible inputs`);
+    ok("says nothing about usernames anywhere on the page",
+       !/username/i.test(body), body.replace(/\s+/g, " ").slice(0, 80));
     ok("each PIN box is labelled for a screen reader",
        await page.getByLabel(/digit 1 of 4/i).count() > 0);
     ok("the PIN never renders as readable text",
@@ -515,8 +630,8 @@ try {
     // Numeric keyboard on a phone.
     ok("PIN boxes ask for a numeric keypad",
        await page.getByLabel(/digit 1 of 4/i).first().getAttribute("inputmode") === "numeric");
-    ok("the username field does not autocapitalise",
-       await page.getByLabel("Username").getAttribute("autocapitalize") === "none");
+    ok("the PIN is masked, never rendered as readable text",
+       !/\b\d{4}\b/.test(await page.locator("form").innerText().catch(() => "")));
 
     // The button, and no double submission.
     ok("the primary action says Sign in",
@@ -550,30 +665,67 @@ try {
     await page.context().close();
   }
   // ================================================================
-  head("guessing is rate limited");
+  head("no two active accounts may hold one PIN");
   // ================================================================
   //
-  // Deliberately last: it locks this address out for a quarter of an
-  // hour, and the history is cleared afterwards.
+  // This is what makes PIN-only sign-in possible at all: the digest has
+  // to name exactly one account, or four digits would be ambiguous.
   {
-    await clearAttempts();
+    const { data: boss } = await db.from("profiles").select("id").eq("username", bossUser).single();
+
+    // Straight at the database, past the application: a unique index
+    // stands behind the check rather than only the check.
+    const clash = await db.from("profiles")
+      .update({ pin_hash: digest("6482") }).eq("username", mgrUser).select("id");
+    ok("the database refuses a duplicate PIN outright",
+       Boolean(clash.error), clash.error?.message?.slice(0, 60) ?? "UPDATE SUCCEEDED");
+    ok("and refuses it as a uniqueness violation, not by accident",
+       /duplicate key|unique/i.test(clash.error?.message ?? ""),
+       clash.error?.message?.slice(0, 60) ?? "");
+
+    // The manager's PIN is untouched by the refusal.
+    const { data: mgrStill } = await db.from("profiles")
+      .select("pin_hash").eq("username", mgrUser).single();
+    ok("the refused write changed nothing", mgrStill.pin_hash === digest("8264"));
+
+    // And the administrator handing one out is told, in words, without
+    // learning whose it is.
     const page = await newPage();
-    let lockedAt = 0;
-    for (let attempt = 1; attempt <= 7 && !lockedAt; attempt++) {
-      await signIn(page, `zz.ghost.${stamp}`, "1357");
-      if (/too many/i.test(lastSignInError)) lockedAt = attempt;
-    }
-    ok("repeated wrong guesses are eventually refused outright", lockedAt > 0,
-       lockedAt ? `after ${lockedAt}` : "never locked");
-    ok("and the refusal says how long to wait",
-       /try again in \d+ minute/i.test(lastSignInError), lastSignInError);
+    await signIn(page, "6482");
+    await openCreateStaff(page);
+    await page.getByLabel("Full name").fill("ZZ Clash");
+    await page.getByLabel("Username").fill(`zz.clash.${stamp}`);
+    await page.getByLabel(/^PIN, digit 1 of 4$/i).first().click({ timeout: 20000 });
+    for (const d of "8264") await page.keyboard.type(d, { delay: 50 });   // the manager's
+    await page.getByLabel(/^Confirm PIN, digit 1 of 4$/i).first().click({ timeout: 20000 });
+    for (const d of "8264") await page.keyboard.type(d, { delay: 50 });
+    await page.getByRole("button", { name: /^create staff$/i }).last().click();
+    await page.waitForTimeout(4000);
+
+    // Read from the dialog's own alert, not the whole page: the staff
+    // list behind it shows usernames to an administrator by design.
+    const alertText = await page.getByRole("alert").first().innerText().catch(() => "")
+      || await page.locator('[role="dialog"]').first().innerText().catch(() => "");
+    ok("an administrator is told the PIN is taken",
+       /already in use/i.test(alertText), alertText.replace(/\s+/g, " ").slice(0, 80));
+    ok("and is not told whose it is",
+       !new RegExp(mgrUser, "i").test(alertText) && !/ZZ Flow Manager/i.test(alertText),
+       alertText.replace(/\s+/g, " ").slice(0, 60));
+
+    const { data: notMade } = await db.from("profiles")
+      .select("id").eq("username", `zz.clash.${stamp}`).maybeSingle();
+    ok("and no account is left behind by the refusal", !notMade);
+    if (notMade) made.push(notMade.id);
+
     await page.context().close();
-    await clearAttempts();
+    void boss;
   }
+
 } catch (e) {
   fail++;
   console.log(`\n  FAIL  the run threw: ${e.message}`);
 } finally {
+  for (const ctx of browser.contexts()) await ctx.close().catch(() => {});
   await browser.close();
 
   await clearAttempts();

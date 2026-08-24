@@ -1,9 +1,10 @@
 "use server";
 
-import { headers } from "next/headers";
+import { headers, cookies } from "next/headers";
+import { randomBytes } from "node:crypto";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient, createSupabaseAdminClient } from "@/lib/supabase/server";
-import { checkCredentials, assignPin, digestPin, INCORRECT_CREDENTIALS } from "./pin-server";
+import { checkPin, assignPin, digestPin, INCORRECT_PIN } from "./pin-server";
 import { isValidPinFormat, PIN_LENGTH } from "./pin";
 import { requireUser } from "./session";
 import { recordAudit } from "@/lib/audit";
@@ -11,8 +12,8 @@ import { recordAudit } from "@/lib/audit";
 /**
  * Signing in, and changing a PIN.
  *
- * The browser sends a username and four digits. It never sends a user
- * id, an organization or a role, and nothing it sends is trusted for
+ * The browser sends four digits and nothing else - no name, no user id,
+ * no organization, no role - and nothing it sends is trusted for
  * authorization: the server resolves who the caller is from the stored
  * credential, and Supabase issues the session.
  */
@@ -30,6 +31,34 @@ export interface SignInState {
   status: "idle" | "error";
   message?: string;
   cooldownSeconds?: number;
+  /** Tries left before the lockout, so the screen can warn before it. */
+  attemptsRemaining?: number;
+}
+
+/**
+ * An opaque identifier for this browser, set the first time somebody
+ * tries to sign in.
+ *
+ * It exists so failed attempts can be counted against something that
+ * survives a changed IP address, which a phone on a mobile network gets
+ * regularly. httpOnly, so page scripts cannot read or forge it, and it
+ * grants nothing: the worst anyone achieves by discarding it is falling
+ * back to being counted by address alone.
+ */
+async function deviceId(): Promise<string> {
+  const jar = await cookies();
+  const existing = jar.get("wdms_device")?.value;
+  if (existing && /^[a-f0-9]{32}$/.test(existing)) return existing;
+
+  const fresh = randomBytes(16).toString("hex");
+  jar.set("wdms_device", fresh, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 365,
+  });
+  return fresh;
 }
 
 async function callerContext() {
@@ -41,6 +70,7 @@ async function callerContext() {
   return {
     ip: forwarded?.split(",")[0]?.trim() ?? null,
     userAgent: h.get("user-agent"),
+    deviceId: await deviceId(),
   };
 }
 
@@ -48,18 +78,18 @@ export async function signInWithPinAction(
   _prev: SignInState,
   formData: FormData,
 ): Promise<SignInState> {
-  const username = String(formData.get("username") ?? "");
   const pin = String(formData.get("pin") ?? "").replace(/\D/g, "");
   const rawNext = String(formData.get("next") ?? "/");
   const next = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/";
 
-  const result = await checkCredentials(username, pin, await callerContext());
+  const result = await checkPin(pin, await callerContext());
 
   if (!result.ok || !result.profileId) {
     return {
       status: "error",
       message: result.message,
       cooldownSeconds: result.cooldownSeconds,
+      attemptsRemaining: result.attemptsRemaining,
     };
   }
 
@@ -67,9 +97,9 @@ export async function signInWithPinAction(
   const { data: profile } = await admin
     .from("profiles").select("email, is_active").eq("id", result.profileId).maybeSingle();
 
-  // Belt and braces: checkCredentials already required an active account.
+  // Belt and braces: checkPin already required an active account.
   if (!profile?.is_active || !profile.email) {
-    return { status: "error", message: INCORRECT_CREDENTIALS };
+    return { status: "error", message: INCORRECT_PIN };
   }
 
   // Supabase issues the session. A single-use token is minted here and

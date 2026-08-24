@@ -3,7 +3,6 @@ import { SignInForm } from "./sign-in-form";
 import { Alert } from "@/components/ui/states";
 import { ClearOfflineCaches } from "@/components/pwa/clear-cache";
 import { BRAND } from "@/lib/brand";
-import { PackageCheck, Route, ShieldCheck } from "lucide-react";
 
 export const metadata: Metadata = {
   title: "Sign in",
@@ -15,25 +14,15 @@ const CALLBACK_ERRORS: Record<string, string> = {
   exchange_failed: "That sign-in could not be completed. Please try again.",
 };
 
-/** Stated plainly, without stock photography or a marketing voice. */
-const ASSURANCES = [
-  {
-    icon: PackageCheck,
-    title: "Every unit accounted for",
-    body: "Warehouse to van, van to customer, reconciled at the end of each round.",
-  },
-  {
-    icon: Route,
-    title: "Every cedi traceable",
-    body: "Cash and credit tie back to the person, van and transaction that moved it.",
-  },
-  {
-    icon: ShieldCheck,
-    title: "Access scoped by role",
-    body: "Records you are not responsible for are not shown to you.",
-  },
-];
-
+/**
+ * One card, one field.
+ *
+ * The screen is entered on a phone in a yard, often one-handed and in
+ * sunlight, so everything that is not the PIN has been taken off it. No
+ * marketing panel, no illustration, no second column: those were there
+ * when the page had two fields and a wait, and they only push the boxes
+ * down the screen now.
+ */
 export default async function SignInPage({
   searchParams,
 }: {
@@ -46,76 +35,61 @@ export default async function SignInPage({
     <>
       <ClearOfflineCaches />
 
-      <div className="grid min-h-dvh lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
+      <main className="relative flex min-h-dvh flex-col bg-[var(--surface-sunken)]">
         {/*
-          The form column. Vertically centred where there is room, and
-          allowed to scroll from the top where there is not - which is
-          what happens on a short phone once the keyboard opens.
+          A single wash of brand colour at the top, behind the card. Not a
+          gradient across the page: it gives the card something to sit
+          against and costs nothing to read past.
         */}
-        <div className="flex min-h-dvh flex-col justify-center px-6 py-10 sm:px-10 lg:px-14">
-          <div className="mx-auto w-full max-w-sm">
-            <div className="mb-9 flex items-center gap-3">
-              <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-brand-700 text-sm font-bold tracking-tight text-white">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 h-64 bg-gradient-to-b from-brand-700/10 to-transparent"
+        />
+
+        {/*
+          Centred where there is room; scrolls from the top where there is
+          not, which is what happens on a short phone with the keypad up.
+          justify-center would hide the boxes above the fold there.
+        */}
+        <div className="relative flex flex-1 items-center justify-center px-5 py-10 sm:px-6">
+          <div className="w-full max-w-[25rem]">
+            <div className="mb-8 flex flex-col items-center text-center">
+              <div className="grid size-14 place-items-center rounded-2xl bg-brand-700 text-lg font-bold tracking-tight text-white shadow-sm">
                 {BRAND.initials}
               </div>
-              <div className="min-w-0">
-                <p className="truncate text-base font-semibold text-[var(--text-primary)]">
-                  {BRAND.name}
-                </p>
-                <p className="truncate text-xs text-[var(--text-secondary)]">
-                  Wholesale Distribution Management System
-                </p>
-              </div>
+              <h1 className="mt-4 text-xl font-semibold tracking-tight text-[var(--text-primary)]">
+                {BRAND.name}
+              </h1>
+              <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                Wholesale Distribution Management System
+              </p>
             </div>
 
-            <h1 className="text-2xl font-semibold tracking-tight text-[var(--text-primary)] sm:text-[1.75rem]">
-              Welcome back
-            </h1>
-            <p className="mt-2 mb-7 text-sm leading-relaxed text-[var(--text-secondary)]">
-              Sign in with the username and PIN issued to you.
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-sm sm:p-7">
+              <h2 className="text-base font-semibold text-[var(--text-primary)]">
+                Welcome back
+              </h2>
+              <p className="mt-1 mb-6 text-sm text-[var(--text-secondary)]">
+                Sign in with the PIN issued to you.
+              </p>
+
+              {callbackError && (
+                <div className="mb-5">
+                  <Alert tone="danger">{callbackError}</Alert>
+                </div>
+              )}
+
+              <SignInForm nextPath={next} />
+            </div>
+
+            <p className="mt-7 text-center text-xs text-[var(--text-muted)]">
+              © {new Date().getFullYear()} {BRAND.name}
+              <span className="mx-1.5" aria-hidden>·</span>
+              Access is scoped by role
             </p>
-
-            {callbackError && (
-              <div className="mb-5">
-                <Alert tone="danger">{callbackError}</Alert>
-              </div>
-            )}
-
-            <SignInForm nextPath={next} />
-          </div>
-
-          <p className="mx-auto mt-10 w-full max-w-sm text-xs text-[var(--text-muted)]">
-            © {new Date().getFullYear()} {BRAND.name}
-          </p>
-        </div>
-
-        {/*
-          Context panel. Hidden below lg, where the form should have the
-          whole screen rather than share it with reassurance.
-        */}
-        <div className="relative hidden flex-col justify-center bg-ink-900 p-14 lg:flex">
-          <div className="max-w-md">
-            <p className="text-[1.35rem] leading-snug font-medium text-ink-100">
-              Every unit of stock and every cedi is traceable to the person,
-              van and transaction that moved it.
-            </p>
-
-            <ul className="mt-11 space-y-7">
-              {ASSURANCES.map(({ icon: Icon, title, body }) => (
-                <li key={title} className="flex gap-4">
-                  <div className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg bg-white/10 text-ink-100">
-                    <Icon className="size-4" aria-hidden />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-ink-100">{title}</p>
-                    <p className="mt-1 text-sm leading-relaxed text-ink-400">{body}</p>
-                  </div>
-                </li>
-              ))}
-            </ul>
           </div>
         </div>
-      </div>
+      </main>
     </>
   );
 }

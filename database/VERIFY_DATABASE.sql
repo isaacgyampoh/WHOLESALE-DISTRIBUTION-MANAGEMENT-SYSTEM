@@ -234,8 +234,8 @@ report as (
           case when c.rls_tables = c.all_tables then 'OK' else 'FAIL' end, '' from counts c
   union all select 11, 'Generated columns', '13', c.generated_cols::text,
           case when c.generated_cols = 13 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 12, 'Indexes', '168', c.indexes::text,
-          case when c.indexes = 168 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 12, 'Indexes', '170', c.indexes::text,
+          case when c.indexes = 170 then 'OK' else 'CHECK' end, '' from counts c
   union all select 13, 'Constraints', '300', c.constraints::text,
           case when c.constraints = 300 then 'OK' else 'CHECK' end, '' from counts c
   union all select 14, 'Security functions present', '8', s.n::text,
@@ -883,6 +883,34 @@ report as (
           case when not exists (select 1 from public.profiles where username is null)
                then 'OK' else 'FAIL' end,
           'An account with no username cannot sign in at all'
+  -- ---- the attempt limit can actually hold (migration 0040) --------
+  union all select 78, 'Sign-in: attempts are counted per device as well as address', 'present',
+          case when exists (select 1 from information_schema.columns
+                             where table_schema = 'public' and table_name = 'auth_pin_attempts'
+                               and column_name = 'device_id')
+               then 'present' else 'MISSING' end,
+          case when exists (select 1 from information_schema.columns
+                             where table_schema = 'public' and table_name = 'auth_pin_attempts'
+                               and column_name = 'device_id')
+               then 'OK' else 'FAIL' end,
+          'A mobile address changes mid-run, so address alone lets guessing continue'
+  union all select 79, 'Sign-in: the limiter has indexes to ask its question', '2',
+          (select count(*)::text from pg_indexes
+            where schemaname = 'public'
+              and indexname in ('auth_pin_attempts_device_time','auth_pin_attempts_ip_time')),
+          case when (select count(*) from pg_indexes
+                      where schemaname = 'public'
+                        and indexname in ('auth_pin_attempts_device_time','auth_pin_attempts_ip_time')) = 2
+               then 'OK' else 'FAIL' end,
+          'Every sign-in reads this table; unindexed it is a scan on the hot path'
+  union all select 80, 'Sign-in: one PIN cannot open two accounts', 'unique among active',
+          case when exists (select 1 from pg_indexes
+                             where schemaname = 'public' and indexname = 'profiles_active_pin_key')
+               then 'unique among active' else 'MISSING' end,
+          case when exists (select 1 from pg_indexes
+                             where schemaname = 'public' and indexname = 'profiles_active_pin_key')
+               then 'OK' else 'FAIL' end,
+          'Sign-in is by PIN alone, so a shared PIN would make the account ambiguous'
 )
 select ord as "#", check_name as "check", expected, actual, status, detail
 from report

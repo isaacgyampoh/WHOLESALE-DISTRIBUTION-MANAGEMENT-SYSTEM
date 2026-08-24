@@ -1,7 +1,19 @@
 import "server-only";
 import { createHmac, timingSafeEqual, randomInt } from "node:crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
-import { isValidPinFormat, isWeakPin, normaliseUsername, PIN_LENGTH } from "./pin";
+import {
+  isValidPinFormat, isWeakPin, PIN_LENGTH,
+  MAX_FAILED_ATTEMPTS, COOLDOWN_MINUTES, ATTEMPT_WINDOW_MINUTES,
+  INCORRECT_PIN, PIN_TAKEN, lockoutMessage,
+} from "./pin";
+
+// Re-exported so callers that already reach for the server module keep
+// working; the definitions live in ./pin, which has no database in it
+// and can therefore be tested on its own.
+export {
+  MAX_FAILED_ATTEMPTS, COOLDOWN_MINUTES, ATTEMPT_WINDOW_MINUTES,
+  INCORRECT_PIN, PIN_TAKEN, lockoutMessage,
+};
 
 /**
  * PIN verification and assignment.
@@ -15,17 +27,6 @@ import { isValidPinFormat, isWeakPin, normaliseUsername, PIN_LENGTH } from "./pi
  * not enough to recover anyone's PIN: without the pepper the digest
  * cannot be reversed by trying all ten thousand values.
  */
-
-export const MAX_FAILED_ATTEMPTS = 5;
-export const COOLDOWN_MINUTES = 15;
-export const ATTEMPT_WINDOW_MINUTES = 15;
-
-/**
- * Identical for every failure, so nothing can be learned from the
- * wording: a username that does not exist, one that does with the wrong
- * PIN, and a deactivated account all say this.
- */
-export const INCORRECT_CREDENTIALS = "Incorrect username or PIN. Please try again.";
 
 function pepper(): string {
   const value = process.env.PIN_PEPPER;
@@ -61,52 +62,101 @@ export function digestsMatch(a: string, b: string): boolean {
 export interface AttemptContext {
   ip?: string | null;
   userAgent?: string | null;
+  /**
+   * Opaque per-browser identifier from an httpOnly cookie. Counted
+   * alongside the address so the limit survives a changed IP and cannot
+   * be shed by opening a new tab. Never trusted for anything else.
+   */
+  deviceId?: string | null;
 }
 
 export interface PinCheck {
   ok: boolean;
   message: string;
   profileId?: string;
+  /** Seconds until sign-in is possible again; set only while locked. */
   cooldownSeconds?: number;
+  /** Tries left before the lockout. Absent when the attempt succeeded. */
+  attemptsRemaining?: number;
   /** The PIN was issued by somebody else and must be replaced. */
   mustChangePin?: boolean;
 }
 
 /**
- * How long this caller must wait, if at all.
+ * Consecutive failures by this caller inside the window.
  *
- * Counted per address rather than per account, because a failed attempt
- * has no account: the PIN matched nobody. Successful sign-ins reset the
- * count so ordinary use never accumulates towards a lockout.
+ * Counting stops at the most recent success: signing in correctly wipes
+ * the slate, so ordinary use never accumulates towards a lockout. That
+ * is what makes "wrong, wrong, wrong, right, wrong" leave the last entry
+ * as the first failure of a fresh run rather than the fourth of an old
+ * one.
+ *
+ * Counted per address, because a failed PIN belongs to no account - it
+ * matched nobody, so there is nothing else to count against.
  */
-async function cooldownRemaining(ip: string | null | undefined): Promise<number> {
-  if (!ip) return 0;
+async function recentFailures(context: AttemptContext): Promise<{
+  failures: number;
+  newest: string | null;
+}> {
+  const ip = context.ip ?? null;
+  const device = context.deviceId ?? null;
+
+  // Nothing to count against. Rather than let the attempt through
+  // uncounted, this is treated as the first failure of a fresh run: it
+  // cannot happen through the application, which always sets a device
+  // cookie, and if it ever does the safe reading is "unknown caller".
+  if (!ip && !device) return { failures: 0, newest: null };
 
   const admin = createSupabaseAdminClient();
   const windowStart = new Date(Date.now() - ATTEMPT_WINDOW_MINUTES * 60_000).toISOString();
 
-  const { data } = await admin
+  // Either key. An address that changed mid-run is still the same
+  // browser; a cookie that was cleared is still the same address.
+  const keys = [
+    ip ? `request_ip.eq.${ip}` : null,
+    device ? `device_id.eq.${device}` : null,
+  ].filter(Boolean).join(",");
+
+  const { data, error } = await admin
     .from("auth_pin_attempts")
     .select("succeeded, attempted_at")
-    .eq("request_ip", ip)
+    .or(keys)
     .gte("attempted_at", windowStart)
     .order("attempted_at", { ascending: false })
     .limit(MAX_FAILED_ATTEMPTS + 1);
 
+  if (error) {
+    // Unable to count is not permission to proceed unlimited, but nor
+    // may it lock everyone out: report no failures and let the attempt
+    // be judged on the PIN alone, with the fault in the log.
+    console.error("[pin] could not read the attempt history", error);
+    return { failures: 0, newest: null };
+  }
+
   const rows = data ?? [];
   let failures = 0;
   for (const row of rows) {
-    if (row.succeeded) break; // A success clears what came before it.
+    if (row.succeeded) break;   // A success clears what came before it.
     failures++;
   }
 
-  if (failures < MAX_FAILED_ATTEMPTS) return 0;
+  return { failures, newest: (rows[0]?.attempted_at as string) ?? null };
+}
 
-  const newest = rows[0]?.attempted_at as string | undefined;
-  if (!newest) return 0;
+/**
+ * How long this caller must wait, if at all.
+ *
+ * Zero until MAX_FAILED_ATTEMPTS consecutive failures have been
+ * recorded; from the fifth, the full cooldown counted from that fifth
+ * failure. It expires on its own - nobody is shut out permanently by a
+ * bad morning.
+ */
+async function cooldownRemaining(context: AttemptContext): Promise<number> {
+  const { failures, newest } = await recentFailures(context);
+  if (failures < MAX_FAILED_ATTEMPTS || !newest) return 0;
+
   const elapsed = Date.now() - new Date(newest).getTime();
   const remaining = COOLDOWN_MINUTES * 60_000 - elapsed;
-  // Recovers on its own; nobody is locked out permanently by a few slips.
   return remaining > 0 ? Math.ceil(remaining / 1000) : 0;
 }
 
@@ -118,6 +168,7 @@ async function record(
   const admin = createSupabaseAdminClient();
   const { error } = await admin.from("auth_pin_attempts").insert({
     request_ip: context.ip ?? null,
+    device_id: context.deviceId ?? null,
     user_agent: context.userAgent ?? null,
     succeeded,
     profile_id: profileId ?? null,
@@ -126,38 +177,30 @@ async function record(
 }
 
 /**
- * Check a username and PIN, and if they belong to an active person, say
- * who.
+ * Check a PIN and, if it belongs to an active person, say who.
  *
- * Before migration 0039 this looked the account up *by* the PIN digest,
- * which made four digits both the name and the proof: a lucky guess
- * landed on whoever happened to hold it, and no username was needed.
- * Now the username selects exactly one row and the PIN is compared
- * against that row alone.
+ * Sign-in asks for four digits and nothing else, so the digest is both
+ * the question and the answer: the account is the one holding it. That
+ * only works because no two active accounts may hold the same PIN -
+ * assignPin refuses a duplicate and a unique index enforces it - so this
+ * lookup can never be ambiguous.
  *
- * Every failure is reported identically. A wrong username, a wrong PIN
- * and a deactivated account are indistinguishable from outside, so the
- * screen cannot be used to find out who works here.
+ * What guards the door, then, is the attempt limit: five wrong guesses
+ * and this address waits a quarter of an hour. Without that, ten
+ * thousand possibilities is not many.
+ *
+ * A PIN matching nobody, one belonging to a deactivated account, and one
+ * that is simply wrong are answered identically, so the screen cannot be
+ * used to find out who works here or what PINs exist.
  */
-export async function checkCredentials(
-  username: string,
-  pin: string,
-  context: AttemptContext = {},
-): Promise<PinCheck> {
-  const waiting = await cooldownRemaining(context.ip);
+export async function checkPin(pin: string, context: AttemptContext = {}): Promise<PinCheck> {
+  const waiting = await cooldownRemaining(context);
   if (waiting > 0) {
-    return {
-      ok: false,
-      message: `Too many incorrect attempts. Please try again in ${Math.ceil(waiting / 60)} minute(s).`,
-      cooldownSeconds: waiting,
-    };
+    return { ok: false, message: lockoutMessage(waiting), cooldownSeconds: waiting };
   }
 
-  const name = normaliseUsername(username);
-
-  // Not recorded: an empty or malformed entry is a slip, not a guess,
-  // and counting it would let someone lock themselves out by fumbling.
-  if (!name) return { ok: false, message: "Enter your username." };
+  // Not recorded: an incomplete entry is a slip rather than a guess, and
+  // counting it would let somebody lock themselves out by fumbling.
   if (!isValidPinFormat(pin)) {
     return { ok: false, message: `Enter your ${PIN_LENGTH}-digit PIN.` };
   }
@@ -165,14 +208,16 @@ export async function checkCredentials(
   const admin = createSupabaseAdminClient();
   const { data: profile, error } = await admin
     .from("profiles")
-    .select("id, pin_hash, is_active, must_change_pin")
-    .eq("username", name)
+    .select("id, pin_hash, must_change_pin")
+    .eq("pin_hash", digestPin(pin))
+    .eq("is_active", true)
     .maybeSingle();
 
   if (error) {
     // A fault here looks exactly like a wrong PIN to the person signing
     // in, which is right for them and useless for whoever has to fix it.
-    // The reply stays generic; the reason goes to the log.
+    // The reply stays generic; the reason goes to the log. Deliberately
+    // not recorded as a failure - our fault must not cost them a try.
     console.error("[pin] could not look up the credential", error);
     return {
       ok: false,
@@ -180,27 +225,39 @@ export async function checkCredentials(
     };
   }
 
-  // Compared even when there is no such account, and even when it holds
-  // no PIN, so that an unknown username costs the same as a wrong PIN.
-  // Without this, response time answers "does this person work here?"
-  // on its own. NO_SUCH_PIN is the same length as a real digest, so the
-  // comparison below is the same work either way.
-  const supplied = digestPin(pin);
-  const stored = (profile?.pin_hash as string | null) || NO_SUCH_PIN;
-  const matches = digestsMatch(stored, supplied);
-
-  if (!profile || !profile.is_active || !matches) {
-    await record(false, context, profile?.id as string | undefined);
-    return { ok: false, message: INCORRECT_CREDENTIALS };
+  if (profile) {
+    // The row was found by digest, so this can only agree - it is here so
+    // that the comparison deciding the outcome is a constant-time one
+    // even if the lookup above is ever changed.
+    const stored = (profile.pin_hash as string | null) ?? NO_SUCH_PIN;
+    if (digestsMatch(stored, digestPin(pin))) {
+      // Recording the success is what clears the failure count.
+      await record(true, context, profile.id as string);
+      return {
+        ok: true,
+        message: "Verified.",
+        profileId: profile.id as string,
+        mustChangePin: Boolean(profile.must_change_pin),
+      };
+    }
   }
 
-  await record(true, context, profile.id as string);
-  return {
-    ok: true,
-    message: "Verified.",
-    profileId: profile.id as string,
-    mustChangePin: Boolean(profile.must_change_pin),
-  };
+  // Recorded first, then counted, so the try just made is included: the
+  // fifth wrong PIN is itself refused with the lockout, not the sixth.
+  await record(false, context);
+  const { failures } = await recentFailures(context);
+  const remaining = MAX_FAILED_ATTEMPTS - failures;
+
+  if (remaining <= 0) {
+    const locked = await cooldownRemaining(context);
+    return {
+      ok: false,
+      message: lockoutMessage(locked || COOLDOWN_MINUTES * 60),
+      cooldownSeconds: locked || COOLDOWN_MINUTES * 60,
+    };
+  }
+
+  return { ok: false, message: INCORRECT_PIN, attemptsRemaining: remaining };
 }
 
 export interface AssignResult {
@@ -235,7 +292,7 @@ export async function assignPin(profileId: string, pin: string): Promise<AssignR
 
   // Never says who holds it.
   if (clash && clash.id !== profileId) {
-    return { ok: false, message: "This PIN is already assigned. Please choose another PIN." };
+    return { ok: false, message: PIN_TAKEN };
   }
 
   const { error } = await admin
@@ -252,7 +309,7 @@ export async function assignPin(profileId: string, pin: string): Promise<AssignR
 
   if (error) {
     if (error.code === "23505") {
-      return { ok: false, message: "This PIN is already assigned. Please choose another PIN." };
+      return { ok: false, message: PIN_TAKEN };
     }
     console.error("[pin] could not assign", error);
     return { ok: false, message: "The PIN could not be saved. Please try again." };

@@ -26,6 +26,7 @@ export function DigitInput({
   idPrefix,
   describedBy,
   onComplete,
+  onChangeValue,
 }: {
   length?: number;
   name?: string;
@@ -38,14 +39,22 @@ export function DigitInput({
   idPrefix?: string;
   describedBy?: string;
   onComplete?: (code: string) => void;
+  /** Every change, so a caller can enable its own submit button. */
+  onChangeValue?: (value: string) => void;
 }) {
   const [digits, setDigits] = useState<string[]>(() => Array(length).fill(""));
   const boxes = useRef<Array<HTMLInputElement | null>>([]);
   const value = digits.join("");
 
   useEffect(() => {
+    onChangeValue?.(value);
     if (value.length === length) onComplete?.(value);
-  }, [value, length, onComplete]);
+    // Deliberately keyed on the value alone. The callbacks are usually
+    // inline arrows, so including them would re-run this on every render
+    // of the parent - firing onComplete again for a value already
+    // submitted, which costs a real sign-in attempt.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, length]);
 
   const focus = (i: number) => boxes.current[Math.max(0, Math.min(i, length - 1))]?.focus();
 

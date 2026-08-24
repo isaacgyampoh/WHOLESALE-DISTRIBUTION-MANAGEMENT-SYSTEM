@@ -89,3 +89,45 @@ export function suggestUsername(fullName: string): string {
     .slice(0, USERNAME_MAX);
   return base.length >= USERNAME_MIN ? base : "";
 }
+
+// ------------------------------------------------------------------
+// The attempt limit
+// ------------------------------------------------------------------
+//
+// Here rather than in pin-server so the wording and the numbers can be
+// tested without a database, and so the screen and the server cannot
+// drift apart on what they promise. None of it is secret: an attacker
+// discovers the limit by hitting it.
+
+/** Wrong PINs allowed before the door closes. The fifth locks it. */
+export const MAX_FAILED_ATTEMPTS = 5;
+
+/** How long it stays closed. */
+export const COOLDOWN_MINUTES = 15;
+
+/** How far back failures are counted when deciding. */
+export const ATTEMPT_WINDOW_MINUTES = 15;
+
+/**
+ * Identical for every failure: a PIN belonging to nobody, one belonging
+ * to a deactivated account, and one that is simply wrong all say this,
+ * so the screen cannot be used to find out which PINs exist.
+ */
+export const INCORRECT_PIN = "Incorrect PIN. Please try again.";
+
+/**
+ * Says that a PIN is taken, never by whom. Sign-in is by PIN alone, so
+ * naming the holder would be handing over their credential.
+ */
+export const PIN_TAKEN = "That PIN is already in use. Please choose another PIN.";
+
+/** How long is left, in words, naming nothing technical. */
+export function lockoutMessage(secondsLeft: number): string {
+  const minutes = Math.max(1, Math.ceil(secondsLeft / 60));
+  return `Too many attempts. Please try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`;
+}
+
+/** "3 attempts remaining", and "1 attempt remaining" when it is one. */
+export function attemptsRemainingLabel(remaining: number): string {
+  return remaining === 1 ? "1 attempt remaining" : `${remaining} attempts remaining`;
+}

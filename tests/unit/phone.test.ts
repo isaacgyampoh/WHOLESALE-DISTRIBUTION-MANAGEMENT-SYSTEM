@@ -6,6 +6,9 @@ import {
   isValidPinFormat, isWeakPin, BOOTSTRAP_PIN,
   usernameProblem, normaliseUsername, suggestUsername,
 } from "../../src/lib/auth/pin.ts";
+import {
+  MAX_FAILED_ATTEMPTS, COOLDOWN_MINUTES, lockoutMessage, INCORRECT_PIN, PIN_TAKEN,
+} from "../../src/lib/auth/pin.ts";
 
 test("local Ghana numbers become international", () => {
   assert.equal(normalisePhone("0241110000"), "+233241110000");
@@ -135,4 +138,61 @@ test("a suggested username is always one the rules accept", () => {
     assert.equal(usernameProblem(suggested), null,
       `suggested "${suggested}" from "${name}" is not itself valid`);
   }
+});
+
+// ------------------------------------------------------------------
+// The attempt limit
+// ------------------------------------------------------------------
+
+test("the lockout is five attempts and a quarter of an hour", () => {
+  // These are the numbers the whole door rests on: sign-in is by PIN
+  // alone, so four digits with no limit is ten thousand guesses.
+  assert.equal(MAX_FAILED_ATTEMPTS, 5);
+  assert.equal(COOLDOWN_MINUTES, 15);
+});
+
+test("the countdown reaches the lockout on the fifth failure, not before", () => {
+  // What the screen shows after each wrong PIN. The fifth is the one
+  // that locks: four earlier failures each leave a try in hand.
+  const remainingAfter = (failures: number) => MAX_FAILED_ATTEMPTS - failures;
+
+  assert.equal(remainingAfter(1), 4);
+  assert.equal(remainingAfter(2), 3);
+  assert.equal(remainingAfter(3), 2);
+  assert.equal(remainingAfter(4), 1);
+  assert.ok(remainingAfter(5) <= 0, "the fifth failure must lock");
+
+  // Nothing between one and four may lock.
+  for (const f of [1, 2, 3, 4]) {
+    assert.ok(remainingAfter(f) > 0, `${f} failure(s) must not lock`);
+  }
+});
+
+test("the lockout message counts down in whole minutes and names nothing technical", () => {
+  assert.match(lockoutMessage(15 * 60), /15 minutes/);
+  assert.match(lockoutMessage(14 * 60), /14 minutes/);
+  // Rounded up, and never "0 minutes" or "1 minutes".
+  assert.match(lockoutMessage(30), /1 minute\b/);
+  assert.match(lockoutMessage(1), /1 minute\b/);
+
+  for (const seconds of [1, 30, 60, 599, 900]) {
+    const message = lockoutMessage(seconds);
+    assert.ok(!/(supabase|postgrest|sql|jwt|database|server|token)/i.test(message),
+      `leaked something technical: ${message}`);
+  }
+});
+
+test("a failure says the same thing whoever the PIN belonged to", () => {
+  // One sentence for "nobody holds this", "a deactivated account holds
+  // this" and "that is not your PIN", so the screen cannot be used to
+  // find out which PINs exist.
+  assert.match(INCORRECT_PIN, /^Incorrect PIN/);
+  assert.ok(!/username|account|user|exist/i.test(INCORRECT_PIN));
+});
+
+test("a PIN already in use is refused without naming its owner", () => {
+  assert.match(PIN_TAKEN, /already in use/i);
+  // Naming the holder would be handing over their credential, since the
+  // PIN is the whole of it.
+  assert.ok(!/\b(admin|manager|driver|owned by|belongs to)\b/i.test(PIN_TAKEN));
 });

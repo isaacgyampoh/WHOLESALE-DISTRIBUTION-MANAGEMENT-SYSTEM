@@ -42,6 +42,7 @@ const UPGRADE_REACH = path.join("..", "..", "database", "UPGRADE_0036_SALESPERSO
 const UPGRADE_IMAGES = path.join("..", "..", "database", "UPGRADE_0037_PRODUCT_IMAGES.sql");
 const UPGRADE_VIEW = path.join("..", "..", "database", "UPGRADE_0038_PRICED_VIEW.sql");
 const UPGRADE_USERS = path.join("..", "..", "database", "UPGRADE_0039_USERNAMES.sql");
+const UPGRADE_LIMIT = path.join("..", "..", "database", "UPGRADE_0040_ATTEMPT_LIMIT.sql");
 
 let pass = 0, fail = 0;
 const ok = (n, c, x = "") => { c ? (pass++, console.log(`  PASS  ${n} ${x}`)) : (fail++, console.log(`  FAIL  ${n} ${x}`)); };
@@ -60,7 +61,7 @@ for (const s of splitStatements(shim)) await c.query(s);
 const files = fs.readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort()
   .filter((f) => !["0022", "0023", "0024", "0025", "0026", "0027", "0028", "0029", "0030",
                    "0031", "0032", "0033", "0034", "0035",
-                   "0036", "0037", "0038", "0039"].some((n) => f.startsWith(n)));
+                   "0036", "0037", "0038", "0039", "0040"].some((n) => f.startsWith(n)));
 for (const f of files) {
   const sql = fs.readFileSync(path.join(MIGRATIONS, f), "utf8");
   for (const s of splitStatements(sql)) {
@@ -356,7 +357,8 @@ for (const [name, file] of [["0029", UPGRADE_DOCS_SUP], ["0030", UPGRADE_PORTAL]
                             ["0032", UPGRADE_ROLE], ["0033", UPGRADE_CREW],
                             ["0034", UPGRADE_MOMO], ["0035", UPGRADE_PURGE],
                             ["0036", UPGRADE_REACH], ["0037", UPGRADE_IMAGES],
-                            ["0038", UPGRADE_VIEW], ["0039", UPGRADE_USERS]]) {
+                            ["0038", UPGRADE_VIEW], ["0039", UPGRADE_USERS],
+                            ["0040", UPGRADE_LIMIT]]) {
   const sql = fs.readFileSync(file, "utf8");
   for (const attempt of ["runs in order", "runs a second time"]) {
     try {
