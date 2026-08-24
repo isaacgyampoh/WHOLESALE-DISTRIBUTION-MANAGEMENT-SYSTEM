@@ -14,9 +14,17 @@ with counts as (
       join pg_enum e on e.enumtypid = t.oid
       join pg_namespace n on n.oid = t.typnamespace
       where n.nspname = 'public')                                          as enums,
+    -- This project's own functions. Extension-owned ones are excluded,
+    -- and so are the few the Supabase platform installs into `public`
+    -- itself: `rls_auto_enable` is an event trigger Supabase adds to
+    -- switch row level security on for any new table, which is a good
+    -- thing to have and not something this repository ships. Counting it
+    -- made a correctly-migrated hosted database look one function ahead
+    -- of the reference build.
     (select count(distinct p.proname) from pg_proc p
       join pg_namespace n on n.oid = p.pronamespace
       where n.nspname = 'public'
+        and p.proname not in ('rls_auto_enable')
         and not exists (select 1 from pg_depend d
                         where d.objid = p.oid and d.deptype = 'e'))        as functions,
     (select count(*) from pg_trigger tg

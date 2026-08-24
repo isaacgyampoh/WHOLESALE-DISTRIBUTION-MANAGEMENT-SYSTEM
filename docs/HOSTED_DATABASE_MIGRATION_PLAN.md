@@ -2,8 +2,19 @@
 
 GAB Premium Ent — project `ujzk…supabase.co`
 
-**Nothing in this document has been applied.** The hosted database is
-unchanged. What follows was established by reading it, not by assuming.
+**APPLIED — 2026-08-24.** All sixteen outstanding migrations (0020,
+0023–0037) were applied to the hosted database in the order below, each
+in its own transaction, each verified against an object it creates
+before the next was started. `VERIFY_DATABASE.sql` then reported
+**81 checks, 0 not OK**.
+
+Every existing row survived: 3 organizations, 27 profiles, 18 products,
+6 customers, 5 suppliers, 3 warehouses, 24 vans, 16 sales, 253 stock
+movements, 3 purchase orders, 47 audit entries — all unchanged. The crew
+backfill turned all 4 existing van assignments into driver assignments,
+and all 16 sales were attributed to a salesperson, leaving none null.
+
+What follows is the plan as it was executed, kept for the record.
 
 ---
 
