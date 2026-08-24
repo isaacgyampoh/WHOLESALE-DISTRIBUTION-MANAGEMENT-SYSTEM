@@ -122,8 +122,49 @@ if (!people?.length) say("  (none)");
 // data. These checks are for the other mistake: somebody has been
 // entering the real business into the demo organization, and deleting it
 // would destroy work rather than tidy up.
+//
+// Every account is classified, and the script refuses only on ones it
+// cannot place. An earlier version asked "was this created by the seed",
+// which meant the accounts the hosted test suites leave behind looked
+// exactly like real people - so it refused for ever on a database that
+// held nothing but test data, and the refusal could never be cleared.
+
+/** Accounts the demo seed creates. */
+const seeded = (p) => String(p.email ?? "").endsWith("@demo.invalid");
+
+/**
+ * Accounts the hosted test suites leave behind.
+ *
+ * Matched on the address *and* the name together. Either alone is too
+ * loose: a real person could be at an example.com address, and somebody
+ * could genuinely be called Tester.
+ */
+const HARNESS_NAMES = [/^offline tester$/i, /^flow tester$/i, /^visual (audit|tester)$/i];
+const harness = (p) =>
+  /@example\.(com|org|net)$/i.test(String(p.email ?? ""))
+  && HARNESS_NAMES.some((r) => r.test(String(p.full_name ?? "").trim()));
+
+const unclassified = (people ?? []).filter((p) => !seeded(p) && !harness(p));
+
+say("");
+say("ACCOUNTS, CLASSIFIED");
+say("");
+say(`  created by the demo seed      ${(people ?? []).filter(seeded).length}`);
+say(`  left behind by test runs      ${(people ?? []).filter(harness).length}`);
+say(`  cannot be placed              ${unclassified.length}`);
+
 const warnings = [];
 
+if (unclassified.length) {
+  warnings.push(
+    `${unclassified.length} account(s) here are neither demo-seed nor test-harness accounts: ` +
+    unclassified.map((p) => `${p.full_name ?? "unnamed"} <${p.email ?? "no address"}>`).join(", ") +
+    ". If any of those is a real person, this is not demonstration data.");
+}
+
+// A recent sale only means something if somebody unaccounted-for could
+// have made it. On a database whose every account is demo or test, a
+// sale from yesterday is a test from yesterday.
 const { data: recent } = await admin
   .from("van_sales")
   .select("sold_at, total")
@@ -131,22 +172,14 @@ const { data: recent } = await admin
   .order("sold_at", { ascending: false })
   .limit(1);
 
-if (recent?.length) {
+if (recent?.length && unclassified.length) {
   const days = Math.floor((Date.now() - new Date(recent[0].sold_at).getTime()) / 86_400_000);
   if (days <= 1) {
     warnings.push(
       `A sale was recorded here ${days === 0 ? "today" : "yesterday"} ` +
-      `(${money(recent[0].total)}). If people are trading in the demonstration ` +
-      `organization, this is not demonstration data any more.`);
+      `(${money(recent[0].total)}), and there are accounts above that cannot be placed. ` +
+      `Somebody may be trading in the demonstration organization.`);
   }
-}
-
-const nonDemoStaff = (people ?? []).filter(
-  (p) => !String(p.email ?? "").endsWith("@demo.invalid"));
-if (nonDemoStaff.length) {
-  warnings.push(
-    `${nonDemoStaff.length} account(s) here were not created by the demo seed: ` +
-    nonDemoStaff.map((p) => p.full_name ?? p.email).join(", ") + ".");
 }
 
 const { count: otherOrgs } = await admin

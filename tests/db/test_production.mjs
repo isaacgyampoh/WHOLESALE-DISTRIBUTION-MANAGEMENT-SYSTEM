@@ -82,7 +82,7 @@ const schemaShape = async () => (await c.query(`select
 const before = await schemaShape();
 
 // ====================================================================
-console.log("\n-- it refuses when the data is not a demonstration --");
+console.log("\n-- it refuses when an account cannot be placed --");
 // ====================================================================
 
 // A sale recorded today means somebody is trading here.
@@ -107,17 +107,34 @@ await c.query(
    values ($1,$2,$3,$4,$5,$6,'cash','completed',now())`,
   [demo, load, van, driver, seller, demoRows.customer]);
 
+// Somebody who is neither a demo-seed nor a test-harness account. This
+// is what "a real person may be using this" looks like to the guard.
+const stray = (await c.query(
+  `insert into auth.users (email, raw_user_meta_data) values ($1,$2::jsonb) returning id`,
+  [`akosua.mensah-${stamp}@gabpremium.test`,
+   JSON.stringify({ full_name: "Akosua Mensah", role: "manager", org_id: demo })])).rows[0].id;
+void stray;
+
 const refused = await runClean();
-ok("a demonstration somebody is still trading in is refused", refused !== null,
-   refused?.split("\n")[0]?.slice(0, 62));
+ok("an account that cannot be placed stops it", refused !== null,
+   refused?.split("\n")[0]?.slice(0, 66));
 ok("and nothing was removed", (await countIn("products", demo)) === 1);
+
+// Once that person is gone, only demo and harness accounts remain.
+await c.query(`delete from public.profiles where email like $1`,
+  [`akosua.mensah-${stamp}%`]);
+
+// A recent sale on its own is no longer a blocker: with every account
+// accounted for, a sale from today is a test from today.
+const stillRecent = (await c.query(
+  `select count(*)::int n from van_sales where org_id=$1 and sold_at > now() - interval '1 day'`,
+  [demo])).rows[0].n;
+ok("a recent sale alone does not block it", Number(stillRecent) > 0,
+   "there is one, and the guard now looks past it");
 
 // ====================================================================
 console.log("\n-- it removes the demonstration, and only that --");
 // ====================================================================
-
-// Backdate the sale: now it looks like what it is, an old demonstration.
-await c.query(`update van_sales set sold_at = now() - interval '30 days' where org_id = $1`, [demo]);
 
 const err = await runClean();
 ok("the cleanup runs", err === null, err?.split("\n")[0]?.slice(0, 70));

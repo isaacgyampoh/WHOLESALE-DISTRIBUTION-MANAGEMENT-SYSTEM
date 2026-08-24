@@ -71,6 +71,7 @@ do $clean$
 declare
   demo_org uuid;
   latest   timestamptz;
+  strays   bigint;
   tbl      text;
   removed  bigint := 0;
   n        bigint;
@@ -82,16 +83,40 @@ begin
     return;
   end if;
 
-  -- The same guard the script applies. If somebody has been trading in
-  -- the demonstration organization then this is not demonstration data,
-  -- and deleting it would destroy real work.
+  -- The same guard the script applies: every account is classified, and
+  -- this refuses only on ones it cannot place.
+  --
+  -- Asking "was this created by the seed" is not enough. The hosted test
+  -- suites leave accounts behind that look exactly like real people, so
+  -- that question refuses for ever on a database holding nothing but
+  -- test data - and the refusal can never be cleared.
+  select count(*) into strays
+    from public.profiles
+   where org_id = demo_org
+     -- Created by the demo seed.
+     and coalesce(email, '') not like '%@demo.invalid'
+     -- Left behind by a hosted test run. Address and name together:
+     -- either alone is too loose to be safe.
+     and not (
+       coalesce(email, '') ~* '@example\.(com|org|net)$'
+       and trim(coalesce(full_name, '')) ~* '^(offline tester|flow tester|visual (audit|tester))$'
+     );
+
+  if strays > 0 then
+    raise exception
+      'Refused: % account(s) in the demonstration organization are neither '
+      'demo-seed nor test-harness accounts. If any of them is a real person, '
+      'this is not demonstration data. Nothing has been removed.', strays;
+  end if;
+
+  -- A recent sale only means something if somebody unaccounted-for could
+  -- have made it, and by here nobody is unaccounted-for.
   select max(sold_at) into latest from public.van_sales where org_id = demo_org;
 
   if latest is not null and latest > now() - interval '1 day' then
-    raise exception
-      'Refused: a sale was recorded in the demonstration organization at %. '
-      'If people are trading here, this is not demonstration data. '
-      'Nothing has been removed.', latest;
+    raise notice
+      'Note: the most recent sale here was %. Every account is a demo or test '
+      'account, so this is a test rather than trading.', latest;
   end if;
 
   -- Children before parents. Several of these references are ON DELETE
