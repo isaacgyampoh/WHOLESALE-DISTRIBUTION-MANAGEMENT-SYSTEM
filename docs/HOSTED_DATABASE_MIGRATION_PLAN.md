@@ -76,10 +76,10 @@ holds nothing and should be removed, but I have not touched it.
 on it, so applying them now is safe — but it is why the number alone
 could not be trusted.
 
-0032 and 0035 change a function body and an enum, neither of which the
-Data API exposes. They are listed as *apply* because everything around
-them is missing; both are idempotent, so applying one already present is
-a no-op.
+0032, 0035 and 0036 change an enum or a function body, neither of which
+the Data API exposes. They are listed as *apply* because everything
+around them is missing; all are idempotent, so applying one that is
+already present is a no-op.
 
 ---
 
@@ -108,12 +108,14 @@ a no-op.
 `supplier_payables`, `stock_returns`, `van_load_crew`, `momo_providers`,
 `van_crew`, `salesperson_performance`, `momo_reconciliation`
 
-**Functions (12):** `product_cost`, `receive_purchase_batch`,
+**Functions (13):** `product_cost`, `receive_purchase_batch`,
 `record_sale_payments`, `issue_invoice_for_sale`,
 `approve_stock_transfer`, `refresh_standing_alerts`,
 `resolve_supplier_token`, `submit_supplier_document`,
 `record_stock_return`, `is_van_crew`, `is_van_salesperson`,
 `issue_waybill_for_load`
+
+**Columns (2):** `products.image_path`, `van_assignments.member_id`
 
 Until these exist the application runs and *quietly lacks* the features
 that depend on them. It does not break: each is probed at startup and
@@ -141,7 +143,10 @@ and read the result of each before starting the next.
 11.  UPGRADE_0032_SALESPERSON_ROLE.sql   <-- ON ITS OWN. See below.
 12.  UPGRADE_0033_VAN_CREW.sql
 13.  UPGRADE_0034_MOMO_PROVIDER.sql
-15.  VERIFY_DATABASE.sql
+14.  UPGRADE_0035_LEDGER_PURGE.sql
+15.  UPGRADE_0036_SALESPERSON_REACH.sql
+16.  UPGRADE_0037_PRODUCT_IMAGES.sql
+17.  VERIFY_DATABASE.sql
 ```
 
 `UPGRADE_0021_AUDIT_PURGE.sql` is not in the list: 0021 is already
