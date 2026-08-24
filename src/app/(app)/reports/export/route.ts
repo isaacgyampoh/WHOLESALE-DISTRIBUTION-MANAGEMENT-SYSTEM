@@ -1,7 +1,7 @@
 import { requireUser } from "@/lib/auth/session";
 import { can } from "@/types/permissions";
 import {
-  salesByProduct, salesByDriver, lowStockReport,
+  salesByProduct, salesBySalesperson, lowStockReport,
   customerBalanceReport, inventoryValueReport,
   salesByPeriod, salesByCustomer, salesByVan, salesByMethod,
   expiryReport, purchasesBySupplier, reconciliationReport,
@@ -72,11 +72,11 @@ const REPORTS: Record<string, Report> = {
       { header: "Revenue (GHS)", value: (r) => r.revenue },
     ],
   ),
-  "sales-by-driver": report(
-    "sales-by-driver",
-    (days) => salesByDriver(days),
+  "sales-by-salesperson": report(
+    "sales-by-salesperson",
+    (days) => salesBySalesperson(days),
     [
-      { header: "Driver", value: (r) => r.driverName },
+      { header: "Salesperson", value: (r) => r.salespersonName },
       { header: "Sales", value: (r) => r.saleCount },
       { header: "Revenue (GHS)", value: (r) => r.revenue },
       { header: "Cash (GHS)", value: (r) => r.cash },

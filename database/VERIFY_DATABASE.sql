@@ -822,6 +822,37 @@ report as (
                             limit 1), '')) > 0
                then 'OK' else 'FAIL' end,
           'Otherwise the field catalogue is text again the moment the signal goes'
+  -- ---- column grants keep up with the columns (migration 0038) -----
+  union all select 73, 'Grants: every product column except cost is readable', 'all but cost',
+          coalesce((select string_agg(c.column_name, ', ')
+             from information_schema.columns c
+            where c.table_schema = 'public' and c.table_name = 'products'
+              and c.column_name <> 'cost_price'
+              and not exists (select 1 from information_schema.column_privileges g
+                               where g.table_name = 'products' and g.column_name = c.column_name
+                                 and g.grantee = 'authenticated' and g.privilege_type = 'SELECT')),
+            'all but cost'),
+          case when not exists (
+            select 1 from information_schema.columns c
+             where c.table_schema = 'public' and c.table_name = 'products'
+               and c.column_name <> 'cost_price'
+               and not exists (select 1 from information_schema.column_privileges g
+                                where g.table_name = 'products' and g.column_name = c.column_name
+                                  and g.grantee = 'authenticated' and g.privilege_type = 'SELECT'))
+               then 'OK' else 'FAIL' end,
+          'A column added after 0023 with no grant breaks products_priced entirely'
+  union all select 74, 'Grants: the masked view exposes what the catalogue reads', 'complete',
+          case when (select count(*) from information_schema.columns
+                      where table_schema = 'public' and table_name = 'products_priced'
+                        and column_name in ('cost_price','list_price','image_path',
+                                            'track_batches','track_expiry','shelf_life_days')) = 6
+               then 'complete' else 'INCOMPLETE' end,
+          case when (select count(*) from information_schema.columns
+                      where table_schema = 'public' and table_name = 'products_priced'
+                        and column_name in ('cost_price','list_price','image_path',
+                                            'track_batches','track_expiry','shelf_life_days')) = 6
+               then 'OK' else 'FAIL' end,
+          'Table-level SELECT was withdrawn in 0023, so the view is the only route'
 )
 select ord as "#", check_name as "check", expected, actual, status, detail
 from report

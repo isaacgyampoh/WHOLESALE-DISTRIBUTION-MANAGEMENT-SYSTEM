@@ -219,27 +219,48 @@ export async function listCategories(includeInactive = true): Promise<Result<Cat
 
   let query = supabase
     .from("categories")
-    .select("id, name, description, is_active, products(count)")
+    .select("id, name, description, is_active")
     .order("name", { ascending: true });
   if (!includeInactive) query = query.eq("is_active", true);
 
-  const { data, error } = await query;
+  // Counted separately rather than embedded as `products(count)`.
+  //
+  // The embed makes PostgREST read the products table directly, and 0023
+  // withdrew table-level SELECT on it - cost price lives there. So the
+  // embed fails with "permission denied for table products" for every
+  // role, which is the products screen refusing to load at all.
+  //
+  // products_priced is the masked view every other read already goes
+  // through, and counting rows in it needs no privilege the caller does
+  // not already hold.
+  const [categories, counts] = await Promise.all([
+    query,
+    supabase.from("products_priced").select("category_id"),
+  ]);
 
-  if (error) {
-    console.error("[catalogue] category list failed", error);
+  if (categories.error) {
+    console.error("[catalogue] category list failed", categories.error);
     return { ok: false, message: "Something went wrong while loading categories." };
+  }
+
+  // A failure here costs the counts, not the list. A category screen
+  // with the numbers missing is far better than no screen.
+  if (counts.error) console.error("[catalogue] category product counts failed", counts.error);
+
+  const countBy = new Map<string, number>();
+  for (const row of (counts.data ?? []) as { category_id: string | null }[]) {
+    if (!row.category_id) continue;
+    countBy.set(row.category_id, (countBy.get(row.category_id) ?? 0) + 1);
   }
 
   return {
     ok: true,
-    data: ((data ?? []) as unknown as Record<string, unknown>[]).map((row) => ({
+    data: ((categories.data ?? []) as unknown as Record<string, unknown>[]).map((row) => ({
       id: row.id as string,
       name: row.name as string,
       description: (row.description as string | null) ?? null,
       isActive: row.is_active as boolean,
-      productCount: Number(
-        (row.products as Array<{ count: number }> | null)?.[0]?.count ?? 0,
-      ),
+      productCount: countBy.get(row.id as string) ?? 0,
     })),
   };
 }

@@ -55,9 +55,11 @@ export async function salesByProduct(periodDays = 30): Promise<Result<SalesByPro
   return { ok: true, data: [...by.values()].sort((a, b) => b.revenue - a.revenue) };
 }
 
-export interface SalesByDriverRow {
-  driverId: string;
-  driverName: string;
+// A driver drives; a salesperson sells. This report counts sales, so it
+// groups by the person who made them.
+export interface SalesBySalespersonRow {
+  salespersonId: string;
+  salespersonName: string;
   saleCount: number;
   revenue: number;
   cash: number;
@@ -65,24 +67,27 @@ export interface SalesByDriverRow {
   outstanding: number;
 }
 
-export async function salesByDriver(periodDays = 30): Promise<Result<SalesByDriverRow[]>> {
+export async function salesBySalesperson(periodDays = 30): Promise<Result<SalesBySalespersonRow[]>> {
   const supabase = await createSupabaseServerClient();
   const since = new Date(Date.now() - periodDays * 86_400_000).toISOString();
 
   const { data, error } = await supabase
     .from("van_sales")
-    .select("driver_id, sale_type, total, balance, status, profiles(full_name)")
+    // Attributed to whoever made the sale. van_sales has two foreign
+    // keys to profiles since the crew model, so the embed has to say
+    // which - and the salesperson is the one who sold it.
+    .select("salesperson_id, sale_type, total, balance, status, profiles!van_sales_salesperson_id_fkey(full_name)")
     .gte("sold_at", since)
     .neq("status", "void");
 
   if (error) return failed("reports", error, "The driver report could not be built.");
 
-  const by = new Map<string, SalesByDriverRow>();
+  const by = new Map<string, SalesBySalespersonRow>();
   for (const row of (data ?? []) as unknown as Record<string, unknown>[]) {
-    const id = row.driver_id as string;
+    const id = row.salesperson_id as string;
     const entry = by.get(id) ?? {
-      driverId: id,
-      driverName: (row.profiles as { full_name?: string } | null)?.full_name ?? "Unknown driver",
+      salespersonId: id,
+      salespersonName: (row.profiles as { full_name?: string } | null)?.full_name ?? "Unknown",
       saleCount: 0, revenue: 0, cash: 0, credit: 0, outstanding: 0,
     };
     const total = parseAmount(row.total as string);

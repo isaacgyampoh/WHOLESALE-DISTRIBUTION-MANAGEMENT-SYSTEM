@@ -158,7 +158,12 @@ export async function listSales(
     .from("van_sales")
     .select(
       "id, sale_number, sale_type, status, sold_at, total, amount_paid, balance, " +
-      "customer_id, customers(name), profiles(full_name), vans(code), van_sale_items(id)",
+      // Named explicitly: since the crew model, van_sales has two
+      // foreign keys to profiles - who sold it and who drove - and
+      // PostgREST refuses a bare embed it cannot disambiguate.
+      "customer_id, customers(name), vans(code), van_sale_items(id), " +
+      "salesperson:profiles!van_sales_salesperson_id_fkey(full_name), " +
+      "driver:profiles!van_sales_driver_id_fkey(full_name)",
       { count: "exact" },
     )
     .order("sold_at", { ascending: false })
@@ -183,7 +188,10 @@ export async function listSales(
     saleNumber: row.sale_number as string,
     customerName: (row.customers as { name?: string } | null)?.name ?? "Unknown customer",
     customerId: row.customer_id as string,
-    driverName: (row.profiles as { full_name?: string } | null)?.full_name ?? "-",
+    // Whoever made the sale. Since the crew model the driver is a
+    // different person, embedded separately above.
+    driverName: (row.salesperson as { full_name?: string } | null)?.full_name
+      ?? (row.driver as { full_name?: string } | null)?.full_name ?? "-",
     vanCode: (row.vans as { code?: string } | null)?.code ?? "-",
     saleType: row.sale_type as string,
     status: row.status as string,

@@ -340,7 +340,7 @@ export async function getMyVanCrew(userId: string): Promise<Result<MyVan | null>
   const [crew, stock, load] = await Promise.all([
     supabase
       .from("van_assignments")
-      .select("member_id, crew_role, profiles(full_name, phone)")
+      .select("member_id, crew_role, profiles!van_assignments_driver_id_fkey(full_name, phone)")
       .eq("van_id", vanId)
       .is("unassigned_at", null),
     supabase.from("van_stock_summary").select("qty_on_hand").eq("van_id", vanId),

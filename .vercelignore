@@ -1,0 +1,26 @@
+# What Vercel does not need to build this application.
+#
+# Without this the CLI uploads 1.8 GB - a 917 MB local .next, three
+# node_modules trees, and the local Postgres the database tests run
+# against - and the upload aborts before it ever reaches the build.
+#
+# Vercel installs dependencies and builds from source itself, so none of
+# it is wanted there.
+
+node_modules
+.next
+out
+
+# The database test rig: its own dependency tree and its local Postgres.
+tests/db/node_modules
+tests/db/pgdata
+tests/visual/node_modules
+tests/visual/screenshots
+tests/hosted/node_modules
+
+# Local only.
+.env.local
+.env*.local
+*.log
+.DS_Store
+coverage

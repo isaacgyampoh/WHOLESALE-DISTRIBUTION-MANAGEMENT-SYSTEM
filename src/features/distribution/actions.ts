@@ -1028,7 +1028,7 @@ export async function removeCrewAction(
   const admin = createSupabaseAdminClient();
   const { data: assignment } = await admin
     .from("van_assignments")
-    .select("id, org_id, van_id, crew_role, member_id, vans(code), profiles(full_name)")
+    .select("id, org_id, van_id, crew_role, member_id, vans(code), profiles!van_assignments_driver_id_fkey(full_name)")
     .eq("id", assignmentId)
     .maybeSingle();
 

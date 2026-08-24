@@ -3,7 +3,7 @@ import Link from "next/link";
 import { requireUser } from "@/lib/auth/session";
 import { can } from "@/types/permissions";
 import {
-  salesByProduct, salesByDriver, lowStockReport,
+  salesByProduct, salesBySalesperson, lowStockReport,
   customerBalanceReport, inventoryValueReport,
   salesByPeriod, salesByCustomer, salesByVan, salesByMethod,
   expiryReport, purchasesBySupplier, reconciliationReport,
@@ -49,12 +49,12 @@ export default async function ReportsPage({
   const seesPurchasing = can(user.role, "inventory.transfer");
 
   const [
-    trading, products, drivers, customers, vans, methods,
+    trading, products, salespeople, customers, vans, methods,
     lowStock, expiry, inventory, balances, purchases, reconciliations,
   ] = await Promise.all([
     salesByPeriod(grouping, periodDays),
     salesByProduct(periodDays),
-    salesByDriver(periodDays),
+    salesBySalesperson(periodDays),
     seesMoney ? salesByCustomer(periodDays) : Promise.resolve(null),
     seesMoney ? salesByVan(periodDays) : Promise.resolve(null),
     seesMoney ? salesByMethod(periodDays) : Promise.resolve(null),
@@ -166,16 +166,16 @@ export default async function ReportsPage({
         />
 
         <ReportCard
-          title="Sales by driver"
+          title="Sales by salesperson"
           description="Who sold what, and how much of it is still owed."
-          result={drivers}
-          exportKey="sales-by-driver"
+          result={salespeople}
+          exportKey="sales-by-salesperson"
           periodDays={periodDays}
           emptyTitle="No sales in this period"
-          emptyDescription="No driver has recorded a sale in the period selected."
-          rowKey={(r) => r.driverId}
+          emptyDescription="No salesperson has recorded a sale in the period selected."
+          rowKey={(r) => r.salespersonId}
           columns={[
-            { header: "Driver", cell: (r) => r.driverName },
+            { header: "Salesperson", cell: (r) => r.salespersonName },
             { header: "Sales", numeric: true, cell: (r) => formatQuantity(r.saleCount) },
             { header: "Cash", numeric: true, secondary: true, cell: (r) => formatMoney(r.cash) },
             { header: "Credit", numeric: true, secondary: true, cell: (r) => formatMoney(r.credit) },

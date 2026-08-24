@@ -1127,6 +1127,78 @@ select 'supplier documents are still private',
                           where id = 'supplier-documents' and not public)
             then 'PASS' else 'FAIL' end;`,
   },
+  {
+    migration: "0038_priced_view_carries_the_picture.sql",
+    out: "UPGRADE_0038_PRICED_VIEW.sql",
+    title: "UPGRADE 0038 - the masked view carries the picture too",
+    summary: `-- WHAT IT FIXES
+--
+-- The Products screen fails outright on a database upgraded to 0037,
+-- with either
+--
+--   column products_priced.image_path does not exist
+--   permission denied for table products
+--
+-- depending on which part of the page asks first. Both are the same
+-- mistake made twice.
+--
+-- Nothing reads products from the table. 0023 withdrew table-level
+-- SELECT and granted the columns individually, leaving products_priced
+-- as the only way in. So a column added to the table afterwards arrives
+-- with no grant and outside the view - which is half a change. It
+-- happened to the batch columns in 0024 and to the picture in 0037.
+--
+-- This adds the four missing columns to the view and re-applies 0023's
+-- column grants over whatever the table holds today, so both halves
+-- cover everything currently there.
+--
+-- It reads nothing and deletes nothing. The view is replaced and the
+-- grants re-stated; no table, row or policy is touched.
+--
+-- AFTER RUNNING IT the Products screen loads. No redeploy is needed -
+-- this is entirely inside the database.`,
+    verify: `select 'the view carries the picture' as check,
+       case when exists (select 1 from information_schema.columns
+                          where table_name = 'products_priced' and column_name = 'image_path')
+            then 'PASS' else 'FAIL' end as result
+union all
+select 'the view carries the batch columns',
+       case when (select count(*) from information_schema.columns
+                   where table_name = 'products_priced'
+                     and column_name in ('track_batches','track_expiry','shelf_life_days')) = 3
+            then 'PASS' else 'FAIL' end
+union all
+select 'cost is still masked per caller',
+       case when position('product_cost' in
+              coalesce(pg_get_viewdef('public.products_priced'::regclass), '')) > 0
+            then 'PASS' else 'FAIL' end
+union all
+select 'every product column but cost is granted',
+       case when (select count(*) from information_schema.columns c
+                   where c.table_schema = 'public' and c.table_name = 'products'
+                     and c.column_name <> 'cost_price'
+                     and not exists (
+                       select 1 from information_schema.column_privileges g
+                        where g.table_schema = 'public' and g.table_name = 'products'
+                          and g.column_name = c.column_name
+                          and g.grantee = 'authenticated' and g.privilege_type = 'SELECT')) = 0
+            then 'PASS' else 'FAIL' end
+union all
+select 'cost_price itself is still not granted',
+       case when not exists (select 1 from information_schema.column_privileges
+                              where table_schema = 'public' and table_name = 'products'
+                                and column_name = 'cost_price'
+                                and grantee in ('authenticated','anon')
+                                and privilege_type = 'SELECT')
+            then 'PASS' else 'FAIL' end
+union all
+select 'table-level select is still withdrawn',
+       case when not exists (select 1 from information_schema.table_privileges
+                              where table_schema = 'public' and table_name = 'products'
+                                and grantee in ('authenticated','anon')
+                                and privilege_type = 'SELECT')
+            then 'PASS' else 'FAIL' end;`,
+  },
 ];
 
 /** Final enum members, in the order `alter type ... add value` yields. */

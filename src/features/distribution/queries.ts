@@ -49,7 +49,7 @@ export async function listVans(): Promise<Result<VanRow[]>> {
       .order("code"),
     supabase
       .from("van_assignments")
-      .select("van_id, member_id, crew_role, profiles(full_name)")
+      .select("van_id, member_id, crew_role, profiles!van_assignments_driver_id_fkey(full_name)")
       .is("unassigned_at", null),
     supabase.from("van_stock_summary").select("van_id, qty_on_hand, stock_value"),
     supabase
@@ -571,12 +571,12 @@ export async function getVanCrew(vanId: string): Promise<Result<VanCrewDetail | 
       .maybeSingle(),
     supabase
       .from("van_assignments")
-      .select("id, member_id, crew_role, assigned_at, profiles(full_name, phone)")
+      .select("id, member_id, crew_role, assigned_at, profiles!van_assignments_driver_id_fkey(full_name, phone)")
       .eq("van_id", vanId)
       .is("unassigned_at", null),
     supabase
       .from("van_assignments")
-      .select("crew_role, assigned_at, unassigned_at, profiles(full_name)")
+      .select("crew_role, assigned_at, unassigned_at, profiles!van_assignments_driver_id_fkey(full_name)")
       .eq("van_id", vanId)
       .not("unassigned_at", "is", null)
       .order("unassigned_at", { ascending: false })
