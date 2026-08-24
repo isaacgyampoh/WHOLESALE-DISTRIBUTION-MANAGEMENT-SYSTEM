@@ -128,7 +128,6 @@ begin
     'van_reconciliations', 'van_return_items', 'van_returns',
     'van_sale_payments', 'van_sale_items', 'van_sales',
     'credit_transactions',
-    'van_load_items', 'van_loads', 'van_assignments', 'van_inventory', 'vans',
     'waybill_items', 'waybills',
     'stock_return_items', 'stock_returns',
     'stock_transfer_items', 'stock_transfers',
@@ -136,12 +135,14 @@ begin
     'supplier_documents', 'supplier_portal_tokens',
     'purchase_order_items', 'purchase_orders',
     'product_batches',
-    'stock_movements', 'inventory',
+    -- The ledger goes before anything it points at: stock_movements
+    -- references vans, warehouses and products.
+    'stock_movements', 'inventory', 'van_inventory',
+    'van_load_items', 'van_loads', 'van_assignments', 'vans',
     'manager_category_scopes', 'products', 'categories',
     'customers', 'suppliers', 'warehouses',
     'audit_log'
-  ]
-  loop
+  ]  loop
     -- A table the schema does not have yet is skipped rather than
     -- fatal: this file may be run against a database that is behind.
     if to_regclass('public.' || tbl) is null then

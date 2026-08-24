@@ -233,7 +233,6 @@ const TABLES = [
   "van_reconciliations", "van_return_items", "van_returns",
   "van_sale_payments", "van_sale_items", "van_sales",
   "credit_transactions",
-  "van_load_items", "van_loads", "van_assignments", "van_inventory", "vans",
   "waybill_items", "waybills",
   "stock_return_items", "stock_returns",
   "stock_transfer_items", "stock_transfers",
@@ -241,7 +240,12 @@ const TABLES = [
   "supplier_documents", "supplier_portal_tokens",
   "purchase_order_items", "purchase_orders",
   "product_batches",
-  "stock_movements", "inventory",
+  // The ledger goes before anything it points at. stock_movements
+  // references vans, warehouses and products, so deleting a van first
+  // fails on the foreign key - which is exactly what happened the first
+  // time this ran.
+  "stock_movements", "inventory", "van_inventory",
+  "van_load_items", "van_loads", "van_assignments", "vans",
   "manager_category_scopes", "products", "categories",
   "customers", "suppliers", "warehouses",
   // Last: audit_log refuses every other caller, and its organization
@@ -261,6 +265,16 @@ for (const table of TABLES) {
 
 for (const person of people ?? []) {
   await admin.from("auth_pin_attempts").delete().eq("profile_id", person.id);
+}
+
+// The profile row goes before the auth user. Deleting the auth user
+// cascades to the profile, but that cascade trips over any remaining
+// RESTRICT reference and Supabase reports only "Database error deleting
+// user" - which says nothing about which reference. Removing the profile
+// first makes the real constraint failure visible here instead.
+for (const person of people ?? []) {
+  const { error } = await admin.from("profiles").delete().eq("id", person.id);
+  if (error) say(`  profile ${person.full_name}: ${error.message}`);
 }
 
 for (const person of people ?? []) {
