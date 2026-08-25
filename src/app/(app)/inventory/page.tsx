@@ -15,7 +15,7 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { StatTile, StatGrid } from "@/components/ui/stat-tile";
 import { EmptyState, ErrorState } from "@/components/ui/states";
 import { formatMoney, formatQuantity } from "@/lib/utils/format";
-import { Boxes, ArrowLeftRight } from "lucide-react";
+import { Boxes, ArrowLeftRight, ClipboardCheck } from "lucide-react";
 
 export const metadata: Metadata = { title: "Inventory" };
 
@@ -47,6 +47,17 @@ export default async function InventoryPage({
         title="Inventory"
         description="What is on hand, what is running out, and what has moved."
         breadcrumbs={[{ label: "Warehouse" }, { label: "Inventory" }]}
+        actions={
+          can(user.role, "inventory.adjust") ? (
+            <Link
+              href="/inventory/count"
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-[var(--radius-panel)] bg-brand-700 px-4 text-sm font-medium text-white transition-colors hover:bg-brand-800 pointer-fine:h-9.5"
+            >
+              <ClipboardCheck className="size-4" aria-hidden />
+              Count stock
+            </Link>
+          ) : null
+        }
       />
 
       {summary.ok && (

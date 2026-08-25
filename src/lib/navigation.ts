@@ -68,6 +68,13 @@ export const NAV_SECTIONS: readonly NavSection[] = [
         label: "Movements", href: "/inventory/movements",
         permissions: ["inventory.view"], icon: "ArrowLeftRight",
       },
+      // How stock gets in here at all. Adjusting one product at a time
+      // from its own page is a correction; this is the first day, and
+      // every stocktake after it.
+      {
+        label: "Stock count", href: "/inventory/count",
+        permissions: ["inventory.adjust"], icon: "ClipboardList",
+      },
       { label: "Expiry", href: "/inventory/expiry", permissions: ["inventory.view"], icon: "CalendarClock" },
       { label: "Transfers", href: "/transfers", permissions: ["inventory.transfer"], icon: "ArrowLeftRight" },
       { label: "Purchasing", href: "/purchasing", permissions: ["inventory.transfer"], icon: "Truck" },

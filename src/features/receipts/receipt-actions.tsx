@@ -2,17 +2,21 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { usePdfShare } from "./use-pdf-share";
 import { Download, Link2, Check, Share2 } from "lucide-react";
 
 /**
  * What the customer can do with their own receipt.
  *
  * Download is first because it is the thing they came for and the thing
- * that survives: a file on the phone still opens next month when the
- * link has expired. Sharing is offered where the device has a share
- * sheet, and the link goes to the clipboard where it does not - a
- * desktop browser has no share sheet and a button that does nothing is
- * worse than one that is not there.
+ * that survives: a file on the phone still opens next month, when the
+ * link has expired.
+ *
+ * Sharing sends the PDF itself where the device can carry one - so a
+ * customer forwarding a receipt to whoever pays their bills sends the
+ * document, not a link that only works while the token lives. Where
+ * files cannot be shared the link goes to the clipboard instead, and no
+ * button is offered that would quietly do nothing.
  */
 export function ReceiptActions({
   token, receiptNumber,
@@ -21,15 +25,13 @@ export function ReceiptActions({
   receiptNumber: string;
 }) {
   const [copied, setCopied] = useState(false);
-  const [canShare, setCanShare] = useState<boolean | null>(null);
-
-  // Read on first paint rather than during render: navigator does not
-  // exist on the server and the answer must not differ between the two.
-  if (canShare === null && typeof navigator !== "undefined") {
-    setCanShare(typeof navigator.share === "function");
-  }
-
   const pdfHref = `/receipt/${token}/pdf`;
+
+  // The file is fetched as soon as the page is up, so the share sheet
+  // opens inside the tap rather than after it - which is the only way
+  // Safari honours it. See use-pdf-share.
+  const { state: share, share: sharePdf, canShareFile } =
+    usePdfShare(pdfHref, `receipt-${receiptNumber}.pdf`);
 
   return (
     <div className="space-y-2.5">
@@ -49,29 +51,20 @@ export function ReceiptActions({
       </a>
 
       <div className="grid grid-cols-2 gap-2.5">
-        {canShare && (
+        {canShareFile && (
           <Button
             variant="outline"
-            onClick={async () => {
-              try {
-                await navigator.share({
-                  title: `Receipt ${receiptNumber}`,
-                  url: window.location.href,
-                });
-              } catch {
-                // Dismissed. Nothing to report: the customer closed a
-                // sheet they opened.
-              }
-            }}
+            loading={share.status === "sharing"}
+            onClick={() => sharePdf(`Receipt ${receiptNumber}`)}
           >
             <Share2 className="size-4" aria-hidden />
-            Share
+            {share.status === "sharing" ? "Opening…" : "Share PDF"}
           </Button>
         )}
 
         <Button
           variant="outline"
-          className={canShare ? "" : "col-span-2"}
+          className={canShareFile ? "" : "col-span-2"}
           onClick={async () => {
             try {
               await navigator.clipboard.writeText(window.location.href);
