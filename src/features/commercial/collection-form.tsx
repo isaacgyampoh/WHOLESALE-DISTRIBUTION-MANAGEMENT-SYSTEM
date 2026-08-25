@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { Alert } from "@/components/ui/states";
 import { recordCollectionAction } from "./actions";
+import { ShareReceipt } from "@/features/receipts/share-receipt";
 import { INITIAL_COMMERCIAL_STATE } from "./state";
 import { METHOD_LABELS } from "./payment-list";
 import { PAYMENT_METHODS } from "@/types/domain";
@@ -52,7 +53,32 @@ export function RecordCollectionButton({ customers }: { customers: CollectionCus
         {state.status === "done" ? (
           <div className="space-y-4">
             <Alert tone="success">{state.message}</Alert>
-            <Button className="w-full" onClick={() => { setOpen(false); setCustomerId(""); }}>
+
+            {/*
+              The receipt, while the customer is still there. It shows
+              them what they owed, what they just paid and what is left -
+              which is the question that brought them, and the one a
+              handwritten note never answers convincingly.
+            */}
+            {state.paymentId && (
+              <div className="border-t border-[var(--border-subtle)] pt-4">
+                <p className="mb-3 text-sm font-medium text-[var(--text-primary)]">
+                  Send the payment receipt
+                </p>
+                <ShareReceipt
+                  kind="credit_payment"
+                  subjectId={state.paymentId}
+                  customerPhone={state.customerPhone}
+                  compact
+                />
+              </div>
+            )}
+
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => { setOpen(false); setCustomerId(""); }}
+            >
               Done
             </Button>
           </div>

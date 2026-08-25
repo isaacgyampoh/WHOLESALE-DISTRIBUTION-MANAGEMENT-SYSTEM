@@ -55,13 +55,15 @@ export async function recordCollectionAction(
   // so the message says something useful.
   const admin = createSupabaseAdminClient();
   const { data: customer } = await admin
-    .from("customers").select("id, name, code, org_id").eq("id", customerId).maybeSingle();
+    .from("customers").select("id, name, code, org_id, phone").eq("id", customerId).maybeSingle();
   if (!customer || customer.org_id !== actor.organizationId) {
     return { status: "error", message: "That customer could not be found.", values };
   }
 
   const supabase = await createSupabaseServerClient();
-  const { error } = await supabase.rpc("record_credit_payment", {
+  // The function returns the ledger row it wrote, which is what a
+  // payment receipt is issued against.
+  const { data: txn, error } = await supabase.rpc("record_credit_payment", {
     p_customer_id: customerId,
     p_amount: Number(amountRaw),
     p_method: method,
@@ -86,9 +88,17 @@ export async function recordCollectionAction(
   revalidatePath("/customers");
   revalidatePath(`/customers/${customerId}`);
 
+  const recorded = Array.isArray(txn) ? txn[0] : txn;
+
   return {
     status: "done",
     message: `Collection recorded against ${customer.name}.`,
+    // For the receipt offered straight afterwards. The money is already
+    // recorded by this point: a receipt that cannot be prepared does not
+    // undo it.
+    paymentId: (recorded?.id as string) ?? undefined,
+    customerName: customer.name,
+    customerPhone: (customer.phone as string | null) ?? null,
   };
 }
 
@@ -269,6 +279,7 @@ export async function recordVanSaleAction(input: {
   };
 }): Promise<{
   ok: boolean;
+  saleId?: string;
   saleNumber?: string;
   total?: number;
   balance?: number;
@@ -475,6 +486,10 @@ export async function recordVanSaleAction(input: {
 
   return {
     ok: true,
+    // Returned so the confirmation can offer the receipt straight away.
+    // Issuing one is a separate step on purpose: a receipt that cannot
+    // be prepared must never undo a sale that already happened.
+    saleId: sale.id as string,
     saleNumber: finished?.sale_number as string,
     total: Number(finished?.total ?? 0),
     balance: Number(finished?.balance ?? 0),

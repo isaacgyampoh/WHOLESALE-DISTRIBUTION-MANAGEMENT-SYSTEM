@@ -78,6 +78,17 @@ export function CollectForm() {
             {saved}{" "}
             {online ? "It is on its way to the office." : "It will send when you have a signal."}
           </Alert>
+
+          {/*
+            No receipt here, and deliberately not a button that pretends
+            otherwise. A collection taken on this phone is queued, not
+            yet a ledger entry, so there is nothing to issue a link
+            against until it reaches the office.
+          */}
+          <p className="text-sm text-[var(--text-secondary)]">
+            The payment receipt can be sent from Credit once this reaches the
+            office.
+          </p>
           <Button size="touch" onClick={() => setSaved(null)}>
             <Check className="size-5" aria-hidden />
             Take another payment

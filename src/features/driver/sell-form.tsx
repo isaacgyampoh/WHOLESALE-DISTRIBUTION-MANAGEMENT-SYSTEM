@@ -7,6 +7,7 @@ import { useSync } from "./sync-provider";
 import { CustomerPicker, type CachedCustomer } from "./customer-picker";
 import { createCustomerAtCounterAction } from "./actions";
 import { recordVanSaleAction } from "@/features/commercial/actions";
+import { ShareReceipt } from "@/features/receipts/share-receipt";
 import { enqueue, refreshSnapshotInto } from "@/lib/offline/queue";
 import { refreshSnapshot } from "@/lib/offline/sync";
 import { Button } from "@/components/ui/button";
@@ -63,6 +64,10 @@ interface Completed {
   saleNumber?: string;
   /** In words, for the confirmation: "₵200 cash, ₵300 mobile money". */
   paidBy?: string;
+  /** Needed to offer the receipt; absent on a sale queued offline. */
+  saleId?: string;
+  /** From the customer's record, so the number is already filled in. */
+  customerPhone?: string | null;
 }
 
 export function SellForm({
@@ -211,6 +216,32 @@ export function SellForm({
               : "The office has it."}
           </Alert>
 
+          {/*
+            The receipt, here, while the customer is still standing
+            there. Offered only once the sale is really recorded: a sale
+            queued on this phone has no id yet, so there is nothing to
+            issue a link against, and saying so is better than a button
+            that fails.
+          */}
+          {completed.saleId ? (
+            <div className="border-t border-[var(--border-subtle)] pt-5 text-left">
+              <p className="mb-3 text-sm font-medium text-[var(--text-primary)]">
+                Send the receipt
+              </p>
+              <ShareReceipt
+                kind="sale"
+                subjectId={completed.saleId}
+                customerPhone={completed.customerPhone}
+                compact
+              />
+            </div>
+          ) : completed.queuedOffline ? (
+            <p className="border-t border-[var(--border-subtle)] pt-5 text-left text-sm text-[var(--text-secondary)]">
+              The receipt can be sent once this sale reaches the office.
+              Find it under My sales when you have a signal.
+            </p>
+          ) : null}
+
           <div className="space-y-2">
             <Button size="touch" onClick={() => {
               setCompleted(null); setStage("cart"); setCustomerId("");
@@ -340,6 +371,8 @@ export function SellForm({
           saleType,
           queuedOffline: false,
           saleNumber: result.saleNumber,
+          saleId: result.saleId,
+          customerPhone: customers.find((c) => c.id === customerId)?.phone ?? null,
           paidBy: result.paidBy ?? tendered.label,
         });
       } else {

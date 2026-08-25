@@ -51,6 +51,30 @@ await admin.from("profiles").update({
 await admin.from("auth_pin_attempts")
   .delete().gte("attempted_at", new Date(Date.now() - 86_400_000).toISOString());
 
+/*
+ * Anything a previous run left behind.
+ *
+ * A run that is interrupted never reaches its cleanup, and the account
+ * it made keeps a PIN - which are unique across active accounts, so the
+ * next run collides on one and fails for a reason that has nothing to
+ * do with the application.
+ */
+{
+  const { data: strays } = await admin
+    .from("profiles").select("id, username").like("username", "zz.%");
+  for (const stray of strays ?? []) {
+    if (stray.id === created.user.id) continue;
+    await admin.from("auth_pin_attempts").delete().eq("profile_id", stray.id);
+    await admin.from("audit_log").delete().eq("actor_id", stray.id);
+    await admin.from("audit_log").delete().eq("target_id", stray.id);
+    await admin.from("profiles").delete().eq("id", stray.id);
+    await admin.auth.admin.deleteUser(stray.id).catch(() => {});
+  }
+  if ((strays ?? []).length > 1) {
+    console.log(`removed ${strays.length - 1} account(s) left by an earlier run`);
+  }
+}
+
 console.log(`temporary administrator created (${USERNAME})\n`);
 
 const browser = await chromium.launch();

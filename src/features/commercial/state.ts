@@ -13,6 +13,14 @@ export interface CommercialState {
   fieldErrors?: Record<string, string>;
   /** Set when the action created something the screen should link to. */
   createdId?: string;
+
+  /**
+   * A recorded credit payment, so the screen can offer its receipt
+   * immediately rather than sending the collector to find it again.
+   */
+  paymentId?: string;
+  customerName?: string;
+  customerPhone?: string | null;
 }
 
 export const INITIAL_COMMERCIAL_STATE: CommercialState = { status: "idle" };
