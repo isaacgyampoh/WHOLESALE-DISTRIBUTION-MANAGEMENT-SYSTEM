@@ -11,7 +11,7 @@
  * where PGRST205 / HTTP 404 is returned for an unknown relation.
  */
 
-/** Every base table migrations 0001-0015 create. */
+/** Every base table migrations 0001-0021 create. */
 export const EXPECTED_TABLES = [
   "categories", "credit_transactions", "customers", "inventory", "invoices",
   "manager_category_scopes", "organizations", "payments", "products", "profiles",
@@ -24,13 +24,15 @@ export const EXPECTED_TABLES = [
 
 export const EXPECTED_VIEWS = [
   "customer_balances", "customer_credit_position", "customer_statement",
-  "invoice_ageing", "reconciliation_variances", "stock_summary",
-  "van_load_summary", "van_stock_summary",
+  "invoice_ageing", "product_stock_by_location", "reconciliation_variances",
+  "sale_lines", "stock_summary", "van_day_activity", "van_load_summary",
+  "van_stock_summary",
 ];
 
 /** Functions callable over RPC that take no arguments and only read. */
 export const READONLY_PROBE_FUNCTIONS = [
   "auth_role", "auth_org_id", "is_trusted_context", "my_van_id", "is_staff",
+  "my_driver_van_id", "my_sales_van_id", "my_sales_warehouse_id",
 ];
 
 /** Every function the migrations define, for the completeness report. */
@@ -45,6 +47,11 @@ export const EXPECTED_FUNCTIONS = [
   "next_document_number", "recalc_invoice_payment", "recalc_order_totals",
   "recalc_po_totals", "recalc_van_sale_totals", "receive_purchase_line",
   "record_credit_payment", "require_role", "set_updated_at", "stamp_created_by",
+  // 0020-0021: crew, the seller's location, and the ways stock enters.
+  "add_stock", "adjust_stock_to", "create_product_with_stock",
+  "fill_van_sale_org", "my_driver_van_id", "my_sales_van_id",
+  "my_sales_warehouse_id", "record_sale", "record_stocktake",
+  "resolve_sales_location", "shares_van_with",
 ];
 
 /** PostgREST codes meaning "this relation is not in the schema cache". */

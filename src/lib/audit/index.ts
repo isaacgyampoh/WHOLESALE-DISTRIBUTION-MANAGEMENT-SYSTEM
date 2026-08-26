@@ -23,11 +23,22 @@ export type AuditAction =
   | "user.role_changed"
   | "user.pin_reset"
   | "user.pin_changed"
-  | "user.categories_changed";
+  | "user.categories_changed"
+  // Inventory. The stock ledger already records every movement; these
+  // entries record the administrative act that caused one, together with
+  // the reason the operator gave.
+  | "product.created"
+  | "product.updated"
+  | "stock.added"
+  | "stock.adjusted"
+  | "stock.counted"
+  // Crew. Who was put on which van, and by whom.
+  | "van.crew_assigned"
+  | "van.crew_removed";
 
 export interface AuditEntry {
   action: AuditAction;
-  targetType: "profile";
+  targetType: "profile" | "product" | "warehouse" | "van";
   targetId?: string;
   targetLabel?: string;
   before?: Record<string, unknown>;

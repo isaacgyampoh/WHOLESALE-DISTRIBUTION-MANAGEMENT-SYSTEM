@@ -182,7 +182,7 @@ async function signIn(email, password) {
 }
 
 const PW = `Htest-${stamp}-Aa1!`;
-let orgA, orgB, adminA, mgrA, driverA, adminB;
+let orgA, orgB, adminA, mgrA, driverA, sellerA, adminB;
 
 try {
   section("Step 4 - authentication");
@@ -193,6 +193,8 @@ try {
   adminA = await makeUser(`htest-admin-a-${stamp}@example.com`, PW, "admin", orgA, "Admin A");
   mgrA  = await makeUser(`htest-mgr-a-${stamp}@example.com`, PW, "manager", orgA, "Manager A");
   driverA = await makeUser(`htest-drv-a-${stamp}@example.com`, PW, "driver", orgA, "Driver A");
+  // The person who actually sells from the van. The driver keeps it.
+  sellerA = await makeUser(`htest-sell-a-${stamp}@example.com`, PW, "sales_rep", orgA, "Seller A");
   adminB = await makeUser(`htest-admin-b-${stamp}@example.com`, PW, "admin", orgB, "Admin B");
   ok("four test users created via Auth admin API", created.users.length === 4);
 
@@ -400,9 +402,12 @@ async function runWorkflow() {
     home_warehouse_id: wh.id,
   }).select("id").single()).data;
 
-  await admin.from("van_assignments").insert({
-    org_id: orgA, van_id: van.id, driver_id: driverA,
-  });
+  // Two seats on the same van: the driver who signs for the load, and
+  // the salesperson who sells from it.
+  await admin.from("van_assignments").insert([
+    { org_id: orgA, van_id: van.id, member_id: driverA, crew_role: "driver" },
+    { org_id: orgA, van_id: van.id, member_id: sellerA, crew_role: "salesperson" },
+  ]);
 
   // Opening stock through the ledger, never by setting a quantity.
   await admin.from("stock_movements").insert({
@@ -441,42 +446,67 @@ async function runWorkflow() {
     .eq("product_id", prod.id).eq("warehouse_id", wh.id).single()).data;
   ok("warehouse reduced by the load", whAfter?.qty_on_hand === 100, `(wh=${whAfter?.qty_on_hand})`);
 
-  // Cash sale, created by the driver.
-  const cash = (await drv.client.from("van_sales").insert({
-    org_id: orgA, load_id: load.id, van_id: van.id, driver_id: driverA,
+  // The driver must not be able to sell, through the function or by
+  // writing the row directly.
+  const sell = await signIn(`htest-sell-a-${stamp}@example.com`, PW);
+
+  const { error: drvSellErr } = await drv.client.rpc("record_sale", {
+    p_customer_id: cust.id,
+    p_items: [{ product_id: prod.id, quantity: 1 }],
+    p_sale_type: "cash",
+  });
+  ok("driver refused a sale", Boolean(drvSellErr),
+     drvSellErr ? `-> ${drvSellErr.message.slice(0, 46)}` : "(SOLD)");
+
+  const { error: drvInsertErr } = await drv.client.from("van_sales").insert({
+    org_id: orgA, load_id: load.id, van_id: van.id, salesperson_id: driverA,
     customer_id: cust.id, sale_type: "cash",
-  }).select("id, sale_number").single()).data;
-  ok("driver created a cash sale", Boolean(cash?.id), cash ? `(${cash.sale_number})` : "");
+  });
+  ok("driver refused a sale row", Boolean(drvInsertErr), drvInsertErr ? "(blocked)" : "(INSERTED)");
+
+  // Cash sale, by the salesperson, as one atomic call.
+  const { data: cash, error: cashErr } = await sell.client.rpc("record_sale", {
+    p_customer_id: cust.id,
+    p_items: [{ product_id: prod.id, quantity: 10 }],
+    p_sale_type: "cash",
+  }).maybeSingle();
+  ok("salesperson completed a cash sale", !cashErr && Boolean(cash?.id),
+     cashErr ? `-> ${cashErr.message.slice(0, 46)}` : `(${cash?.sale_number})`);
 
   if (cash) {
-    await drv.client.from("van_sale_items").insert({
-      org_id: orgA, sale_id: cash.id, product_id: prod.id,
-      quantity: 10, unit_price: prod.list_price, tax_rate: 15,
-    });
-    const total = (await admin.from("van_sales").select("total").eq("id", cash.id).single()).data;
-    const { error: cashErr } = await drv.client.rpc("complete_van_sale", {
-      p_sale_id: cash.id, p_amount_paid: total.total,
-    });
-    ok("cash sale completed", !cashErr, cashErr ? `-> ${cashErr.message.slice(0, 46)}` : "");
+    ok("the sale is stamped with the salesperson", cash.salesperson_id === sellerA);
+    ok("the sale came off the van, not the warehouse",
+       cash.van_id === van.id && cash.warehouse_id === null);
 
     const afterSale = (await admin.from("van_inventory").select("qty_on_hand")
       .eq("van_id", van.id).eq("product_id", prod.id).single()).data;
     ok("van stock reduced by the sale", afterSale?.qty_on_hand === 90, `(van=${afterSale?.qty_on_hand})`);
+
+    const whUnchanged = (await admin.from("inventory").select("qty_on_hand")
+      .eq("product_id", prod.id).eq("warehouse_id", wh.id).single()).data;
+    ok("warehouse untouched by a van sale", whUnchanged?.qty_on_hand === 100,
+       `(wh=${whUnchanged?.qty_on_hand})`);
   }
 
+  // Overselling the van is refused, and says by how much.
+  const { error: overErr } = await sell.client.rpc("record_sale", {
+    p_customer_id: cust.id,
+    p_items: [{ product_id: prod.id, quantity: 1000 }],
+    p_sale_type: "cash",
+  });
+  ok("overselling the van refused", Boolean(overErr) && /Only \d+ units of /.test(overErr?.message ?? ""),
+     overErr ? `-> ${overErr.message.slice(0, 46)}` : "(SOLD)");
+
   // Credit sale and the receivable it creates.
-  const credit = (await drv.client.from("van_sales").insert({
-    org_id: orgA, load_id: load.id, van_id: van.id, driver_id: driverA,
-    customer_id: cust.id, sale_type: "credit",
-  }).select("id").single()).data;
+  const { data: credit, error: creditErr } = await sell.client.rpc("record_sale", {
+    p_customer_id: cust.id,
+    p_items: [{ product_id: prod.id, quantity: 5 }],
+    p_sale_type: "credit",
+    p_amount_paid: 0,
+  }).maybeSingle();
+  ok("credit sale completed", !creditErr, creditErr ? `-> ${creditErr.message.slice(0, 46)}` : "");
 
   if (credit) {
-    await drv.client.from("van_sale_items").insert({
-      org_id: orgA, sale_id: credit.id, product_id: prod.id,
-      quantity: 5, unit_price: prod.list_price, tax_rate: 15,
-    });
-    const { error: creditErr } = await drv.client.rpc("complete_van_sale", { p_sale_id: credit.id });
-    ok("credit sale completed", !creditErr, creditErr ? `-> ${creditErr.message.slice(0, 46)}` : "");
 
     const { data: ledger } = await admin.from("credit_transactions")
       .select("type, amount").eq("reference_id", credit.id);

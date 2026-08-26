@@ -46,12 +46,17 @@ const ENUM_REWRITES = [
   'receipt', 'issue', 'adjustment_in', 'adjustment_out',
   'transfer_in', 'transfer_out', 'customer_return', 'supplier_return',
   -- Appended by migration 0010, as above.
-  'damage', 'shortage'
+  'damage', 'shortage',
+  -- Appended by migration 0020, in the order those ALTERs yield.
+  'opening_stock', 'stocktake_in', 'stocktake_out'
 );`,
   },
 ];
 
 const NEUTRALISED = {
+  "0020_inventory_enum_extensions.sql": `-- Migration 0020 appends three movement types. As with 0010 they are
+-- already part of the movement_type declaration in section 0001, for the
+-- same single-transaction reason. Nothing to do here.`,
   "0010_enum_extensions.sql": `-- Migration 0010 appends values to user_role and movement_type.
 -- In this consolidated installer those values are already part of the
 -- enum declarations in section 0001, because PostgreSQL cannot use a new
@@ -97,7 +102,7 @@ const header = `-- =============================================================
 -- Complete database installer for a fresh Supabase project
 --
 -- GENERATED FILE - do not edit by hand.
--- Source: supabase/migrations/0001 .. 0015
+-- Source: supabase/migrations/0001 .. 0021
 -- Regenerate: node database/build.mjs
 --
 -- HOW TO INSTALL
@@ -124,6 +129,61 @@ const text = fs.readFileSync(OUT, "utf8");
 const leftovers = text.match(/alter type[^;]*add value/gi) ?? [];
 if (leftovers.length) {
   throw new Error(`Installer still contains ${leftovers.length} enum ALTER(s); it cannot run in one transaction.`);
+}
+
+// ---------------------------------------------------------------- upgrades
+//
+// An existing installation cannot be re-run through the installer, so each
+// migration that changes an installed database also ships as an upgrade
+// script. These are copies of the migrations with a header explaining what
+// they do and how to tell whether they have already been applied; they are
+// generated here for the same reason the installer is, so they cannot drift
+// from the migration they came from.
+const UPGRADES = [
+  {
+    file: "0020_inventory_enum_extensions.sql",
+    out: "UPGRADE_0020_MOVEMENT_TYPES.sql",
+    title: "Opening stock and stock count movement types",
+    // These three ALTERs must land in their own transaction before 0021
+    // can use the values, which is why this is a separate paste.
+    check: `select unnest(enum_range(null::public.movement_type));
+--   If the list already contains opening_stock, this has been applied.`,
+  },
+  {
+    file: "0021_crew_and_selling.sql",
+    out: "UPGRADE_0021_CREW_AND_SELLING.sql",
+    title: "Van crew, counter sales, and the ways stock enters",
+    check: `select 1 from pg_type where typname = 'van_crew_role';
+--   If that returns a row, this has been applied.`,
+  },
+];
+
+for (const upgrade of UPGRADES) {
+  const body = fs.readFileSync(path.join(MIGRATIONS, upgrade.file), "utf8");
+  const header = `-- =====================================================================
+-- UPGRADE: ${upgrade.title}
+--
+-- GENERATED FILE - do not edit by hand.
+-- Source: supabase/migrations/${upgrade.file}
+-- Regenerate: node database/build.mjs
+--
+-- FOR AN EXISTING INSTALLATION ONLY. A database installed from
+-- WHOLESALE_DISTRIBUTION_DATABASE.sql already contains this.
+--
+-- RUN IT ONCE. Unlike the other upgrade scripts in this folder, this one
+-- creates types, renames columns and replaces indexes, so a second run
+-- fails partway with "already exists" rather than doing nothing. To check
+-- whether it has already been applied, run:
+--
+--   ${upgrade.check}
+--
+-- Run ${UPGRADES[0].out} first, on its own: PostgreSQL cannot use a new
+-- enum value in the transaction that added it.
+-- =====================================================================
+
+`;
+  fs.writeFileSync(path.join(here, upgrade.out), header + body.trimEnd() + "\n");
+  console.log(`wrote database/${upgrade.out}`);
 }
 
 console.log(`wrote ${path.relative(process.cwd(), OUT)}`);

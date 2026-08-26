@@ -16,8 +16,12 @@ export const PERMISSIONS = [
   // Every signed-in user has a home screen.
   "dashboard.view",
   "products.view", "products.create", "products.edit",
-  "inventory.view", "inventory.transfer", "inventory.adjust",
+  "inventory.view", "inventory.transfer", "inventory.adjust", "inventory.count",
   "vans.view", "vans.manage",
+  // Held by the crew of a van - the driver who answers for it and the
+  // salesperson who sells from it. Not by a manager, whose "my van" is
+  // empty by definition.
+  "vans.crew",
   "loads.view", "loads.create", "loads.dispatch", "loads.confirm",
   "customers.view", "customers.create", "customers.edit",
   "sales.view", "sales.create",
@@ -39,7 +43,7 @@ const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
   manager: [
     "dashboard.view",
     "products.view", "products.create", "products.edit",
-    "inventory.view", "inventory.transfer", "inventory.adjust",
+    "inventory.view", "inventory.transfer", "inventory.adjust", "inventory.count",
     "vans.view", "vans.manage",
     "loads.view", "loads.create", "loads.dispatch",
     "customers.view", "customers.create", "customers.edit",
@@ -53,7 +57,7 @@ const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
   warehouse: [
     "dashboard.view",
     "products.view",
-    "inventory.view", "inventory.transfer", "inventory.adjust",
+    "inventory.view", "inventory.transfer", "inventory.adjust", "inventory.count",
     "vans.view",
     "loads.view", "loads.create", "loads.dispatch",
     "customers.view",
@@ -76,19 +80,26 @@ const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "dashboard.view",
     "products.view",
     "inventory.view",
+    // A field salesperson is crew: their stock is the van they are on.
+    // An in-shop salesperson holds the same permission and simply has no
+    // van, which the database resolves for them.
+    "vans.crew",
     "customers.view", "customers.create", "customers.edit",
     "sales.view", "sales.create",
     "credit.view",
     "payments.view",
     "reports.view",
   ],
+  // A driver keeps the van and answers for what is on it. They do not
+  // sell: sales.create is deliberately absent, and the database refuses
+  // a sale from a driver regardless of what this map says.
   driver: [
     "dashboard.view",
     "products.view",
-    "vans.view",
+    "vans.view", "vans.crew",
     "loads.view", "loads.confirm",
     "customers.view", "customers.create",
-    "sales.view", "sales.create",
+    "sales.view",
     "credit.view",
     "payments.view", "payments.create",
     "returns.view", "returns.submit",

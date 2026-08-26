@@ -109,6 +109,10 @@ const USERS = [
   ["demo-manager@demo.invalid", "manager", "Adwoa Demo", "2048"],
   ["demo-driver@demo.invalid", "driver", "Kojo Demo", "3072"],
   ["demo-accounts@demo.invalid", "accountant", "Efua Demo", "4096"],
+  // The salesperson who rides with the van. The driver keeps the stock;
+  // this is the person who sells it, so a demo without them cannot show
+  // a sale at all.
+  ["demo-seller@demo.invalid", "sales_rep", "Nana Demo", "5120"],
 ];
 const issued = [];
 for (const [email, role, fullName, pin] of USERS) {
@@ -136,18 +140,27 @@ for (const [email, role, fullName, pin] of USERS) {
   }
 }
 
-// The driver needs a van to have anything to show.
-const { data: driver } = await admin
-  .from("profiles").select("id").eq("email", "demo-driver@demo.invalid").maybeSingle();
-if (driver) {
+// Crew the demo van: a driver to keep it and a salesperson to sell from
+// it. Both are rows in van_assignments, distinguished by crew_role.
+async function crew(email, crewRole, label) {
+  const { data: person } = await admin
+    .from("profiles").select("id").eq("email", email).maybeSingle();
+  if (!person) return;
+
   const { data: assignment } = await admin
-    .from("van_assignments").select("id").eq("driver_id", driver.id)
+    .from("van_assignments").select("id").eq("member_id", person.id)
     .is("unassigned_at", null).maybeSingle();
-  if (!assignment) {
-    await admin.from("van_assignments").insert({ org_id: org.id, van_id: van, driver_id: driver.id });
-    say("assigned the demo driver to the demo van");
-  }
+  if (assignment) return;
+
+  const { error } = await admin.from("van_assignments").insert({
+    org_id: org.id, van_id: van, member_id: person.id, crew_role: crewRole,
+  });
+  if (error) throw new Error(`crew ${email}: ${error.message}`);
+  say(`assigned the demo ${label} to the demo van`);
 }
+
+await crew("demo-driver@demo.invalid", "driver", "driver");
+await crew("demo-seller@demo.invalid", "salesperson", "salesperson");
 
 console.log(`\nDemo data ready in ${DEMO_ORG_NAME}.`);
 if (issued.length) {
