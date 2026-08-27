@@ -2,10 +2,11 @@
 const { execFileSync } = require('child_process');
 const suites = [
   'test_stock', 'test_orders', 'test_rls', 'test_tenancy', 'test_van', 'test_scopes',
+  'test_workflow',
 ];
 // Rebuilds its own database to simulate the hosted platform's grants, so
 // it runs last and is named separately.
-const hostedSims = ['test_identity.mjs', 'test_pin.mjs', 'test_admin_security.mjs', 'test_grants.mjs', 'test_installer.mjs'];
+const hostedSims = ['test_identity.mjs', 'test_pin.mjs', 'test_admin_security.mjs', 'test_grants.mjs', 'test_installer.mjs', 'test_upgrade.mjs'];
 let failed = false;
 
 const run = f => {

@@ -6,11 +6,16 @@ import { parseAmount } from "@/lib/utils/format";
  * What a driver needs to see about their own round.
  *
  * Every query runs under the driver's session, so row level security
- * already limits results to their van, their load and their sales. No
- * driver_id filter is a security control here - it is only there to make
- * the intent obvious and the query cheap.
+ * already limits results to their van and their load. No filter here is
+ * a security control - each one is there to make the intent obvious and
+ * the query cheap.
+ *
+ * The sales figures are the sales made FROM THE VAN, by the salesperson
+ * crewed with the driver. A driver does not sell, so a driver_id filter
+ * on van_sales would now return nothing at all.
  */
 export interface DriverSummary {
+  vanId: string | null;
   vanCode: string | null;
   vanRegistration: string | null;
   loadNumber: string | null;
@@ -35,13 +40,18 @@ export async function getDriverSummary(userId: string): Promise<DriverSummary> {
   const supabase = await createSupabaseServerClient();
   const since = startOfToday();
 
-  const [assignment, load, stock, sales, collections] = await Promise.all([
-    supabase
-      .from("van_assignments")
-      .select("van_id, vans(code, registration_no)")
-      .eq("driver_id", userId)
-      .is("unassigned_at", null)
-      .maybeSingle(),
+  // The assignment resolves the van first: everything else is scoped to
+  // it, and a driver with no van has nothing to show.
+  const { data: assignment } = await supabase
+    .from("van_assignments")
+    .select("van_id, vans!van_assignments_van_id_fkey(code, registration_no)")
+    .eq("member_id", userId)
+    .is("unassigned_at", null)
+    .maybeSingle();
+
+  const vanId = (assignment?.van_id as string | undefined) ?? null;
+
+  const [load, stock, sales, collections] = await Promise.all([
     supabase
       .from("van_loads")
       .select("load_number, status, opening_float")
@@ -51,12 +61,14 @@ export async function getDriverSummary(userId: string): Promise<DriverSummary> {
       .limit(1)
       .maybeSingle(),
     supabase.from("van_stock_summary").select("qty_on_hand, stock_value"),
-    supabase
-      .from("van_sales")
-      .select("sale_type, total")
-      .eq("driver_id", userId)
-      .eq("status", "completed")
-      .gte("sold_at", since),
+    vanId
+      ? supabase
+          .from("van_sales")
+          .select("sale_type, total")
+          .eq("van_id", vanId)
+          .eq("status", "completed")
+          .gte("sold_at", since)
+      : Promise.resolve({ data: [] as { sale_type: string; total: string }[] }),
     supabase
       .from("credit_transactions")
       .select("amount")
@@ -64,7 +76,7 @@ export async function getDriverSummary(userId: string): Promise<DriverSummary> {
       .gte("occurred_at", since),
   ]);
 
-  const van = assignment.data?.vans as
+  const van = assignment?.vans as
     | { code?: string; registration_no?: string }
     | { code?: string; registration_no?: string }[]
     | null
@@ -74,9 +86,10 @@ export async function getDriverSummary(userId: string): Promise<DriverSummary> {
   const vanRow = Array.isArray(van) ? van[0] : van;
 
   const stockRows = stock.data ?? [];
-  const saleRows = sales.data ?? [];
+  const saleRows = (sales.data ?? []) as { sale_type: string; total: string | number }[];
 
   return {
+    vanId,
     vanCode: vanRow?.code ?? null,
     vanRegistration: vanRow?.registration_no ?? null,
     loadNumber: (load.data?.load_number as string | undefined) ?? null,

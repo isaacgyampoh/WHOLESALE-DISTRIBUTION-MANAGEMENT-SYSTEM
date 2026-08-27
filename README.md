@@ -9,9 +9,9 @@ access control.
 | Layer | State |
 |---|---|
 | Database schema, triggers, views, RLS | Executed and verified against PostgreSQL 17.10 |
-| Business rule test suite | 118 assertions, all passing |
+| Business rule test suite | 288 assertions, all passing |
 | Real Supabase project | Not yet connected (no credentials supplied) |
-| Next.js application | Not started |
+| Next.js application | Catalogue, stock, selling, receipts, van crew and staff |
 
 The migrations have been run end to end against a real PostgreSQL 17.10
 instance, not merely checked for syntax. They have **not** yet been run
@@ -29,6 +29,16 @@ against a hosted Supabase project. See "Verifying" below.
 append-only row in `stock_movements`, folded into `inventory` by trigger. The
 ledger rejects UPDATE and DELETE — correct mistakes with a reversing movement.
 
+Stock has three named ways in, so a variance report can tell them apart.
+`create_product_with_stock()` posts an `opening_stock` movement for the
+quantity a product already had when it was first entered — that is part of
+the Add Product form, not a stock count. `add_stock()` posts a receipt for
+goods arriving outside a purchase order. `adjust_stock_to()` corrects a
+figure by posting the *difference* as an adjustment, with a reason that is
+required, so changing 50 to 45 leaves both numbers in the history.
+`record_stocktake()` compares a physical count against the ledger and posts
+`stocktake_in` / `stocktake_out` only for the lines that actually differ.
+
 **Sales** — `sales_orders` → `sales_order_items` → `invoices` → `payments`.
 Line and header totals are generated columns and triggers. Confirming an order
 reserves stock, shipping issues it, cancelling releases the reservation.
@@ -42,10 +52,22 @@ and `van_load_items`. `dispatch_van_load()` moves stock from warehouse to van
 as two ledger legs, and refuses to run until the driver has signed for the
 load. One open load per van, one active driver per van.
 
-**Van sales** — `van_sales` / `van_sale_items`, cash or credit.
-`complete_van_sale()` verifies the stock is physically on the van, requires
-full payment for cash sales, and checks the customer's remaining credit
-before allowing a credit sale.
+**Van crew** — `van_assignments` holds the whole crew, not just the driver:
+`member_id` is the person and `crew_role` is the seat, `driver` or
+`salesperson`. The driver keeps the van and answers for what is on it; the
+salesperson crewed with them is the one who sells. Unique indexes enforce one
+active driver per van and nobody crewed on two vans at once, which is what
+makes "the caller's van" a single answer the server can trust.
+
+**Selling** — `van_sales` / `van_sale_items` cover both a field sale off a
+van and a counter sale from a shop: `van_id` and `warehouse_id` are mutually
+exclusive, so an in-shop salesperson is not given a van to satisfy the schema.
+`record_sale()` is the way a sale is made. It resolves the seller's authorized
+location from their session through `resolve_sales_location()` — never from
+the request — then writes the header, the lines, the stock movements and any
+credit charge in one transaction. A driver calling it is refused. Overselling
+is refused with the number that is actually there: *"Only 45 units of Tomatoes
+are available in your van."*
 
 **Credit** — `credit_transactions` is the customer ledger; positive amounts
 increase what is owed. `record_credit_payment()` books collections taken in
@@ -71,15 +93,18 @@ rejected by trigger.
 
 **Reporting views** — `customer_balances`, `stock_summary`, `invoice_ageing`,
 `customer_statement` (running balance), `customer_credit_position`,
-`van_stock_summary`, `van_load_summary`, `reconciliation_variances`.
+`van_stock_summary`, `van_load_summary`, `reconciliation_variances`,
+`sale_lines` (a sale with the names a receipt needs), `van_day_activity`
+(what a van started the day's selling with, what went, what is left) and
+`product_stock_by_location`.
 
 ## Setup
 
 1. Create a project at [supabase.com](https://supabase.com).
 2. Open **SQL Editor** and run the files in `supabase/migrations/` **in
-   filename order**, 0001 through 0014, **one file per run**. Order matters,
-   and 0010 must be its own run: PostgreSQL forbids using a new enum value in
-   the transaction that created it.
+   filename order**, 0001 through 0021, **one file per run**. Order matters,
+   and 0010 and 0020 must each be their own run: PostgreSQL forbids using a
+   new enum value in the transaction that created it.
 3. Create your user under **Authentication → Users**.
 4. Promote it to admin:
    ```sql
@@ -103,10 +128,21 @@ side only.
 | admin | full | full | full | full | full | full | yes |
 | senior_manager | full | full | full | full | full | full | yes |
 | manager | scoped categories | full | full | full | full | read | yes |
-| sales_rep | read | write | read | – | own orders | – | no |
+| sales_rep | own van, or all if in shop | write | read | own van only | sells | – | no |
 | warehouse | read | read | write | load / receive | fulfil | – | returns |
 | accountant | read | read | read | read | read | full | no |
-| driver | own van only | create | none | own van only | own sales | collect | no |
+| driver | own van only | create | none | own van, read only | **none** | collect | no |
+
+A **driver cannot sell.** They hold no `sales.create` permission, no RLS policy
+lets them insert a sale, and `record_sale()` refuses them by role. What they
+have instead is visibility: their van's stock, every sale made from it today,
+who made it, and what is left.
+
+A `sales_rep` is a salesperson. Which stock they sell is decided by their
+assignment, not by their role: crewed on a van they are a field salesperson and
+see only that van; with `profiles.sales_warehouse_id` set they are an in-shop
+salesperson and sell from that counter. Only an administrator can change that
+column, guarded the same way as a role change.
 
 A `manager` with no rows in `manager_category_scopes` sees no products.
 Migration 0013 grants existing managers every category so behaviour is
@@ -121,7 +157,7 @@ downloaded via npm, then asserts the business rules. No Docker required.
 cd tests/db
 npm install
 npm run pg:start
-npm test          # 118 assertions
+npm test          # 288 assertions
 npm run pg:stop
 ```
 
@@ -134,6 +170,13 @@ isolation between two organizations; the full van cycle from loading
 through cash and credit sales, returns with damage and shortage, to
 reconciliation and approval; driver restrictions and manager category
 scopes.
+
+`test_workflow.js` covers the selling workflow end to end: opening stock at
+product creation, a correction that keeps its history, a stock count that
+posts only what differs, a driver refused a sale in three different ways, a
+salesperson selling from their own van and nobody else's, an oversell refused
+with nothing left behind, a counter sale from a shop, and a credit sale
+against the customer's limit.
 
 The suite emulates Supabase's `auth.users`, `auth.uid()` and the
 `anon`/`authenticated`/`service_role` roles (`tests/db/shim.sql`). It is a

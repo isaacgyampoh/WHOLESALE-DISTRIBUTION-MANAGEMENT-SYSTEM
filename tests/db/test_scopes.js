@@ -75,7 +75,7 @@ async function as(c, uid, fn) {
     values ($1,'VAN-99','GT-9999-24',$2) returning id`, [org, wh])).id;
   const otherVan = (await one(c, `insert into vans (org_id, code, registration_no)
     values ($1,'VAN-98','GT-9998-24') returning id`, [org])).id;
-  await q(c, `insert into van_assignments (org_id, van_id, driver_id) values ($1,$2,$3)`, [org, van, driver]);
+  await q(c, `insert into van_assignments (org_id, van_id, member_id, crew_role) values ($1,$2,$3,'driver')`, [org, van, driver]);
 
   // Put two products on the driver's van.
   const load = (await one(c, `insert into van_loads (org_id, van_id, driver_id, warehouse_id, status, driver_confirmed_at)
@@ -103,13 +103,15 @@ async function as(c, uid, fn) {
   r = await as(c, driver, () => q(c, `insert into customers (org_id, code, name) values ($1,'CUS-NEW','Field Customer') returning id`, [org]));
   ok('driver can create a customer', r.ok, r.ok ? '' : `(${r.error})`);
 
-  r = await as(c, driver, () => q(c, `insert into van_sales (org_id, load_id, van_id, driver_id, customer_id, sale_type)
+  // The driver keeps the van; the salesperson sells from it. A driver
+  // who could raise a sale could empty the van without anyone selling.
+  r = await as(c, driver, () => q(c, `insert into van_sales (org_id, load_id, van_id, salesperson_id, customer_id, sale_type)
     select $1,$2,$3,$4,id,'cash' from customers limit 1 returning id`, [org, load, van, driver]));
-  ok('driver can create a sale on own van', r.ok, r.ok ? '' : `(${r.error})`);
+  ok('driver cannot create a sale on own van', !r.ok, r.ok ? '(ALLOWED)' : '(blocked)');
 
-  r = await as(c, driver, () => q(c, `insert into van_sales (org_id, load_id, van_id, driver_id, customer_id, sale_type)
-    select $1,$2,$3,$4,id,'cash' from customers limit 1 returning id`, [org, load, otherVan, driver]));
-  ok('driver cannot sell from another van', !r.ok, r.ok ? '(ALLOWED)' : '(blocked)');
+  r = await as(c, driver, () => q(c, `select * from record_sale((select id from customers limit 1), $1::jsonb, 'cash')`,
+    [JSON.stringify([{ product_id: twoProds[0].id, quantity: 1 }])]));
+  ok('driver refused by record_sale', !r.ok, r.ok ? '(SOLD)' : `-> "${(r.error||'').slice(0,44)}"`);
 
   r = await as(c, driver, () => q(c, `insert into credit_transactions (org_id, customer_id, type, amount)
     select $1, id, 'payment', -50 from customers limit 1 returning id`, [org]));
@@ -125,7 +127,7 @@ async function as(c, uid, fn) {
   r = await as(c, driver, () => q(c, `update profiles set role='admin' where id=$1 returning role`, [driver]));
   ok('driver cannot manage users', !r.ok, r.ok ? '(PROMOTED)' : '(blocked)');
 
-  r = await as(c, driver, () => q(c, `insert into van_assignments (org_id, van_id, driver_id) values ($1,$2,$3) returning id`, [org, otherVan, driver]));
+  r = await as(c, driver, () => q(c, `insert into van_assignments (org_id, van_id, member_id) values ($1,$2,$3) returning id`, [org, otherVan, driver]));
   ok('driver cannot assign themselves a van', !r.ok, r.ok ? '(ASSIGNED)' : '(blocked)');
 
   r = await as(c, driver, () => q(c, `select count(*)::int n from van_reconciliations`));

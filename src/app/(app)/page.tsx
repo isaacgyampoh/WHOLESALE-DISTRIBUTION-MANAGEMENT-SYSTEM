@@ -5,6 +5,8 @@ import { can } from "@/types/permissions";
 import { getDashboardMetrics, getOpenVariances, getLowStock } from "@/features/dashboard/queries";
 import { getDriverSummary } from "@/features/dashboard/driver-queries";
 import { DriverDashboard } from "@/features/dashboard/driver-dashboard";
+import { getSalespersonSummary } from "@/features/selling/queries";
+import { SalespersonDashboard } from "@/features/dashboard/salesperson-dashboard";
 import { StatTile } from "@/features/dashboard/stat-tile";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -29,13 +31,34 @@ export default async function DashboardPage() {
       <>
         <PageHeader
           title={`Good day, ${user.fullName.split(" ")[0]}`}
-          description="Your van, today's takings and what is still on board."
+          description="Your van, what has sold from it today and what is still on board."
         />
         {driver.ok ? (
           <DriverDashboard summary={driver.data} />
         ) : (
           <Card>
             <ErrorState title="Your round could not be loaded" message={driver.message} />
+          </Card>
+        )}
+      </>
+    );
+  }
+
+  // A salesperson gets the same treatment for the same reason, and for
+  // them the home screen is one step from the only thing they came to do.
+  if (user.role === "sales_rep") {
+    const seller = await loadSalesperson(user.id);
+    return (
+      <>
+        <PageHeader
+          title={`Good day, ${user.fullName.split(" ")[0]}`}
+          description="Where you are selling from today, and what you have sold."
+        />
+        {seller.ok ? (
+          <SalespersonDashboard summary={seller.data} />
+        ) : (
+          <Card>
+            <ErrorState title="Your day could not be loaded" message={seller.message} />
           </Card>
         )}
       </>
@@ -250,6 +273,19 @@ type LoadResult =
 type DriverResult =
   | { ok: true; data: Awaited<ReturnType<typeof getDriverSummary>> }
   | { ok: false; message: string };
+
+type SalespersonResult =
+  | { ok: true; data: Awaited<ReturnType<typeof getSalespersonSummary>> }
+  | { ok: false; message: string };
+
+async function loadSalesperson(userId: string): Promise<SalespersonResult> {
+  try {
+    return { ok: true, data: await getSalespersonSummary(userId) };
+  } catch (error) {
+    console.error("[dashboard] salesperson summary failed", error);
+    return { ok: false, message: toAppError(error).userMessage };
+  }
+}
 
 async function loadDriver(userId: string): Promise<DriverResult> {
   try {

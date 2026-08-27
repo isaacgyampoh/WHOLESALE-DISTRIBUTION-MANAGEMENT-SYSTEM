@@ -13,6 +13,10 @@ import { Truck } from "lucide-react";
  * ones shown: what went out, what sold, what was collected. Expected cash
  * is deliberately absent - the database computes that at reconciliation,
  * and showing a driver a number to aim at would defeat the control.
+ *
+ * Nothing here starts a sale. The sales counted below were made by the
+ * salesperson crewed on this van; the driver's part is knowing what left
+ * it and being able to say so.
  */
 export function DriverDashboard({ summary }: { summary: DriverSummary }) {
   if (!summary.vanCode) {
@@ -21,7 +25,7 @@ export function DriverDashboard({ summary }: { summary: DriverSummary }) {
         <EmptyState
           icon={Truck}
           title="No van assigned"
-          description="A manager needs to assign you to a van before you can load stock or record sales."
+          description="A manager assigns the crew for each van. Once you are on one, its stock and the day's sales appear here."
         />
       </Card>
     );
@@ -66,16 +70,19 @@ export function DriverDashboard({ summary }: { summary: DriverSummary }) {
           label="Stock on board"
           value={formatQuantity(summary.unitsOnVan)}
           sub={`${formatMoney(summary.vanStockValue)} at cost`}
+          href="/my-van"
         />
         <StatTile
           label="Cash sales today"
           value={formatMoney(summary.cashSalesToday)}
-          sub={`${summary.salesCountToday} sale${summary.salesCountToday === 1 ? "" : "s"} recorded`}
+          sub={`${summary.salesCountToday} sale${summary.salesCountToday === 1 ? "" : "s"} from this van`}
+          href="/my-van"
         />
         <StatTile
           label="Credit sales today"
           value={formatMoney(summary.creditSalesToday)}
           sub="Owed by customers"
+          href="/my-van"
         />
         <StatTile
           label="Collected today"

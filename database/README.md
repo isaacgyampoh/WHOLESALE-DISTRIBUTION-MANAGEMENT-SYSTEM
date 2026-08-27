@@ -12,6 +12,8 @@ CLI tools.
 | `UPGRADE_0017_SIGNUP_GUARD.sql` | Upgrade for a database installed before migration 0017. |
 | `UPGRADE_0018_PIN_AUTH.sql` | Upgrade for a database installed before migration 0018. Adds PIN sign-in. |
 | `UPGRADE_0019_AUDIT_LOG.sql` | Upgrade for a database installed before migration 0019. Adds the audit trail. |
+| `UPGRADE_0020_MOVEMENT_TYPES.sql` | Upgrade, part 1 of 2. Adds the opening stock and stock count movement types. |
+| `UPGRADE_0021_CREW_AND_SELLING.sql` | Upgrade, part 2 of 2. Van crew, counter sales, and the ways stock enters. |
 | `build.mjs` | Regenerates the installer from `supabase/migrations`. You do not need to run this. |
 
 ---
@@ -87,6 +89,40 @@ and is safe to run twice.
 
 Then run `VERIFY_DATABASE.sql` again: row 16 should read `0` / `OK` and
 row 18 should read `0`.
+
+### If the crew and selling rows fail
+
+Rows 3 to 15 count what the database contains. If yours reports fewer
+views, functions or policies than expected, it predates the change that
+separated the driver from the salesperson. Run, **as two separate
+queries, in this order**:
+
+1. `database/UPGRADE_0020_MOVEMENT_TYPES.sql`
+2. `database/UPGRADE_0021_CREW_AND_SELLING.sql`
+
+They must be two runs because PostgreSQL cannot use a new enum value in
+the transaction that added it, and the Supabase SQL Editor wraps each run
+in one transaction.
+
+Unlike the other upgrade scripts here, **these run once.** They create
+types, rename columns and replace indexes, so a second run stops partway
+with "already exists". To check whether they have already been applied:
+
+```sql
+select 1 from pg_type where typname = 'van_crew_role';
+```
+
+A row back means the upgrade is in place.
+
+Your existing data comes with you. Driver assignments become driver crew
+rows, and sales already recorded keep their seller and their van - that
+is asserted by `tests/db/test_upgrade.mjs`, which installs a database at
+the previous version, puts a sale in it, and runs these two scripts.
+
+**After running them**, a driver can no longer record a sale. If your
+salespeople are currently signing in as drivers, give each of them a
+`sales_rep` account and assign them to a van under **Vans**, or nobody
+will be able to sell.
 
 ### If the audit rows fail
 

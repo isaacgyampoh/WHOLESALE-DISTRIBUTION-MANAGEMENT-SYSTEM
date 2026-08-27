@@ -39,11 +39,28 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     ],
   },
   {
+    label: "Selling",
+    items: [
+      // First on the phone for anyone who sells: it is the only screen
+      // a field salesperson opens all day.
+      {
+        label: "Sell", href: "/sell", permissions: ["sales.create"],
+        icon: "ShoppingCart", mobilePriority: 1,
+      },
+      // The crew's own van. A manager does not have one, which is why
+      // this is not gated on vans.view.
+      {
+        label: "My van", href: "/my-van", permissions: ["vans.crew"],
+        icon: "Van", mobilePriority: 2,
+      },
+    ],
+  },
+  {
     label: "Catalogue",
     items: [
       {
         label: "Products", href: "/products", permissions: ["products.view"],
-        icon: "Package", mobilePriority: 4,
+        icon: "Package", mobilePriority: 6,
       },
       // Category maintenance is a management screen, not something a
       // driver or a sales rep has any use for.
@@ -56,7 +73,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       { label: "Warehouses", href: "/warehouses", permissions: ["inventory.view"], icon: "Warehouse" },
       {
         label: "Stock", href: "/inventory", permissions: ["inventory.view"],
-        icon: "Boxes", mobilePriority: 3,
+        icon: "Boxes", mobilePriority: 5,
       },
       { label: "Movements", href: "/movements", permissions: ["inventory.view"], icon: "ArrowLeftRight" },
       { label: "Purchasing", href: "/purchasing", permissions: ["inventory.transfer"], icon: "Truck" },
@@ -68,7 +85,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       { label: "Vans", href: "/vans", permissions: ["vans.view"], icon: "Van" },
       {
         label: "Van loads", href: "/loads", permissions: ["loads.view"],
-        icon: "ClipboardList", mobilePriority: 5,
+        icon: "ClipboardList", mobilePriority: 8,
       },
       { label: "Returns", href: "/returns", permissions: ["returns.view"], icon: "Undo2" },
       { label: "Reconciliation", href: "/reconciliation", permissions: ["reconciliation.view"], icon: "Scale" },
@@ -79,16 +96,16 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     items: [
       {
         label: "Customers", href: "/customers", permissions: ["customers.view"],
-        icon: "Store", mobilePriority: 2,
+        icon: "Store", mobilePriority: 7,
       },
       {
         label: "Sales", href: "/sales", permissions: ["sales.view"],
-        icon: "Receipt", mobilePriority: 1,
+        icon: "Receipt", mobilePriority: 3,
       },
       { label: "Credit", href: "/credit", permissions: ["credit.view"], icon: "CreditCard" },
       {
         label: "Payments", href: "/payments", permissions: ["payments.view"],
-        icon: "Banknote", mobilePriority: 6,
+        icon: "Banknote", mobilePriority: 9,
       },
     ],
   },

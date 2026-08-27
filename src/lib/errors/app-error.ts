@@ -50,11 +50,27 @@ export function fromDatabaseError(error: unknown): AppError {
   const message = e?.message ?? "";
 
   // Raised by our own PL/pgSQL guards.
-  if (message.includes("Credit limit exceeded")) {
+  if (message.includes("Credit limit exceeded") || message.includes("Credit limit reached")) {
     return new AppError("credit_limit", message, error);
   }
-  if (message.includes("does not carry enough") || message.includes("Insufficient stock")) {
+  if (
+    message.includes("does not carry enough") ||
+    message.includes("Insufficient stock") ||
+    // record_sale names the product and the number it actually has, which
+    // is what the person standing at the counter needs to hear.
+    /^Only \d+ units of /.test(message)
+  ) {
     return new AppError("insufficient_stock", message, error);
+  }
+  // Written for the person reading them, so they are passed through.
+  if (
+    message.includes("A driver cannot") ||
+    message.includes("no van assignment") ||
+    message.includes("does not permit recording sales") ||
+    message.includes("must say why") ||
+    message.includes("Only the salesperson")
+  ) {
+    return new AppError("forbidden", message, error);
   }
   if (message.includes("append-only")) {
     return new AppError(

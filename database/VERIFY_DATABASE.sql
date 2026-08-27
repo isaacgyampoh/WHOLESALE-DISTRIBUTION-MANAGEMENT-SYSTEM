@@ -47,7 +47,12 @@ security_fns as (
   where ns.nspname = 'public'
     and p.proname in ('is_trusted_context', 'require_role', 'auth_role',
                       'auth_org_id', 'has_role', 'can_access_product',
-                      'can_access_category', 'my_van_id')
+                      'can_access_category', 'my_van_id',
+                      -- Decides a seller's location from the session, not
+                      -- from the request. Without it record_sale would have
+                      -- to trust a van id from the browser.
+                      'my_sales_van_id', 'my_sales_warehouse_id',
+                      'resolve_sales_location')
 ),
 business_fns as (
   select count(distinct p.proname) as n from pg_proc p
@@ -56,7 +61,11 @@ business_fns as (
     and p.proname in ('dispatch_van_load', 'complete_van_sale',
                       'approve_van_return', 'approve_reconciliation',
                       'build_reconciliation', 'record_credit_payment',
-                      'receive_purchase_line')
+                      'receive_purchase_line',
+                      -- The sale, and the three ways stock legitimately
+                      -- enters or is corrected.
+                      'record_sale', 'create_product_with_stock',
+                      'add_stock', 'adjust_stock_to', 'record_stocktake')
 ),
 anon_tables as (
   -- Raw grant rows held by anon. Reported for information: a project
@@ -113,7 +122,7 @@ expected_enums (typname, members) as (
   values
     ('credit_txn_type',       'charge,payment,adjustment,write_off'),
     ('invoice_status',        'draft,issued,partially_paid,paid,overdue,void'),
-    ('movement_type',         'receipt,issue,adjustment_in,adjustment_out,transfer_in,transfer_out,customer_return,supplier_return,damage,shortage'),
+    ('movement_type',         'receipt,issue,adjustment_in,adjustment_out,transfer_in,transfer_out,customer_return,supplier_return,damage,shortage,opening_stock,stocktake_in,stocktake_out'),
     ('order_status',          'draft,confirmed,picking,packed,shipped,delivered,cancelled'),
     ('payment_method',        'cash,bank_transfer,cheque,card,mobile_money'),
     ('po_status',             'draft,submitted,partially_received,received,cancelled'),
@@ -122,6 +131,7 @@ expected_enums (typname, members) as (
     ('van_load_status',       'draft,loaded,dispatched,returned,reconciled,cancelled'),
     ('van_return_status',     'draft,submitted,approved,rejected'),
     ('van_sale_status',       'draft,completed,void'),
+    ('van_crew_role',         'driver,salesperson'),
     ('van_sale_type',         'cash,credit')
 ),
 actual_enums as (
@@ -166,8 +176,9 @@ missing_views as (
   select coalesce(string_agg(v, ', '), '') as names
   from unnest(array[
     'customer_balances','customer_credit_position','customer_statement',
-    'invoice_ageing','reconciliation_variances','stock_summary',
-    'van_load_summary','van_stock_summary'
+    'invoice_ageing','product_stock_by_location','reconciliation_variances',
+    'sale_lines','stock_summary','van_day_activity','van_load_summary',
+    'van_stock_summary'
   ]) as v
   where not exists (
     select 1 from information_schema.views
@@ -184,37 +195,37 @@ report as (
           case when m.names = '' then 'none missing' else 'MISSING' end,
           case when m.names = '' then 'OK' else 'FAIL' end, m.names
   from missing_tables m
-  union all select  3, 'Views', '8', c.views::text,
-          case when c.views = 8 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  3, 'Views', '11', c.views::text,
+          case when c.views = 11 then 'OK' else 'CHECK' end, '' from counts c
   union all select  4, 'Expected views all present', 'none missing',
           case when v.names = '' then 'none missing' else 'MISSING' end,
           case when v.names = '' then 'OK' else 'FAIL' end, v.names
   from missing_views v
-  union all select  5, 'Enum types', '12', c.enums::text,
-          case when c.enums = 12 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  6, 'Enum members and order', '12 matching', e.n::text,
-          case when e.n = 12 then 'OK' else 'FAIL' end,
+  union all select  5, 'Enum types', '13', c.enums::text,
+          case when c.enums = 13 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  6, 'Enum members and order', '13 matching', e.n::text,
+          case when e.n = 13 then 'OK' else 'FAIL' end,
           (select names from enum_bad)
   from enum_match e
-  union all select  7, 'Functions', '38', c.functions::text,
-          case when c.functions = 38 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  8, 'Triggers', '68', c.triggers::text,
-          case when c.triggers = 68 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  9, 'RLS policies', '68', c.policies::text,
-          case when c.policies = 68 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  7, 'Functions', '49', c.functions::text,
+          case when c.functions = 49 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  8, 'Triggers', '69', c.triggers::text,
+          case when c.triggers = 69 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  9, 'RLS policies', '69', c.policies::text,
+          case when c.policies = 69 then 'OK' else 'CHECK' end, '' from counts c
   union all select 10, 'RLS enabled on every table',
           c.all_tables::text, c.rls_tables::text,
           case when c.rls_tables = c.all_tables then 'OK' else 'FAIL' end, '' from counts c
   union all select 11, 'Generated columns', '12', c.generated_cols::text,
           case when c.generated_cols = 12 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 12, 'Indexes', '121', c.indexes::text,
-          case when c.indexes = 121 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 13, 'Constraints', '207', c.constraints::text,
-          case when c.constraints = 207 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 14, 'Security functions present', '8', s.n::text,
-          case when s.n = 8 then 'OK' else 'FAIL' end, '' from security_fns s
-  union all select 15, 'Business functions present', '7', b.n::text,
-          case when b.n = 7 then 'OK' else 'FAIL' end, '' from business_fns b
+  union all select 12, 'Indexes', '122', c.indexes::text,
+          case when c.indexes = 122 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 13, 'Constraints', '211', c.constraints::text,
+          case when c.constraints = 211 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 14, 'Security functions present', '11', s.n::text,
+          case when s.n = 11 then 'OK' else 'FAIL' end, '' from security_fns s
+  union all select 15, 'Business functions present', '12', b.n::text,
+          case when b.n = 12 then 'OK' else 'FAIL' end, '' from business_fns b
   union all select 16, 'anon cannot read any table or view', '0', ar.n::text,
           case when ar.n = 0 then 'OK' else 'FAIL' end,
           'This is the decisive check for anonymous access'
