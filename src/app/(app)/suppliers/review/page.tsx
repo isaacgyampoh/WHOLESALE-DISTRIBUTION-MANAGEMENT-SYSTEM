@@ -3,7 +3,8 @@ import Link from "next/link";
 import { requireUser } from "@/lib/auth/session";
 import { can } from "@/types/permissions";
 import { listAwaitingReview } from "@/features/suppliers/queries";
-import { OpenDocumentButton } from "@/features/suppliers/supplier-forms";
+import { listSuppliers } from "@/features/warehouses/queries";
+import { OpenDocumentButton, UploadDocumentButton } from "@/features/suppliers/supplier-forms";
 import { ApproveInvoiceButton, RejectInvoiceButton } from "@/features/suppliers/review-forms";
 import { PageHeader } from "@/components/layout/page-header";
 import { Forbidden } from "@/components/layout/forbidden";
@@ -28,18 +29,35 @@ export default async function SupplierReviewPage() {
   // Approving an invoice is agreeing to pay it.
   if (!can(user.role, "payments.view")) return <Forbidden />;
 
-  const queue = await listAwaitingReview();
+  const [queue, suppliers] = await Promise.all([
+    listAwaitingReview(),
+    listSuppliers(),
+  ]);
 
   return (
     <>
       <PageHeader
         title="Supplier invoices"
-        description="Sent in by suppliers through their own link, waiting to be checked."
+        description="Everything waiting to be checked, however it arrived - sent in through a supplier's own link, or handed over on paper and filed here."
         breadcrumbs={[
           { label: "Warehouse" },
           { label: "Purchasing", href: "/purchasing" },
           { label: "Supplier invoices" },
         ]}
+        actions={
+          // A supplier who hands over paper is as common as one who uses
+          // the link, and until now that invoice had to be filed from
+          // the supplier's own page - which nobody found.
+          can(user.role, "documents.issue") && suppliers.ok && suppliers.data.length > 0
+            ? <UploadDocumentButton
+                orders={[]}
+                label="Upload an invoice"
+                suppliers={suppliers.data
+                  .filter((s) => s.isActive)
+                  .map((s) => ({ id: s.id, label: `${s.code} · ${s.name}` }))}
+              />
+            : undefined
+        }
       />
 
       {!queue.ok ? (

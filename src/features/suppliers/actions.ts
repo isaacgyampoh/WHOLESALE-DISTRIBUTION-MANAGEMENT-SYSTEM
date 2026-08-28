@@ -155,6 +155,20 @@ export async function uploadSupplierDocumentAction(
       mime_type: upload.type,
       size_bytes: upload.size,
       uploaded_by: actor.id,
+      // An invoice needs checking however it arrived.
+      //
+      // status defaults to 'approved' on this table, which suits a
+      // delivery note somebody files internally - there is nothing to
+      // review about a document you produced yourself. An invoice is a
+      // claim for money, and one handed over on paper is exactly as
+      // unchecked as one sent through the portal. Filed as approved it
+      // skipped the review queue entirely and nobody ever saw it.
+      //
+      // submitted_at is what the queue orders by, so it is set here too
+      // or the row sorts as though it had never been submitted.
+      ...(kind === "invoice"
+        ? { status: "received", submitted_at: new Date().toISOString() }
+        : {}),
     });
 
   if (error) {

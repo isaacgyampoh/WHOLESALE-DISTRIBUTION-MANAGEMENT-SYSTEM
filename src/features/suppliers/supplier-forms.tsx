@@ -34,9 +34,15 @@ const KINDS = [
 export function UploadDocumentButton({
   supplierId,
   orders,
+  suppliers,
+  label = "File a document",
 }: {
-  supplierId: string;
+  /** Fixed on a supplier's own page; absent where the supplier is chosen. */
+  supplierId?: string;
   orders: { id: string; label: string }[];
+  /** Offered where this is used away from one supplier's page. */
+  suppliers?: { id: string; label: string }[];
+  label?: string;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -52,7 +58,7 @@ export function UploadDocumentButton({
     <>
       <Button onClick={() => setOpen(true)}>
         <Upload className="size-4" aria-hidden />
-        File a document
+        {label}
       </Button>
 
       <Dialog
@@ -72,7 +78,26 @@ export function UploadDocumentButton({
             {state.status === "error" && state.message && (
               <Alert tone="danger">{state.message}</Alert>
             )}
-            <input type="hidden" name="supplierId" value={supplierId} />
+            {/*
+              On a supplier's own page the supplier is already known. On
+              the invoices page it is the first thing to ask, because a
+              document filed against the wrong supplier is worse than one
+              not filed at all.
+            */}
+            {suppliers?.length ? (
+              <Field label="Supplier" htmlFor="supplierId" required
+                     error={state.fieldErrors?.supplierId}>
+                <Select id="supplierId" name="supplierId" required
+                        defaultValue={state.values?.supplierId ?? ""}>
+                  <option value="" disabled>Choose a supplier</option>
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>{s.label}</option>
+                  ))}
+                </Select>
+              </Field>
+            ) : (
+              <input type="hidden" name="supplierId" value={supplierId} />
+            )}
 
             <Field label="File" htmlFor="file" required
                    hint="PDF, photograph or spreadsheet, up to 20 MB."
