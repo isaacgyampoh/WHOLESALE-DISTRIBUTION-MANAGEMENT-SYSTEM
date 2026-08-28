@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/table";
 import { StatusBadge, VarianceBadge } from "@/components/ui/badge";
 import { formatMoney, formatQuantity, formatDate } from "@/lib/utils/format";
@@ -41,7 +42,15 @@ export function LoadList({
             {loads.map((l) => (
               <Tr key={l.id}>
                 <Td>
-                  <span className="numeric block font-medium">{l.loadNumber}</span>
+                  {/* The load number is the way in to what is on the
+                      van. Without this the list could say a load
+                      existed and never what it carried. */}
+                  <Link
+                    href={`/loads/${l.id}`}
+                    className="numeric block font-medium text-[var(--text-primary)] hover:text-brand-700 hover:underline dark:hover:text-brand-300"
+                  >
+                    {l.loadNumber}
+                  </Link>
                   <span className="text-xs text-[var(--text-muted)]">
                     {l.lineCount} {l.lineCount === 1 ? "line" : "lines"}
                   </span>

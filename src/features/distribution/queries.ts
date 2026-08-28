@@ -647,3 +647,137 @@ export async function getVanCrew(vanId: string): Promise<Result<VanCrewDetail | 
     },
   };
 }
+
+export interface LoadLine {
+  productId: string;
+  productName: string;
+  sku: string;
+  unit: string;
+  loaded: number;
+  sold: number;
+  /** Still on the van now. */
+  remaining: number;
+}
+
+export interface LoadDetail {
+  id: string;
+  loadNumber: string;
+  loadDate: string;
+  status: string;
+  vanId: string;
+  vanCode: string;
+  registrationNo: string;
+  warehouseName: string | null;
+  driverName: string | null;
+  /** Everybody crewed to sell from this van. Empty is a real answer. */
+  salespeople: string[];
+  lines: LoadLine[];
+}
+
+/**
+ * What is actually inside a van.
+ *
+ * The loads list could say a load existed and never what was on it,
+ * which is the one thing anybody opens a load to find out. Three numbers
+ * per line, because they answer different questions: loaded is what the
+ * warehouse signed out, sold is what the round has taken, remaining is
+ * what is on the shelf now - and remaining is read from the van's own
+ * balance rather than subtracted here, so it agrees with what the
+ * salesperson sees.
+ */
+export async function getLoadDetail(loadId: string): Promise<Result<LoadDetail | null>> {
+  const supabase = await createSupabaseServerClient();
+
+  const { data: loadRow, error } = await supabase
+    .from("van_loads")
+    .select(
+      "id, load_number, load_date, status, van_id, " +
+      "vans(code, registration_no), warehouses(name), " +
+      // Named explicitly: van_loads carries its own driver, and a bare
+      // profiles embed cannot be resolved once a table has two routes
+      // to that table.
+      "driver:profiles!van_loads_driver_id_fkey(full_name)",
+    )
+    .eq("id", loadId)
+    .maybeSingle();
+
+  if (error) return failed("distribution", error, "That load could not be loaded.");
+  if (!loadRow) return { ok: true, data: null };
+
+  // Cast once: the embed alias with an explicit constraint name is more
+  // than the generated types can follow, and every field is read
+  // defensively below anyway.
+  const load = loadRow as unknown as Record<string, unknown>;
+
+  const van = load.vans as { code?: string; registration_no?: string } | null;
+  const vanId = load.van_id as string;
+
+  const [{ data: items }, { data: onVan }, { data: crew }, { data: sales }] = await Promise.all([
+    supabase
+      .from("van_load_items")
+      .select("product_id, qty_loaded, products(name, sku, unit_of_measure)")
+      .eq("load_id", loadId),
+    supabase
+      .from("van_stock_summary")
+      .select("product_id, qty_on_hand")
+      .eq("van_id", vanId),
+    supabase
+      .from("van_assignments")
+      .select("crew_role, profiles!van_assignments_driver_id_fkey(full_name)")
+      .eq("van_id", vanId)
+      .eq("crew_role", "salesperson")
+      .is("unassigned_at", null),
+    // What this load's own round has sold, so the figure belongs to the
+    // load rather than to everything the van has ever done.
+    supabase
+      .from("van_sales")
+      .select("id, van_sale_items(product_id, quantity)")
+      .eq("load_id", loadId)
+      .eq("status", "completed"),
+  ]);
+
+  const remainingBy = new Map(
+    (onVan ?? []).map((r) => [r.product_id as string, Number(r.qty_on_hand ?? 0)]),
+  );
+
+  const soldBy = new Map<string, number>();
+  for (const sale of (sales ?? []) as unknown as Record<string, unknown>[]) {
+    for (const item of (sale.van_sale_items ?? []) as Record<string, unknown>[]) {
+      const id = item.product_id as string;
+      soldBy.set(id, (soldBy.get(id) ?? 0) + Number(item.quantity ?? 0));
+    }
+  }
+
+  const lines: LoadLine[] = (items ?? []).map((i) => {
+    const product = i.products as { name?: string; sku?: string; unit_of_measure?: string } | null;
+    const id = i.product_id as string;
+    return {
+      productId: id,
+      productName: product?.name ?? "Unknown product",
+      sku: product?.sku ?? "",
+      unit: product?.unit_of_measure ?? "unit",
+      loaded: Number(i.qty_loaded ?? 0),
+      sold: soldBy.get(id) ?? 0,
+      remaining: remainingBy.get(id) ?? 0,
+    };
+  }).sort((a, b) => a.productName.localeCompare(b.productName));
+
+  return {
+    ok: true,
+    data: {
+      id: load.id as string,
+      loadNumber: load.load_number as string,
+      loadDate: load.load_date as string,
+      status: load.status as string,
+      vanId,
+      vanCode: van?.code ?? "",
+      registrationNo: van?.registration_no ?? "",
+      warehouseName: (load.warehouses as { name?: string } | null)?.name ?? null,
+      driverName: (load.driver as { full_name?: string } | null)?.full_name ?? null,
+      salespeople: (crew ?? [])
+        .map((r) => (r.profiles as { full_name?: string } | null)?.full_name)
+        .filter((n): n is string => Boolean(n)),
+      lines,
+    },
+  };
+}
