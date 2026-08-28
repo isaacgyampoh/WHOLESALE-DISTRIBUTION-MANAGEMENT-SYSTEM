@@ -51,13 +51,21 @@ const tryQ = async (c, s, p) => { try { return { ok: true, rows: await q(c, s, p
               values ($1,$2,$3,60,$4,$5), ($1,$2,$6,40,$7,$8)`,
           [org, load.id, p1.id, p1.list_price, p1.cost_price, p2.id, p2.list_price, p2.cost_price]);
 
-  r = await tryQ(c, `select * from dispatch_van_load($1)`, [load.id]);
-  ok('dispatch blocked without driver confirmation', !r.ok, r.ok ? '(DISPATCHED)' : `-> "${r.error.slice(0,48)}"`);
+  // The driver no longer approves the load. The warehouse dispatches on
+  // its own authority - see 0045. This used to require
+  // driver_confirmed_at, and that requirement stopped every round: the
+  // load sat at 'loaded', nothing reached the van, and the salesperson
+  // opened the sell screen to an empty van.
+  ok('the load starts unconfirmed by the driver',
+     (await one(c, `select driver_confirmed_at c from van_loads where id=$1`, [load.id])).c === null);
 
-  await q(c, `update van_loads set driver_confirmed_at=now() where id=$1`, [load.id]);
   r = await tryQ(c, `select status from dispatch_van_load($1)`, [load.id]);
-  ok('dispatch succeeds after confirmation', r.ok && r.rows[0].status === 'dispatched',
-     r.ok ? `(${r.rows[0].status})` : `(${r.error})`);
+  ok('dispatch succeeds without driver confirmation', r.ok && r.rows[0].status === 'dispatched',
+     r.ok ? `(${r.rows[0].status})` : `(${r.error.slice(0,60)})`);
+
+  // Still recorded when it happens; simply no longer a gate.
+  ok('driver confirmation is still a column that can be set',
+     (await tryQ(c, `update van_loads set driver_confirmed_at=now() where id=$1`, [load.id])).ok);
 
   const whAfter = (await one(c, `select qty_on_hand h from inventory where product_id=$1 and warehouse_id=$2`, [p1.id, wh])).h;
   const vanQty = (await one(c, `select qty_on_hand h from van_inventory where van_id=$1 and product_id=$2`, [van, p1.id])).h;
