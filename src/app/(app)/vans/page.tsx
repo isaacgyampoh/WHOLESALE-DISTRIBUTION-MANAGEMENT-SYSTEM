@@ -5,7 +5,7 @@ import { listVans, listVanStock } from "@/features/distribution/queries";
 import { VanList } from "@/features/distribution/van-list";
 import { CreateVanButton } from "@/features/distribution/van-forms";
 import { listWarehouses } from "@/features/catalogue/queries";
-import { listAssignableDrivers } from "@/features/distribution/queries";
+import { listAssignableDrivers, listAssignableSalespeople } from "@/features/distribution/queries";
 import { PageHeader } from "@/components/layout/page-header";
 import { Forbidden } from "@/components/layout/forbidden";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -22,15 +22,21 @@ export default async function VansPage() {
   if (!can(user.role, "vans.view")) return <Forbidden />;
 
   const canManage = can(user.role, "vans.manage");
-  const [vans, stock, warehouses, drivers] = await Promise.all([
+  const [vans, stock, warehouses, drivers, sellers] = await Promise.all([
     listVans(),
     listVanStock(),
     canManage ? listWarehouses() : Promise.resolve(null),
     canManage ? listAssignableDrivers() : Promise.resolve(null),
+    canManage ? listAssignableSalespeople() : Promise.resolve(null),
   ]);
 
   const warehouseOptions = warehouses?.ok
     ? warehouses.data.map((w) => ({ id: w.id, label: w.name }))
+    : [];
+  // Assigning the salesperson is the step the whole round waits on, so
+  // it belongs on the list beside the van rather than a page deeper.
+  const sellerOptions = sellers?.ok
+    ? sellers.data.map((p) => ({ id: p.id, label: p.fullName }))
     : [];
   const driverOptions = drivers?.ok
     ? drivers.data.map((d) => ({ id: d.id, label: d.fullName }))
@@ -68,7 +74,8 @@ export default async function VansPage() {
                           action={canManage ? <CreateVanButton warehouses={warehouseOptions} /> : undefined} />
             ) : (
               <VanList vans={vans.data} warehouses={warehouseOptions}
-                       drivers={driverOptions} canManage={canManage} />
+                       drivers={driverOptions} salespeople={sellerOptions}
+                       canManage={canManage} />
             )}
           </Card>
 

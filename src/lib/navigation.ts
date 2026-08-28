@@ -178,6 +178,10 @@ const SALESPERSON_SECTIONS: readonly NavSection[] = [
         icon: "Receipt", mobilePriority: 1,
       },
       {
+        label: "My van", href: "/driver/van", permissions: ["vans.view"],
+        icon: "Van", mobilePriority: 5,
+      },
+      {
         label: "Van stock", href: "/driver/stock", permissions: ["sales.view"],
         icon: "Boxes", mobilePriority: 2,
       },
@@ -205,51 +209,6 @@ const SALESPERSON_SECTIONS: readonly NavSection[] = [
 ];
 
 /**
- * The driver's application.
- *
- * Deliberately not the salesperson's with the selling removed. A driver
- * is responsible for a vehicle and its load, and the questions they have
- * are about the van: what is on it, who is selling from it today, what
- * is coming back. There is no till here and no customer list, because
- * neither is their job.
- */
-const DRIVER_SECTIONS: readonly NavSection[] = [
-  {
-    label: "My van",
-    items: [
-      {
-        label: "Home", href: "/driver", permissions: ["loads.confirm"],
-        icon: "LayoutDashboard", mobilePriority: 0,
-      },
-      {
-        label: "My van", href: "/driver/van", permissions: ["vans.view"],
-        icon: "Van", mobilePriority: 1,
-      },
-      {
-        label: "Load", href: "/driver/stock", permissions: ["loads.view"],
-        icon: "Boxes", mobilePriority: 2,
-      },
-    ],
-  },
-  {
-    label: "End of round",
-    items: [
-      {
-        label: "Return goods", href: "/driver/return", permissions: ["returns.submit"],
-        icon: "Undo2", mobilePriority: 3,
-      },
-      { label: "End my day", href: "/driver/reconcile", permissions: ["reconciliation.submit"], icon: "Scale" },
-    ],
-  },
-  {
-    label: "The round",
-    items: [
-      { label: "Today's sales", href: "/driver/sales", permissions: ["sales.view"], icon: "Receipt" },
-    ],
-  },
-];
-
-/**
  * Which application this person gets.
  *
  * Keyed on the permission set rather than the role name, so a role given
@@ -269,7 +228,14 @@ function sellsInTheField(role: UserRole): boolean {
     && !can(role, "inventory.adjust");
 }
 
-function drivesAVan(role: UserRole): boolean {
+/**
+ * Whoever drives but does not sell has no application to open.
+ *
+ * The van, its load and the round are recorded by the office. The
+ * account still exists because vans, waybills, reports and the audit
+ * trail all name the driver - they simply have nothing to sign in for.
+ */
+export function hasNoPortal(role: UserRole): boolean {
   return can(role, "loads.confirm")
     && !can(role, "sales.create")
     && !can(role, "users.manage");
@@ -277,11 +243,13 @@ function drivesAVan(role: UserRole): boolean {
 
 /** Sections with nothing visible to this role are dropped entirely. */
 export function navigationFor(role: UserRole): NavSection[] {
-  const sections = drivesAVan(role)
-    ? DRIVER_SECTIONS
-    : sellsInTheField(role)
-      ? SALESPERSON_SECTIONS
-      : NAV_SECTIONS;
+  // Two applications, not three. A driver has no portal: they drive, and
+  // the office records the van, the load and the round on their behalf.
+  // Their profile stays - vans, waybills, reports and the audit trail
+  // all name them - they simply have nothing to sign in for.
+  if (hasNoPortal(role)) return [];
+
+  const sections = sellsInTheField(role) ? SALESPERSON_SECTIONS : NAV_SECTIONS;
   return sections.map((section) => ({
     ...section,
     items: section.items.filter((item) => canAny(role, item.permissions)),

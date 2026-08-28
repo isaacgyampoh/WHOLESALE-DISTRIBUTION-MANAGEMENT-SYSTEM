@@ -3,7 +3,8 @@ import { getSessionState } from "@/lib/auth/session";
 import { isSupabaseConfigured } from "@/lib/env/server";
 import { SetupRequired } from "@/components/layout/setup-required";
 import { AccountPending } from "@/components/layout/account-pending";
-import { navigationFor } from "@/lib/navigation";
+import { NoPortal } from "@/components/layout/no-portal";
+import { navigationFor, hasNoPortal } from "@/lib/navigation";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { BottomNav } from "@/components/layout/bottom-nav";
@@ -39,6 +40,11 @@ export default async function AppLayout({
 
   const { user } = session;
   const sections = navigationFor(user.role);
+
+  // A driver has no portal. Rather than an empty shell - which reads as
+  // a fault, and sends somebody hunting for a screen they were told
+  // about - say so plainly and offer the way out.
+  if (hasNoPortal(user.role)) return <NoPortal name={user.fullName.split(" ")[0]} />;
 
   return (
     <div className="flex h-dvh overflow-hidden">

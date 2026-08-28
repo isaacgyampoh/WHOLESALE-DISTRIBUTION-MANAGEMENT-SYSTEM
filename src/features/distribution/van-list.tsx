@@ -15,11 +15,14 @@ export function VanList({
   vans,
   warehouses = [],
   drivers = [],
+  salespeople = [],
   canManage = false,
 }: {
   vans: VanRow[];
   warehouses?: Option[];
   drivers?: Option[];
+  /** Field salespeople who can be put on a van. */
+  salespeople?: Option[];
   canManage?: boolean;
 }) {
   return (
@@ -76,7 +79,8 @@ export function VanList({
                 </Td>
                 {canManage && (
                   <Td>
-                    <VanActions van={v} warehouses={warehouses} drivers={drivers} />
+                    <VanActions van={v} warehouses={warehouses} drivers={drivers}
+                                salespeople={salespeople} />
                   </Td>
                 )}
               </Tr>
@@ -118,7 +122,8 @@ export function VanList({
             </p>
             {canManage && (
               <div className="mt-2.5">
-                <VanActions van={v} warehouses={warehouses} drivers={drivers} />
+                <VanActions van={v} warehouses={warehouses} drivers={drivers}
+                            salespeople={salespeople} />
               </div>
             )}
           </li>

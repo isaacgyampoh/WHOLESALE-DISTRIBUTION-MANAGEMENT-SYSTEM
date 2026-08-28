@@ -1,6 +1,7 @@
 "use client";
 
 import { RecordForm } from "@/components/ui/record-form";
+import { AssignCrewButton } from "./crew-forms";
 import { ActionButton } from "@/components/ui/action-button";
 import { saveVanAction, setVanActiveAction, assignDriverAction } from "./actions";
 import { Plus, Pencil, UserCog } from "lucide-react";
@@ -35,11 +36,12 @@ export function CreateVanButton({ warehouses }: { warehouses: Option[] }) {
 }
 
 export function VanActions({
-  van, warehouses, drivers,
+  van, warehouses, drivers, salespeople = [],
 }: {
   van: VanRow;
   warehouses: Option[];
   drivers: Option[];
+  salespeople?: Option[];
 }) {
   return (
     <div className="flex flex-wrap justify-end gap-2">
@@ -73,6 +75,20 @@ export function VanActions({
         size="sm"
         icon={<UserCog className="size-3.5" aria-hidden />}
       />
+
+      {/*
+        The step the whole round waits on. It used to live a page deeper,
+        behind the van's own name, so a van could sit loaded with nobody
+        crewed to sell from it and nothing on this screen said so.
+      */}
+      {salespeople.length > 0 && (
+        <AssignCrewButton
+          vanId={van.id}
+          vanCode={van.code}
+          crewRole="salesperson"
+          people={salespeople.map((p) => ({ id: p.id, fullName: p.label, role: "salesperson" }))}
+        />
+      )}
 
       <ActionButton
         action={setVanActiveAction}
