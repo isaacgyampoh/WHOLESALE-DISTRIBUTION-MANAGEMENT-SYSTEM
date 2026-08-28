@@ -880,15 +880,10 @@ function describeBlocker(blocker?: RoundBlocker | null): { title: string; body: 
         title: `Nothing has been loaded onto ${blocker.vanCode}`,
         body: "The warehouse builds a load before a round can start. Ask them to load the van under Van loads.",
       };
-    case "awaiting_driver":
-      return {
-        title: `${blocker.loadNumber} is waiting for your driver`,
-        body: `The goods are picked but your driver has not signed for them yet, so nothing has left the warehouse. Once they confirm ${blocker.loadNumber}, the office dispatches it and ${blocker.vanCode} is stocked.`,
-      };
     case "not_dispatched":
       return {
         title: `${blocker.loadNumber} has not been dispatched`,
-        body: `Your driver has signed for it. The office releases it under Van loads, and then ${blocker.vanCode} is stocked and you can sell.`,
+        body: `The goods are picked and waiting. Nothing reaches ${blocker.vanCode} until the office presses Dispatch on ${blocker.loadNumber} under Van loads - then the stock is on board and you can sell.`,
       };
     case "empty_van":
       return {

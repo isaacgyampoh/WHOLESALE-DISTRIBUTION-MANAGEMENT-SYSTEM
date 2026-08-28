@@ -495,7 +495,6 @@ export type RoundBlocker =
   | { kind: "no_van" }
   | { kind: "van_inactive"; vanCode: string }
   | { kind: "no_load"; vanCode: string }
-  | { kind: "awaiting_driver"; vanCode: string; loadNumber: string }
   | { kind: "not_dispatched"; vanCode: string; loadNumber: string }
   | { kind: "empty_van"; vanCode: string; loadNumber: string };
 
@@ -533,7 +532,7 @@ export async function diagnoseRound(): Promise<RoundBlocker> {
 
   const { data: load } = await supabase
     .from("van_loads")
-    .select("id, load_number, status, driver_confirmed_at")
+    .select("id, load_number, status")
     .eq("van_id", assignment.van_id)
     .in("status", ["draft", "loaded", "dispatched"])
     .order("load_date", { ascending: false })
@@ -544,12 +543,13 @@ export async function diagnoseRound(): Promise<RoundBlocker> {
 
   const loadNumber = (load.load_number as string) ?? "the load";
 
+  // A load that has not been dispatched is waiting on the office and
+  // nobody else. It used to be able to wait on the driver's signature
+  // too, until 0045 removed that gate - and this said so for a while
+  // afterwards, sending salespeople to chase a driver who could do
+  // nothing about it.
   if (load.status !== "dispatched") {
-    // The driver signs for the goods before they can leave. Until they
-    // do, dispatch refuses and the van stays empty.
-    return load.driver_confirmed_at
-      ? { kind: "not_dispatched", vanCode, loadNumber }
-      : { kind: "awaiting_driver", vanCode, loadNumber };
+    return { kind: "not_dispatched", vanCode, loadNumber };
   }
 
   const { data: stock } = await supabase

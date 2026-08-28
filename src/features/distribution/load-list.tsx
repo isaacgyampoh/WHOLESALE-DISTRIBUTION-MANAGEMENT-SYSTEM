@@ -74,7 +74,20 @@ export function LoadList({
                     <VarianceBadge value={l.cashVariance} />
                   )}
                 </Td>
-                <Td><StatusBadge status={l.status} /></Td>
+                <Td>
+                  <StatusBadge status={l.status} />
+                  {/*
+                    "Loaded" means picked and waiting, not on the van.
+                    Nothing reaches van_inventory until dispatch writes
+                    the movements, so a salesperson looking at an empty
+                    portal is usually looking at this row.
+                  */}
+                  {l.status === "loaded" && (
+                    <span className="mt-0.5 block text-xs text-[var(--text-muted)]">
+                      Not on the van yet
+                    </span>
+                  )}
+                </Td>
                 {canDispatch && (
                   <Td className="text-right">
                     {dispatchable(l.status) && (
