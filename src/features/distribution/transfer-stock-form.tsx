@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input, Select, Field } from "@/components/ui/field";
 import { Alert } from "@/components/ui/states";
+import { formatHolding } from "@/lib/catalogue/quantity";
 import { ArrowLeftRight } from "lucide-react";
 
 /**
@@ -32,18 +33,30 @@ export function TransferStockButton({
   const [toVanId, setToVanId] = useState("");
   const [reason, setReason] = useState("Van breakdown");
   const [amounts, setAmounts] = useState<Record<string, string>>({});
+  // The loose half, held apart from the units the whole way through.
+  const [pieceAmounts, setPieceAmounts] = useState<Record<string, string>>({});
   const [result, setResult] =
     useState<{ ok: boolean; message?: string; moved?: number } | null>(null);
   const [pending, start] = useTransition();
 
-  const lines = Object.entries(amounts)
-    .map(([productId, v]) => ({ productId, quantity: Number(v) }))
-    .filter((l) => Number.isInteger(l.quantity) && l.quantity > 0);
+  // Built from every product either box mentions, so a line of nothing
+  // but singles is not dropped for having no full units.
+  const lines = [...new Set([...Object.keys(amounts), ...Object.keys(pieceAmounts)])]
+    .map((productId) => ({
+      productId,
+      quantity: Number(amounts[productId] ?? 0),
+      pieces: Number(pieceAmounts[productId] ?? 0),
+    }))
+    .filter((l) =>
+      Number.isInteger(l.quantity) && l.quantity >= 0 &&
+      Number.isInteger(l.pieces) && l.pieces >= 0 &&
+      (l.quantity > 0 || l.pieces > 0));
 
   const close = () => {
     setOpen(false);
     setResult(null);
     setAmounts({});
+    setPieceAmounts({});
   };
 
   const submit = () => {
@@ -54,6 +67,7 @@ export function TransferStockButton({
       setResult(outcome);
       if (outcome.ok) {
         setAmounts({});
+        setPieceAmounts({});
         router.refresh();
       }
     });
@@ -114,11 +128,19 @@ export function TransferStockButton({
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm text-[var(--text-primary)]">{line.name}</p>
                       <p className="numeric text-xs text-[var(--text-muted)]">
-                        {line.sku} · {line.onHand} on board
+                        {line.sku} ·{" "}
+                        {formatHolding(
+                          { units: line.onHand, pieces: line.onHandPieces },
+                          line.unit,
+                          { empty: "nothing" },
+                        )}{" "}
+                        on board
                       </p>
                     </div>
                     <Input
-                      aria-label={`Quantity of ${line.name} to move`}
+                      aria-label={line.onHandPieces > 0
+                        ? `Whole ${line.unit}s of ${line.name} to move`
+                        : `Quantity of ${line.name} to move`}
                       value={amounts[line.productId] ?? ""}
                       onChange={(e) => {
                         const next = e.target.value.replace(/[^\d]/g, "");
@@ -128,6 +150,24 @@ export function TransferStockButton({
                       placeholder="0"
                       className="numeric w-20 shrink-0 text-center"
                     />
+                    {/*
+                      The loose half, only where the stranded van is
+                      actually carrying singles. Nothing to move means
+                      nothing to type.
+                    */}
+                    {line.onHandPieces > 0 && (
+                      <Input
+                        aria-label={`Loose pieces of ${line.name} to move`}
+                        value={pieceAmounts[line.productId] ?? ""}
+                        onChange={(e) => {
+                          const next = e.target.value.replace(/[^\d]/g, "");
+                          setPieceAmounts((prev) => ({ ...prev, [line.productId]: next }));
+                        }}
+                        inputMode="numeric"
+                        placeholder="0"
+                        className="numeric w-20 shrink-0 text-center"
+                      />
+                    )}
                   </li>
                 ))}
               </ul>

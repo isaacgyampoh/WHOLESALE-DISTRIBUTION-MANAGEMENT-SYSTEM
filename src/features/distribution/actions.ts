@@ -1165,7 +1165,7 @@ export async function transferVanStockAction(input: {
   fromVanId: string;
   toVanId: string;
   reason: string;
-  lines: { productId: string; quantity: number }[];
+  lines: { productId: string; quantity: number; pieces?: number }[];
 }): Promise<{ ok: boolean; message?: string; moved?: number }> {
   const actor = await requirePermission("inventory.transfer");
 
@@ -1179,14 +1179,21 @@ export async function transferVanStockAction(input: {
     return { ok: false, message: "Say why the stock is moving." };
   }
 
-  const lines = (input.lines ?? []).filter((l) => l.quantity > 0);
+  // Either half is enough to make a line worth moving. A van stranded
+  // with nothing but loose singles still has stock to hand over.
+  const lines = (input.lines ?? []).filter(
+    (l) => (l.quantity ?? 0) > 0 || (l.pieces ?? 0) > 0);
   if (lines.length === 0) return { ok: false, message: "Nothing was selected to move." };
 
   const supabase = await createSupabaseServerClient();
   const { error } = await supabase.rpc("transfer_van_stock", {
     p_from_van: input.fromVanId,
     p_to_van: input.toVanId,
-    p_lines: lines.map((l) => ({ product_id: l.productId, quantity: l.quantity })),
+    p_lines: lines.map((l) => ({
+      product_id: l.productId,
+      quantity: l.quantity ?? 0,
+      pieces: l.pieces ?? 0,
+    })),
     p_reason: input.reason.trim(),
   });
 
@@ -1211,7 +1218,8 @@ export async function transferVanStockAction(input: {
       via: "van_transfer",
       from: (from?.code as string) ?? input.fromVanId,
       lines: lines.length,
-      units: lines.reduce((s, l) => s + l.quantity, 0),
+      units: lines.reduce((s, l) => s + (l.quantity ?? 0), 0),
+      pieces: lines.reduce((s, l) => s + (l.pieces ?? 0), 0),
       reason: input.reason.trim(),
     },
   });

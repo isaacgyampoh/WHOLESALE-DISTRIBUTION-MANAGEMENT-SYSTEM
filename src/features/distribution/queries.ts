@@ -806,7 +806,13 @@ export async function getLoadDetail(loadId: string): Promise<Result<LoadDetail |
 }
 
 export interface VanTransferContext {
-  lines: { productId: string; name: string; sku: string; onHand: number }[];
+  lines: {
+    productId: string; name: string; sku: string;
+    onHand: number;
+    /** The loose half, kept apart from the units as everywhere else. */
+    onHandPieces: number;
+    unit: string;
+  }[];
   otherVans: { id: string; code: string }[];
 }
 
@@ -820,12 +826,21 @@ export interface VanTransferContext {
 export async function getVanTransferContext(vanId: string): Promise<VanTransferContext> {
   const supabase = await createSupabaseServerClient();
 
+  const transferCapabilities = await getCapabilities();
+
   const [{ data: stock }, { data: vans }] = await Promise.all([
     supabase
       .from("van_stock_summary")
-      .select("product_id, product_name, sku, qty_on_hand")
+      .select(transferCapabilities.loosePieces
+        ? "product_id, product_name, sku, qty_on_hand, qty_pieces, unit_of_measure"
+        : "product_id, product_name, sku, qty_on_hand")
       .eq("van_id", vanId)
-      .gt("qty_on_hand", 0)
+      // Either half is stock worth rescuing. Filtering on full units
+      // alone would leave a product that is nothing but singles off the
+      // list, stranded on a van nobody is driving.
+      .or(transferCapabilities.loosePieces
+        ? "qty_on_hand.gt.0,qty_pieces.gt.0"
+        : "qty_on_hand.gt.0")
       .order("product_name"),
     supabase
       .from("vans")
@@ -836,11 +851,13 @@ export async function getVanTransferContext(vanId: string): Promise<VanTransferC
   ]);
 
   return {
-    lines: (stock ?? []).map((r) => ({
+    lines: ((stock ?? []) as unknown as Record<string, unknown>[]).map((r) => ({
       productId: r.product_id as string,
       name: (r.product_name as string) ?? "Unknown product",
       sku: (r.sku as string) ?? "",
       onHand: Number(r.qty_on_hand ?? 0),
+      onHandPieces: Number(r.qty_pieces ?? 0),
+      unit: (r.unit_of_measure as string) ?? "unit",
     })),
     otherVans: (vans ?? []).map((v) => ({ id: v.id as string, code: v.code as string })),
   };

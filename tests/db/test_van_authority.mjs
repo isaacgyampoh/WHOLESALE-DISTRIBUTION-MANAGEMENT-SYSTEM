@@ -386,6 +386,45 @@ head("a broken-down van hands its stock to another");
   const toItself = await asUser(boss,
     `select transfer_van_stock($1,$1,$2::jsonb,'Nonsense')`, [vanA, lines]);
   ok("a van cannot transfer to itself", !toItself.ok);
+
+  // The loose half of a stranded van has to travel too, or the singles
+  // stay recorded against a vehicle nobody is driving.
+  await c.query(`update products set units_per_case=12 where id=$1`, [product]);
+  await c.query(
+    `insert into stock_movements (org_id, product_id, van_id, type, quantity, pieces,
+                                  reference_type, created_by)
+     values ($1,$2,$3,'transfer_in',0,9,'test',null)`,
+    [org, product, vanA]);
+
+  // Read back inside the transaction the transfer runs in: asUser rolls
+  // back when it returns, so balances checked afterwards are the ones
+  // from before and both assertions would pass without moving anything.
+  const withPieces = await asUserSteps(boss, [
+    [`select public.transfer_van_stock($1,$2,$3::jsonb,'breakdown')`,
+     [vanA, vanB, JSON.stringify([{ product_id: product, quantity: 1, pieces: 4 }])]],
+    [`select
+        (select coalesce(qty_pieces,0) from van_inventory
+          where van_id=$1 and product_id=$3) as gone,
+        (select coalesce(qty_pieces,0) from van_inventory
+          where van_id=$2 and product_id=$3) as arrived`,
+     [vanA, vanB, product]],
+  ]);
+  ok("a transfer carries loose pieces as well", withPieces.ok, withPieces.error ?? "");
+  const moved = withPieces.ok ? withPieces.rows[0] : { gone: -1, arrived: -1 };
+  ok("they leave the broken van", Number(moved.gone) === 5, `(${moved.gone})`);
+  ok("and arrive on the other", Number(moved.arrived) === 4, `(${moved.arrived})`);
+
+  const tooManyLoose = await asUser(boss,
+    `select public.transfer_van_stock($1,$2,$3::jsonb,'greedy')`,
+    [vanA, vanB, JSON.stringify([{ product_id: product, quantity: 0, pieces: 999 }])]);
+  ok("more loose pieces than are on board is refused", !tooManyLoose.ok);
+  ok("and the cartons on board do not cover it",
+     /loose pieces/.test(tooManyLoose.error ?? ""), (tooManyLoose.error ?? "").slice(0, 60));
+
+  const nothing = await asUser(boss,
+    `select public.transfer_van_stock($1,$2,$3::jsonb,'empty')`,
+    [vanA, vanB, JSON.stringify([{ product_id: product, quantity: 0, pieces: 0 }])]);
+  ok("a line that moves nothing is refused", !nothing.ok);
 }
 
 head("stock counts full units and loose pieces, independently");
