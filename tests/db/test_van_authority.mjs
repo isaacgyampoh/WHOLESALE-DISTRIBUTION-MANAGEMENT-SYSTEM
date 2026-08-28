@@ -32,13 +32,35 @@ const asUser = async (id, sql, params) => {
   finally { await c.query("rollback"); }
 };
 
+/**
+ * The same, for a sequence of statements that has to be observed from
+ * inside the transaction that wrote it.
+ *
+ * A data-modifying CTE is not visible to the rest of its own statement -
+ * the outer query reads the snapshot taken before it ran - so checking
+ * what a function did needs a second statement, not a cleverer first
+ * one. Returns the rows of the last.
+ */
+const asUserSteps = async (id, steps) => {
+  await c.query("begin");
+  await c.query("select set_config('request.jwt.claims',$1,true)",
+    [JSON.stringify({ sub: id, role: "authenticated" })]);
+  await c.query("set local role authenticated");
+  try {
+    let last;
+    for (const [sql, params] of steps) last = await c.query(sql, params);
+    return { ok: true, rows: last.rows };
+  } catch (e) { return { ok: false, error: e.message }; }
+  finally { await c.query("rollback"); }
+};
+
 const org = (await c.query(
   `insert into organizations (name, slug) values ('Van Co','van-co') returning id`)).rows[0].id;
 
-const mkUser = async (name, role) => (await c.query(
+const mkUser = async (name, role, inOrg) => (await c.query(
   `insert into auth.users (email, raw_user_meta_data) values ($1,$2::jsonb) returning id`,
   [`${name.replace(/\W/g, "")}@van.test`,
-   JSON.stringify({ full_name: name, role, org_id: org })])).rows[0].id;
+   JSON.stringify({ full_name: name, role, org_id: inOrg ?? org })])).rows[0].id;
 
 const driverA = await mkUser("Kofi Driver", "driver");
 const sellerA = await mkUser("Nana Seller", "salesperson");
@@ -436,6 +458,287 @@ head("stock counts full units and loose pieces, independently");
   ok("the pack size is recorded but never applied on its own",
      Number((await c.query(`select units_per_case u from products where id=$1`, [milk]))
        .rows[0].u) === 12 && (await held()).pieces === 5);
+}
+
+// ===================================================================
+// Opening a carton is an act, not arithmetic
+// ===================================================================
+{
+  head("opening a carton is something somebody does");
+
+  const org4 = (await c.query(
+    `insert into organizations (name, slug) values ('Conv Ltd','conv-ltd') returning id`)).rows[0].id;
+  const wh4 = (await c.query(
+    `insert into warehouses (org_id, code, name) values ($1,'CV','Conv Depot') returning id`,
+    [org4])).rows[0].id;
+  const cat4 = (await c.query(
+    `insert into categories (org_id, name) values ($1,'Drinks') returning id`, [org4])).rows[0].id;
+
+  // In org4, so that the refusals under test are the ones the messages
+  // describe rather than the tenant check answering first.
+  const boss4 = await mkUser("Conv Office", "admin", org4);
+  const seller4 = await mkUser("Conv Seller", "salesperson", org4);
+
+  const soda = (await c.query(
+    `insert into products (org_id, sku, name, unit_of_measure, units_per_case,
+                           list_price, cost_price, category_id)
+     values ($1,'SODA','Cola','carton',12,120,60,$2) returning id`,
+    [org4, cat4])).rows[0].id;
+  const rice = (await c.query(
+    `insert into products (org_id, sku, name, unit_of_measure, units_per_case,
+                           list_price, cost_price, category_id)
+     values ($1,'RICE','Rice','bag',1,200,150,$2) returning id`,
+    [org4, cat4])).rows[0].id;
+
+  const held = async (id) => {
+    const r = (await c.query(
+      `select qty_on_hand u, qty_pieces p from inventory where warehouse_id=$1 and product_id=$2`,
+      [wh4, id])).rows[0];
+    return { units: Number(r?.u ?? 0), pieces: Number(r?.p ?? 0) };
+  };
+
+  await c.query(
+    `insert into stock_movements (org_id, product_id, warehouse_id, type, quantity, pieces,
+                                  reference_type, created_by)
+     values ($1,$2,$3,'opening_stock',10,0,'test',null), ($1,$4,$3,'opening_stock',10,0,'test',null)`,
+    [org4, soda, wh4, rice]);
+
+  const convert = (id, action, units, reason = "Shop wants singles") =>
+    c.query(`select public.convert_stock_units($1,$2,null,$3,$4,$5)`,
+            [id, wh4, action, units, reason]);
+
+  await convert(soda, "open", 2);
+  let now = await held(soda);
+  ok("opening two cartons takes two off the shelf", now.units === 8, `(${now.units})`);
+  ok("and puts twenty-four pieces on it", now.pieces === 24, `(${now.pieces})`);
+
+  // The total is conserved. That is the whole test of a conversion:
+  // nothing was created and nothing destroyed, only re-formed.
+  ok("the stock is the same stock, in a different form",
+     8 * 12 + 24 === 10 * 12, `(${8 * 12 + 24} pieces either way)`);
+
+  await convert(soda, "pack", 1);
+  now = await held(soda);
+  ok("packing one back up restores a carton", now.units === 9 && now.pieces === 12,
+     `(${now.units} cartons + ${now.pieces} pieces)`);
+
+  const tooMany = await asUser(boss4,
+    `select public.convert_stock_units($1,$2,null,'open',99,'greedy')`, [soda, wh4]);
+  ok("opening more than is there is refused", !tooMany.ok);
+  ok("and says what is actually there",
+     /Only 9 cartons there/.test(tooMany.error ?? ""), (tooMany.error ?? "").slice(0, 60));
+
+  const tooFew = await asUser(boss4,
+    `select public.convert_stock_units($1,$2,null,'pack',5,'greedy')`, [soda, wh4]);
+  ok("packing more than the loose pieces allow is refused", !tooFew.ok);
+
+  // The one that matters most: a product nobody has given a pack size
+  // cannot be opened at all. Otherwise one bag of rice becomes one
+  // piece of rice and the two words drift apart forever.
+  const noPack = await asUser(boss4,
+    `select public.convert_stock_units($1,$2,null,'open',1,'why not')`, [rice, wh4]);
+  ok("a product with no pack size cannot be opened", !noPack.ok);
+  ok("and is told to set one first",
+     /No pack size is set/.test(noPack.error ?? ""), (noPack.error ?? "").slice(0, 60));
+
+  const noReason = await asUser(boss4,
+    `select public.convert_stock_units($1,$2,null,'open',1,'')`, [soda, wh4]);
+  ok("a conversion with no reason is refused", !noReason.ok);
+
+  const bothPlaces = await asUser(boss4,
+    `select public.convert_stock_units($1,$2,$3,'open',1,'confused')`, [soda, wh4, vanA]);
+  ok("naming a warehouse and a van at once is refused", !bothPlaces.ok);
+
+  // A salesperson may not re-form stock on their own authority.
+  const bySeller = await asUser(seller4,
+    `select public.convert_stock_units($1,$2,null,'open',1,'for a customer')`, [soda, wh4]);
+  ok("a salesperson may not open cartons", !bySeller.ok);
+
+  const pair = (await c.query(
+    `select type, quantity, pieces, reference_type, reference_id
+       from stock_movements
+      where product_id=$1 and reference_type='unit_opened'
+      order by created_at, type`, [soda])).rows;
+  ok("opening writes two movements", pair.length === 2);
+  ok("under one reference", pair.length === 2 && pair[0].reference_id === pair[1].reference_id);
+  ok("one taking the carton, one giving the pieces",
+     pair.length === 2 &&
+     pair.some((r) => r.type === "conversion_out" && Number(r.quantity) === 2 && Number(r.pieces) === 0) &&
+     pair.some((r) => r.type === "conversion_in" && Number(r.quantity) === 0 && Number(r.pieces) === 24));
+}
+
+// ===================================================================
+// The van carries pieces through the whole round
+// ===================================================================
+{
+  head("a van is loaded, sells and returns in both halves");
+
+  const load = (await c.query(
+    `insert into van_loads (org_id, van_id, driver_id, warehouse_id, load_number,
+                            load_date, status, opening_float)
+     values ($1,$2,$3,$4,'VL-PIECES',current_date,'loaded',0) returning id`,
+    [org, vanB, driverA, warehouse])).rows[0].id;
+
+  // The depot must actually hold loose pieces before any can be loaded,
+  // and the only honest way to get them is to open something.
+  await c.query(`update products set units_per_case=12 where id=$1`, [product]);
+  // The depot has to hold cartons before any can be opened - the vans
+  // were seeded directly in the earlier sections and the shelf itself
+  // may be empty.
+  await c.query(
+    `insert into stock_movements (org_id, product_id, warehouse_id, type, quantity, pieces,
+                                  reference_type, created_by)
+     values ($1,$2,$3,'opening_stock',20,0,'test',null)`,
+    [org, product, warehouse]);
+  await c.query(`select public.convert_stock_units($1,$2,null,'open',3,'for the round')`,
+                [product, warehouse]);
+
+  await c.query(
+    `insert into van_load_items (org_id, load_id, product_id, qty_loaded, qty_loaded_pieces,
+                                 unit_price, unit_cost)
+     values ($1,$2,$3,4,10,5,3)`,
+    [org, load, product]);
+
+  const boardBefore = {
+    units: Number((await c.query(
+      `select coalesce(qty_on_hand,0) q from van_inventory where van_id=$1 and product_id=$2`,
+      [vanB, product])).rows[0]?.q ?? 0),
+    pieces: Number((await c.query(
+      `select coalesce(qty_pieces,0) q from van_inventory where van_id=$1 and product_id=$2`,
+      [vanB, product])).rows[0]?.q ?? 0),
+  };
+
+  const dispatched = await c.query(`select public.dispatch_van_load($1)`, [load]);
+  ok("the load dispatches with both halves", dispatched.rowCount === 1);
+
+  const onBoard = async (van) => {
+    const r = (await c.query(
+      `select qty_on_hand u, qty_pieces p from van_inventory where van_id=$1 and product_id=$2`,
+      [van, product])).rows[0];
+    return { units: Number(r?.u ?? 0), pieces: Number(r?.p ?? 0) };
+  };
+
+  // Measured against what the van already held, not a fixed number: the
+  // earlier sections put stock on this van and a hard-coded total here
+  // would break every time one of them changed.
+  let board = await onBoard(vanB);
+  ok("the van receives the cartons", board.units === boardBefore.units + 4,
+     `(${boardBefore.units} + 4 = ${board.units})`);
+  ok("and the loose pieces", board.pieces === boardBefore.pieces + 10, `(${board.pieces})`);
+
+  // Selling two cartons and three singles, on one line.
+  const sellerC = await mkUser("Yaw Pieces", "salesperson");
+  const sale = (await c.query(
+    `insert into van_sales (org_id, van_id, load_id, salesperson_id, driver_id, customer_id,
+                            sale_number, sale_type, status, subtotal, total)
+     values ($1,$2,$3,$4,$5,$6,'VS-PIECES','cash','draft',13,13) returning id`,
+    [org, vanB, load, sellerC, driverA, customer])).rows[0].id;
+  await c.query(
+    `insert into van_sale_items (org_id, sale_id, product_id, quantity, pieces,
+                                 unit_price, piece_price)
+     values ($1,$2,$3,2,3,5,1)`,
+    [org, sale, product]);
+
+  // The money the pieces are worth has to reach the line total, which is
+  // a generated column that counted only full units until 0051. Two
+  // cartons at 5 and three singles at 1 is 13, not 10.
+  const money = (await c.query(
+    `select line_subtotal s, line_total t from van_sale_items where sale_id=$1`, [sale])).rows[0];
+  ok("the loose pieces are charged for", Number(money.s) === 13, `(${money.s})`);
+  ok("and reach the line total", Number(money.t) === 13, `(${money.t})`);
+
+  // Their own salesperson: one active van per person, and the earlier
+  // sections have already crewed the others.
+  await c.query(`insert into van_assignments (org_id, van_id, member_id, crew_role, assigned_at)
+                 values ($1,$2,$3,'salesperson',now())`, [org, vanB, sellerC]);
+
+  // Read back inside the same transaction the sale runs in: asUser rolls
+  // back when it returns, so a balance checked afterwards would be the
+  // balance from before and every assertion here would pass by accident.
+  const sold = await asUserSteps(sellerC, [
+    [`select public.complete_van_sale($1,13)`, [sale]],
+    [`select qty_on_hand u, qty_pieces p from van_inventory
+       where van_id = $1 and product_id = $2`, [vanB, product]],
+  ]);
+  ok("the salesperson completes the mixed sale", sold.ok, sold.error ?? "");
+
+  const afterSale = sold.ok
+    ? { units: Number(sold.rows[0].u), pieces: Number(sold.rows[0].p) }
+    : { units: -1, pieces: -1 };
+  ok("two cartons leave the van", afterSale.units === board.units - 2,
+     `(${board.units} - 2 = ${afterSale.units})`);
+  ok("and three pieces with them", afterSale.pieces === board.pieces - 3,
+     `(${board.pieces} - 3 = ${afterSale.pieces})`);
+
+  // More pieces than are on board, judged on its own.
+  const greedy = (await c.query(
+    `insert into van_sales (org_id, van_id, load_id, salesperson_id, driver_id, customer_id,
+                            sale_number, sale_type, status, subtotal, total)
+     values ($1,$2,$3,$4,$5,$6,'VS-GREEDY','cash','draft',99,99) returning id`,
+    [org, vanB, load, sellerC, driverA, customer])).rows[0].id;
+  await c.query(
+    `insert into van_sale_items (org_id, sale_id, product_id, quantity, pieces,
+                                 unit_price, piece_price)
+     values ($1,$2,$3,0,99,1,1)`,
+    [org, greedy, product]);
+
+  const refused = await asUser(sellerC, `select public.complete_van_sale($1,99)`, [greedy]);
+  ok("selling more loose pieces than are on board is refused", !refused.ok);
+  ok("and cartons on board do not cover it",
+     /loose pieces/.test(refused.error ?? ""), (refused.error ?? "").slice(0, 70));
+
+  // What comes back at the end of the round.
+  const ret = (await c.query(
+    `insert into van_returns (org_id, van_id, load_id, driver_id, warehouse_id,
+                              return_number, status)
+     values ($1,$2,$3,$4,$5,'VR-PIECES','submitted') returning id`,
+    [org, vanB, load, driverA, warehouse])).rows[0].id;
+  // qty_missing and qty_missing_pieces are both generated - what was
+  // expected, less what came back good, less what came back broken.
+  // Everything the van is actually carrying has to be accounted for, in
+  // both halves, or it does not come back empty.
+  await c.query(
+    `insert into van_return_items (org_id, return_id, product_id,
+                                   qty_expected, qty_returned_good, qty_damaged,
+                                   qty_expected_pieces, qty_returned_good_pieces,
+                                   qty_damaged_pieces)
+     values ($1,$2,$3,$4,$5,1,$6,$7,1)`,
+    [org, ret, product, board.units, board.units - 2, board.pieces, board.pieces - 2]);
+
+  const leftOver = (await c.query(
+    `select qty_missing m, qty_missing_pieces mp from van_return_items where return_id=$1`,
+    [ret])).rows[0];
+  ok("what is unaccounted for is worked out, not typed",
+     Number(leftOver.m) === 1 && Number(leftOver.mp) === 1,
+     `(${leftOver.m} cartons + ${leftOver.mp} pieces)`);
+
+  const approved = await c.query(`select public.approve_van_return($1)`, [ret]);
+  ok("the return is approved", approved.rowCount === 1);
+
+  const after = await onBoard(vanB);
+  ok("the van is emptied of both halves", after.units === 0 && after.pieces === 0,
+     `(${after.units} cartons + ${after.pieces} pieces)`);
+
+  const backAtDepot = (await c.query(
+    `select quantity, pieces from stock_movements
+      where reference_type='van_return' and warehouse_id=$1 and type='transfer_in'`,
+    [warehouse])).rows[0];
+  ok("the good stock reaches the warehouse in both halves",
+     Number(backAtDepot?.quantity) === board.units - 2 &&
+     Number(backAtDepot?.pieces) === board.pieces - 2,
+     `(${backAtDepot?.quantity} cartons + ${backAtDepot?.pieces} pieces)`);
+
+  const damaged = (await c.query(
+    `select quantity, pieces from stock_movements
+      where reference_type='van_return' and type='damage'`)).rows[0];
+  ok("damage is recorded in both halves",
+     Number(damaged?.quantity) === 1 && Number(damaged?.pieces) === 1);
+
+  const missing = (await c.query(
+    `select quantity, pieces from stock_movements
+      where reference_type='van_return' and type='shortage'`)).rows[0];
+  ok("and so is what nobody can account for",
+     Number(missing?.quantity) === 1 && Number(missing?.pieces) === 1);
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);
