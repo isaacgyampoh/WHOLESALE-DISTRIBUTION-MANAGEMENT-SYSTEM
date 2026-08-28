@@ -121,7 +121,7 @@ expected_enums (typname, members) as (
   values
     ('credit_txn_type',       'charge,payment,adjustment,write_off'),
     ('invoice_status',        'draft,issued,partially_paid,paid,overdue,void'),
-    ('movement_type',         'receipt,issue,adjustment_in,adjustment_out,transfer_in,transfer_out,customer_return,supplier_return,damage,shortage'),
+    ('movement_type',         'receipt,issue,adjustment_in,adjustment_out,transfer_in,transfer_out,customer_return,supplier_return,damage,shortage,opening_stock,stocktake_in,stocktake_out'),
     ('order_status',          'draft,confirmed,picking,packed,shipped,delivered,cancelled'),
     ('payment_method',        'cash,bank_transfer,cheque,card,mobile_money'),
     ('po_status',             'draft,submitted,partially_received,received,cancelled'),
@@ -911,6 +911,19 @@ report as (
                              where schemaname = 'public' and indexname = 'profiles_active_pin_key')
                then 'OK' else 'FAIL' end,
           'Sign-in is by PIN alone, so a shared PIN would make the account ambiguous'
+  -- ---- every movement type moves stock somewhere (0043, 0044) -------
+  union all select 81, 'Stock: every movement type has a direction', 'all',
+          coalesce((select string_agg(e.enumlabel, ', ')
+             from pg_enum e join pg_type t on t.oid = e.enumtypid
+            where t.typname = 'movement_type'
+              and public.movement_direction(e.enumlabel::public.movement_type) is null),
+            'all'),
+          case when not exists (
+            select 1 from pg_enum e join pg_type t on t.oid = e.enumtypid
+             where t.typname = 'movement_type'
+               and public.movement_direction(e.enumlabel::public.movement_type) is null)
+               then 'OK' else 'FAIL' end,
+          'A null direction does not miscount the balance, it replaces it with null'
 )
 select ord as "#", check_name as "check", expected, actual, status, detail
 from report

@@ -222,6 +222,52 @@ head("a van's stock is its own");
   ok("neither is the sum of both", await onVan(vanA) !== 150);
 }
 
+head("every movement type has a direction");
+{
+  // A type without one does not miscount the balance - the trigger
+  // multiplies null by the quantity and the inventory row stops being a
+  // number. Three labels reached production in exactly that state.
+  const missing = await c.query(`
+    select e.enumlabel v from pg_enum e join pg_type t on t.oid = e.enumtypid
+     where t.typname = 'movement_type'
+       and public.movement_direction(e.enumlabel::public.movement_type) is null`);
+  ok("no movement type is left without one", missing.rowCount === 0,
+     missing.rows.map((r) => r.v).join(", "));
+
+  // And the ones that were missing behave, rather than merely resolving.
+  const org2 = (await c.query(
+    `insert into organizations (name, slug) values ('Dir Co','dir-co') returning id`)).rows[0].id;
+  const wh2 = (await c.query(
+    `insert into warehouses (org_id, code, name) values ($1,'W2','Shed') returning id`,
+    [org2])).rows[0].id;
+  const cat2 = (await c.query(
+    `insert into categories (org_id, name) values ($1,'C2') returning id`, [org2])).rows[0].id;
+  const prod2 = (await c.query(
+    `insert into products (org_id, sku, name, unit_of_measure, list_price, cost_price, category_id)
+     values ($1,'DIR-1','Direction Test','piece',5,2,$2) returning id`, [org2, cat2])).rows[0].id;
+
+  const level = async () => Number((await c.query(
+    `select coalesce(qty_on_hand,0) q from inventory where warehouse_id=$1 and product_id=$2`,
+    [wh2, prod2])).rows[0]?.q ?? 0);
+
+  const move = async (type, qty) => c.query(
+    `insert into stock_movements (org_id, product_id, warehouse_id, type, quantity,
+                                  reference_type, created_by)
+     values ($1,$2,$3,$4::public.movement_type,$5,'test',null)`,
+    [org2, prod2, wh2, type, qty]);
+
+  await move("opening_stock", 100);
+  ok("opening_stock adds to the shelf", await level() === 100, `(${await level()})`);
+
+  await move("stocktake_out", 7);
+  ok("stocktake_out takes off it", await level() === 93, `(${await level()})`);
+
+  await move("stocktake_in", 2);
+  ok("stocktake_in puts back on it", await level() === 95, `(${await level()})`);
+
+  ok("and the balance is still a number, not null", (await level()) !== null);
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 await c.end();
 process.exit(fail ? 1 : 0);

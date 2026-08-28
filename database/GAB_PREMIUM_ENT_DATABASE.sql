@@ -11724,3 +11724,90 @@ comment on function public.complete_van_sale(uuid, numeric) is
   'Complete a van sale: check the seller is crewed on the van, check the '
   'van carries the goods, take the money or raise the credit, and issue '
   'the stock off the van.';
+
+
+-- ====================================================================
+-- 0043_name_the_movements_that_exist.sql
+-- ====================================================================
+-- ===================================================================
+-- 0043  Name the movements that already exist
+-- ===================================================================
+--
+-- The production database carries three movement types that this
+-- repository never declared: opening_stock, stocktake_in and
+-- stocktake_out. They arrived with a migration from another line of
+-- work whose remaining half was never applied, so the labels exist and
+-- nothing knows what they mean.
+--
+-- movement_direction returns null for all three. The trigger that keeps
+-- inventory in step multiplies that null by the quantity, and writes the
+-- result:
+--
+--   delta := movement_direction(new.type) * new.quantity;   -- null
+--   qty_on_hand := qty_on_hand + delta;                     -- null
+--
+-- So a movement using any of them does not merely fail to count - it
+-- takes the running balance with it. Nothing writes one today, which is
+-- the only reason no stock has been lost, but the labels are selectable
+-- from the enum and the next caller to reach for the obvious name finds
+-- the trap.
+--
+-- This migration declares them here so a fresh install matches the
+-- database that exists. 0044 gives them their direction - separately,
+-- because PostgreSQL will not let a value be used in the same
+-- transaction that added it, the same reason 0032 shipped alone.
+
+alter type public.movement_type add value if not exists 'opening_stock';
+alter type public.movement_type add value if not exists 'stocktake_in';
+alter type public.movement_type add value if not exists 'stocktake_out';
+
+
+-- ====================================================================
+-- 0044_every_movement_has_a_direction.sql
+-- ====================================================================
+-- ===================================================================
+-- 0044  Every movement has a direction
+-- ===================================================================
+--
+-- The three labels 0043 declares had no direction, and a movement type
+-- without one is worse than a missing type: movement_direction returns
+-- null, the trigger multiplies it by the quantity, and the inventory row
+-- it updates becomes null rather than wrong. The balance is not off by
+-- some amount - it stops being a number.
+--
+-- Written as a complete replacement rather than an addition so the
+-- mapping can be read in one piece, which is how it should be checked.
+--
+--   in    goods arriving, found, or coming back
+--   out   goods leaving, lost, or going back to a supplier
+--
+-- opening_stock is what was already on the shelf the day a product is
+-- first written down. stocktake_in and stocktake_out are the two halves
+-- of a count: more on the shelf than the system believed, or less.
+
+create or replace function public.movement_direction(t public.movement_type)
+returns integer
+language sql
+immutable
+as $$
+  select case t
+    when 'receipt'          then  1
+    when 'transfer_in'      then  1
+    when 'customer_return'  then  1
+    when 'adjustment_in'    then  1
+    when 'opening_stock'    then  1
+    when 'stocktake_in'     then  1
+    when 'issue'            then -1
+    when 'transfer_out'     then -1
+    when 'supplier_return'  then -1
+    when 'adjustment_out'   then -1
+    when 'damage'           then -1
+    when 'shortage'         then -1
+    when 'stocktake_out'    then -1
+  end
+$$;
+
+comment on function public.movement_direction(public.movement_type) is
+  'Which way a movement moves stock. Every member of movement_type must '
+  'appear here: a null direction does not miscount the balance, it '
+  'replaces it with null.';
