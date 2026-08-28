@@ -212,6 +212,15 @@ export interface CategoryRow {
   description: string | null;
   isActive: boolean;
   productCount: number;
+  /** Units on hand across every product in this category. */
+  stockUnits: number;
+  /**
+   * What that stock is worth at cost, or null for a role not allowed to
+   * know. stock_summary already masks it per caller through
+   * product_cost(), so this is the same figure the rest of the system
+   * uses rather than a second opinion about it.
+   */
+  stockValue: number | null;
 }
 
 export async function listCategories(includeInactive = true): Promise<Result<CategoryRow[]>> {
@@ -233,9 +242,17 @@ export async function listCategories(includeInactive = true): Promise<Result<Cat
   // products_priced is the masked view every other read already goes
   // through, and counting rows in it needs no privilege the caller does
   // not already hold.
-  const [categories, counts] = await Promise.all([
+  // stock_summary is the existing valuation: it groups inventory by
+  // product, carries category_id, and computes stock_value as
+  // product_cost(id) * qty_on_hand - already null for a caller who may
+  // not see cost. Counting and valuing from one read keeps the category
+  // total and the product rows in agreement by construction.
+  const [categories, stock] = await Promise.all([
     query,
-    supabase.from("products_priced").select("category_id"),
+    supabase
+      .from("stock_summary")
+      .select("category_id, qty_on_hand, stock_value")
+      .eq("is_active", true),
   ]);
 
   if (categories.error) {
@@ -243,14 +260,27 @@ export async function listCategories(includeInactive = true): Promise<Result<Cat
     return { ok: false, message: "Something went wrong while loading categories." };
   }
 
-  // A failure here costs the counts, not the list. A category screen
-  // with the numbers missing is far better than no screen.
-  if (counts.error) console.error("[catalogue] category product counts failed", counts.error);
+  // A failure here costs the numbers, not the list. A category screen
+  // without totals is far better than no screen.
+  if (stock.error) console.error("[catalogue] category totals failed", stock.error);
 
-  const countBy = new Map<string, number>();
-  for (const row of (counts.data ?? []) as { category_id: string | null }[]) {
-    if (!row.category_id) continue;
-    countBy.set(row.category_id, (countBy.get(row.category_id) ?? 0) + 1);
+  const totals = new Map<string, { count: number; units: number; value: number | null }>();
+  for (const row of (stock.data ?? []) as Record<string, unknown>[]) {
+    const id = row.category_id as string | null;
+    if (!id) continue;
+
+    const entry = totals.get(id) ?? { count: 0, units: 0, value: null };
+    entry.count += 1;
+    entry.units += Number(row.qty_on_hand ?? 0);
+
+    // Null means "not allowed to know", and one unknown line makes the
+    // whole total unknowable - a partial sum presented as a total would
+    // be a wrong number rather than a withheld one.
+    const line = row.stock_value;
+    if (line !== null && line !== undefined) {
+      entry.value = (entry.value ?? 0) + parseAmount(line as string);
+    }
+    totals.set(id, entry);
   }
 
   return {
@@ -260,7 +290,9 @@ export async function listCategories(includeInactive = true): Promise<Result<Cat
       name: row.name as string,
       description: (row.description as string | null) ?? null,
       isActive: row.is_active as boolean,
-      productCount: countBy.get(row.id as string) ?? 0,
+      productCount: totals.get(row.id as string)?.count ?? 0,
+      stockUnits: totals.get(row.id as string)?.units ?? 0,
+      stockValue: totals.get(row.id as string)?.value ?? null,
     })),
   };
 }

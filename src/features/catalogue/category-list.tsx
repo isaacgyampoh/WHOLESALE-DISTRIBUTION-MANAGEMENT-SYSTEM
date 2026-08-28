@@ -11,7 +11,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { Input, Select, Textarea, Field } from "@/components/ui/field";
 import { Alert } from "@/components/ui/states";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/table";
-import { formatQuantity } from "@/lib/utils/format";
+import { formatQuantity, formatMoney } from "@/lib/utils/format";
 import type { CategoryRow } from "./queries";
 import { Plus, Pencil } from "lucide-react";
 
@@ -37,6 +37,8 @@ export function CategoryList({
             <tr>
               <Th>Category</Th>
               <Th numeric>Products</Th>
+              <Th numeric>Stock</Th>
+              <Th numeric>Value</Th>
               <Th>Status</Th>
               {canManage && <Th numeric>Actions</Th>}
             </tr>
@@ -45,7 +47,15 @@ export function CategoryList({
             {categories.map((category) => (
               <Tr key={category.id}>
                 <Td>
-                  <span className="block font-medium text-[var(--text-primary)]">{category.name}</span>
+                  {/* The name is the way in. It used to be plain text
+                      with only the count beside it linking anywhere,
+                      so the obvious thing to click did nothing. */}
+                  <Link
+                    href={`/products?category=${category.id}`}
+                    className="block font-medium text-[var(--text-primary)] hover:text-brand-700 hover:underline dark:hover:text-brand-300"
+                  >
+                    {category.name}
+                  </Link>
                   {category.description && (
                     <span className="text-xs text-[var(--text-muted)]">{category.description}</span>
                   )}
@@ -61,6 +71,18 @@ export function CategoryList({
                   ) : (
                     <span className="numeric text-[var(--text-muted)]">0</span>
                   )}
+                </Td>
+                <Td numeric>
+                  <span className={category.stockUnits === 0 ? "text-[var(--text-muted)]" : ""}>
+                    {formatQuantity(category.stockUnits)}
+                  </span>
+                </Td>
+                <Td numeric>
+                  {/* Null is "not allowed to know", which is a different
+                      thing from nothing, and shows as a dash. */}
+                  {category.stockValue === null
+                    ? <span className="text-[var(--text-muted)]">—</span>
+                    : formatMoney(category.stockValue)}
                 </Td>
                 <Td>
                   {category.isActive
@@ -89,9 +111,16 @@ export function CategoryList({
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="truncate font-medium text-[var(--text-primary)]">{category.name}</p>
+                <Link
+                  href={`/products?category=${category.id}`}
+                  className="block truncate font-medium text-[var(--text-primary)] hover:text-brand-700 hover:underline dark:hover:text-brand-300"
+                >
+                  {category.name}
+                </Link>
                 <p className="numeric mt-0.5 text-xs text-[var(--text-muted)]">
                   {formatQuantity(category.productCount)} product{category.productCount === 1 ? "" : "s"}
+                  {" · "}{formatQuantity(category.stockUnits)} in stock
+                  {category.stockValue !== null ? ` · ${formatMoney(category.stockValue)}` : ""}
                 </p>
               </div>
               {category.isActive
