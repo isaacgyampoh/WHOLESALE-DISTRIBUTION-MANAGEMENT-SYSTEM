@@ -353,41 +353,80 @@ export async function createReturnAction(
 
   const admin = createSupabaseAdminClient();
 
+  const returnCapabilities = await getCapabilities();
+
   // What the van is still carrying is what should be coming back. The
   // driver counts against it rather than typing it from memory.
+  //
+  // A van holding nothing but loose pieces still has something to bring
+  // back, so the filter looks at both halves rather than only the
+  // cartons - the old gt("qty_on_hand", 0) would have dropped that
+  // product from the return sheet entirely.
   const { data: onVan } = await admin
-    .from("van_inventory").select("product_id, qty_on_hand")
-    .eq("van_id", load.van_id).gt("qty_on_hand", 0);
+    .from("van_inventory")
+    .select(returnCapabilities.loosePieces
+      ? "product_id, qty_on_hand, qty_pieces"
+      : "product_id, qty_on_hand")
+    .eq("van_id", load.van_id)
+    .or(returnCapabilities.loosePieces
+      ? "qty_on_hand.gt.0,qty_pieces.gt.0"
+      : "qty_on_hand.gt.0");
 
-  const expected = new Map((onVan ?? []).map((r) => [r.product_id as string, Number(r.qty_on_hand)]));
+  // The select string is chosen at runtime, which the generated types
+  // cannot follow, so the shape is asserted once here rather than at
+  // every use.
+  const onVanRows = (onVan ?? []) as unknown as {
+    product_id: string; qty_on_hand: number | null; qty_pieces?: number | null;
+  }[];
+
+  const expected = new Map(onVanRows.map((r) => [r.product_id, Number(r.qty_on_hand ?? 0)]));
+  const expectedPieces = new Map(
+    onVanRows.map((r) => [r.product_id, Number(r.qty_pieces ?? 0)]));
 
   const productIds = formData.getAll("productId").map(String);
   const good = formData.getAll("qtyGood").map(String);
   const damaged = formData.getAll("qtyDamaged").map(String);
+  const goodPieces = formData.getAll("qtyGoodPieces").map(String);
+  const damagedPieces = formData.getAll("qtyDamagedPieces").map(String);
   const reasons = formData.getAll("damageReason").map(String);
 
   const lines: {
-    productId: string; expected: number; good: number; damaged: number; reason: string | null;
+    productId: string; expected: number; good: number; damaged: number;
+    expectedPieces: number; goodPieces: number; damagedPieces: number;
+    reason: string | null;
   }[] = [];
 
   for (const [i, productId] of productIds.entries()) {
     if (!productId) continue;
     const exp = expected.get(productId) ?? 0;
+    const expPieces = expectedPieces.get(productId) ?? 0;
     const g = (good[i] ?? "0").trim() || "0";
     const d = (damaged[i] ?? "0").trim() || "0";
-    if (!WHOLE.test(g) || !WHOLE.test(d)) {
+    const gp = (goodPieces[i] ?? "0").trim() || "0";
+    const dp = (damagedPieces[i] ?? "0").trim() || "0";
+    if (![g, d, gp, dp].every((v) => WHOLE.test(v))) {
       return { status: "error", message: "Quantities must be whole numbers.", values };
     }
-    const gn = Number(g), dn = Number(d);
+    const gn = Number(g), dn = Number(d), gpn = Number(gp), dpn = Number(dp);
     if (gn + dn > exp) {
       return {
         status: "error", values,
         message: `More was returned than went out: ${gn + dn} against ${exp} on the van.`,
       };
     }
+    // The loose half against its own expectation. Cartons coming back
+    // cannot cover pieces that were never on board.
+    if (gpn + dpn > expPieces) {
+      return {
+        status: "error", values,
+        message: `More loose pieces were returned than went out: ` +
+                 `${gpn + dpn} against ${expPieces} on the van.`,
+      };
+    }
     lines.push({
       productId, expected: exp, good: gn, damaged: dn,
-      reason: dn > 0 ? (reasons[i] ?? "").trim() || "Not stated" : null,
+      expectedPieces: expPieces, goodPieces: gpn, damagedPieces: dpn,
+      reason: (dn > 0 || dpn > 0) ? (reasons[i] ?? "").trim() || "Not stated" : null,
     });
   }
 
@@ -414,6 +453,13 @@ export async function createReturnAction(
       org_id: actor.organizationId, return_id: ret.id, product_id: l.productId,
       qty_expected: l.expected, qty_returned_good: l.good,
       qty_damaged: l.damaged, damage_reason: l.reason,
+      // qty_missing and qty_missing_pieces are generated - what was
+      // expected, less what came back good, less what came back broken.
+      ...(returnCapabilities.loosePieces ? {
+        qty_expected_pieces: l.expectedPieces,
+        qty_returned_good_pieces: l.goodPieces,
+        qty_damaged_pieces: l.damagedPieces,
+      } : {}),
     })),
   );
   if (lineError) {

@@ -741,6 +741,77 @@ head("stock counts full units and loose pieces, independently");
      Number(missing?.quantity) === 1 && Number(missing?.pieces) === 1);
 }
 
+// ===================================================================
+// The offline path writes the same sale as the online one
+// ===================================================================
+{
+  head("a sale made with no signal keeps its loose pieces");
+
+  // sync_submit is the other way a sale reaches this database - queued
+  // on the phone, replayed later - and it writes the line tables itself
+  // rather than going back through the server action. A gap here is
+  // silent: the goods are handed over, the line is written without its
+  // pieces, and nothing fails.
+  // Its own van and its own salesperson: one open load per van, one
+  // active van per person, and the earlier sections have used the rest.
+  const vanC = (await c.query(
+    `insert into vans (org_id, code, registration_no, is_active)
+     values ($1,'VAN-C','GT-333-33',true) returning id`, [org])).rows[0].id;
+  const sellerD = await mkUser("Esi Offline", "salesperson");
+  await c.query(`insert into van_assignments (org_id, van_id, member_id, crew_role, assigned_at)
+                 values ($1,$2,$3,'salesperson',now())`, [org, vanC, sellerD]);
+
+  const load = (await c.query(
+    `insert into van_loads (org_id, van_id, driver_id, warehouse_id, load_number,
+                            load_date, status, opening_float)
+     values ($1,$2,$3,$4,'VL-OFFLINE',current_date,'loaded',0) returning id`,
+    [org, vanC, driverA, warehouse])).rows[0].id;
+
+  await c.query(
+    `insert into van_load_items (org_id, load_id, product_id, qty_loaded, qty_loaded_pieces,
+                                 unit_price, unit_cost)
+     values ($1,$2,$3,2,6,5,3)`,
+    [org, load, product]);
+  await c.query(`select public.dispatch_van_load($1)`, [load]);
+
+  const payload = {
+    load_id: load,
+    customer_id: customer,
+    sale_type: "cash",
+    amount_paid: 13,
+    lines: [{
+      product_id: product,
+      quantity: 2,
+      pieces: 3,
+      unit_price: 5,
+      piece_price: 1,
+      tax_rate: 0,
+    }],
+  };
+
+  const replayed = await asUserSteps(sellerD, [
+    [`select public.sync_submit($1::uuid, 'phone-1', 'van_sale'::public.sync_operation,
+                                $2::jsonb, now())`,
+     ["11111111-1111-1111-1111-111111111111", JSON.stringify(payload)]],
+    [`select i.quantity, i.pieces, i.piece_price, i.line_total
+        from van_sale_items i
+        join van_sales s on s.id = i.sale_id
+       where s.load_id = $1`, [load]],
+  ]);
+
+  ok("the queued sale replays", replayed.ok, replayed.error ?? "");
+  const line = replayed.ok ? replayed.rows[0] : null;
+  ok("its full units survive the trip", Number(line?.quantity) === 2, `(${line?.quantity})`);
+  ok("and so do its loose pieces", Number(line?.pieces) === 3, `(${line?.pieces})`);
+  ok("the pieces carry the price they were sold at",
+     Number(line?.piece_price) === 1, `(${line?.piece_price})`);
+  // The whole point: two cartons at 5 and three singles at 1 is 13.
+  // Before 0053 this line would have totalled 10 and nobody would have
+  // been asked for the difference.
+  ok("and the customer is charged for both", Number(line?.line_total) === 13,
+     `(${line?.line_total})`);
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 await c.end();
 process.exit(fail ? 1 : 0);

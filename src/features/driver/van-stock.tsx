@@ -7,6 +7,7 @@ import { EmptyState, Alert } from "@/components/ui/states";
 import { formatQuantity, formatMoney, formatDateTime } from "@/lib/utils/format";
 import { Boxes } from "lucide-react";
 import type { OfflineSnapshot } from "@/lib/offline/queue";
+import { formatHolding } from "@/lib/catalogue/quantity";
 
 /**
  * What is on the van right now.
@@ -23,7 +24,10 @@ export function VanStock({ initial }: { initial?: OfflineSnapshot | null }) {
   const stock = snapshot?.stock ?? [];
   const priceBy = new Map((snapshot?.prices ?? []).map((p) => [p.product_id, p.unit_price]));
   const units = stock.reduce((s, i) => s + i.qty_on_hand, 0);
-  const empty = stock.filter((s) => s.qty_on_hand === 0).length;
+  const loose = stock.reduce((s, i) => s + (i.qty_pieces ?? 0), 0);
+  // Sold out means nothing left in either form. A van with no cartons
+  // but four singles still has something to sell.
+  const empty = stock.filter((s) => s.qty_on_hand === 0 && (s.qty_pieces ?? 0) === 0).length;
 
   if (!snapshot?.load) {
     return (
@@ -57,7 +61,9 @@ export function VanStock({ initial }: { initial?: OfflineSnapshot | null }) {
             </Badge>
           </div>
           <p className="numeric text-xs text-[var(--text-secondary)]">
-            {formatQuantity(units)} units across {formatQuantity(stock.length)} products
+            {formatQuantity(units)} units
+            {loose > 0 ? ` and ${formatQuantity(loose)} loose pieces` : ""}
+            {" "}across {formatQuantity(stock.length)} products
             {empty > 0 ? ` · ${empty} sold out` : ""}
           </p>
           {snapshot.cached_at && (
@@ -95,13 +101,18 @@ export function VanStock({ initial }: { initial?: OfflineSnapshot | null }) {
                     <p
                       className={
                         "numeric text-lg font-semibold " +
-                        (s.qty_on_hand === 0 ? "text-critical" : "text-[var(--text-primary)]")
+                        (s.qty_on_hand === 0 && (s.qty_pieces ?? 0) === 0
+                          ? "text-critical" : "text-[var(--text-primary)]")
                       }
                     >
-                      {formatQuantity(s.qty_on_hand)}
+                      {formatHolding(
+                        { units: s.qty_on_hand, pieces: s.qty_pieces ?? 0 },
+                        s.unit ?? "unit",
+                        { empty: "0" },
+                      )}
                     </p>
                     <p className="text-[0.6875rem] text-[var(--text-muted)]">
-                      {s.qty_on_hand === 0 ? "sold out" : "left"}
+                      {s.qty_on_hand === 0 && (s.qty_pieces ?? 0) === 0 ? "sold out" : "left"}
                     </p>
                   </div>
                 </li>

@@ -9,6 +9,7 @@ import { Field, Input, Textarea } from "@/components/ui/field";
 import { Card, CardBody } from "@/components/ui/card";
 import { Alert, EmptyState } from "@/components/ui/states";
 import { formatQuantity } from "@/lib/utils/format";
+import { formatHolding } from "@/lib/catalogue/quantity";
 import { PackageCheck, Check } from "lucide-react";
 
 /**
@@ -24,6 +25,9 @@ export function ReturnForm() {
   const { snapshot, online, refresh, sync } = useSync();
   const [good, setGood] = useState<Record<string, string>>({});
   const [damaged, setDamaged] = useState<Record<string, string>>({});
+  // The loose half, counted separately because it comes back separately.
+  const [goodPieces, setGoodPieces] = useState<Record<string, string>>({});
+  const [damagedPieces, setDamagedPieces] = useState<Record<string, string>>({});
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +61,8 @@ export function ReturnForm() {
   }
 
   const number = (value: string | undefined) => Number((value ?? "").trim() || 0);
+  const splittable = (row: { pieces_per_unit?: number; qty_pieces?: number }) =>
+    (row.pieces_per_unit ?? 1) > 1 || (row.qty_pieces ?? 0) > 0;
 
   async function submit() {
     setError(null);
@@ -64,16 +70,28 @@ export function ReturnForm() {
     const lines = stock.map((s) => {
       const g = number(good[s.product_id]);
       const d = number(damaged[s.product_id]);
+      const gp = number(goodPieces[s.product_id]);
+      const dp = number(damagedPieces[s.product_id]);
       return {
         product_id: s.product_id,
         qty_expected: s.qty_on_hand,
         qty_returned_good: g,
         qty_damaged: d,
-        damage_reason: d > 0 ? (reasons[s.product_id] ?? "").trim() || "Not stated" : null,
+        qty_expected_pieces: s.qty_pieces ?? 0,
+        qty_returned_good_pieces: gp,
+        qty_damaged_pieces: dp,
+        damage_reason: (d > 0 || dp > 0)
+          ? (reasons[s.product_id] ?? "").trim() || "Not stated"
+          : null,
         name: s.name,
+        unit: s.unit ?? "unit",
       };
     });
 
+    // Each half against its own expectation. Counting three loose pieces
+    // back onto a van that never carried any is a different mistake from
+    // counting back a carton too many, and saying so beats one number
+    // that could mean either.
     for (const line of lines) {
       if (line.qty_returned_good + line.qty_damaged > line.qty_expected) {
         setError(
@@ -82,12 +100,23 @@ export function ReturnForm() {
         );
         return;
       }
+      if (line.qty_returned_good_pieces + line.qty_damaged_pieces > line.qty_expected_pieces) {
+        setError(
+          `More loose pieces of ${line.name} were counted than the van is carrying ` +
+          `(${line.qty_returned_good_pieces + line.qty_damaged_pieces} against ` +
+          `${line.qty_expected_pieces}).`,
+        );
+        return;
+      }
     }
 
     setBusy(true);
     try {
       const missing = lines.reduce(
-        (s, l) => s + (l.qty_expected - l.qty_returned_good - l.qty_damaged), 0);
+        (s, l) => s
+          + (l.qty_expected - l.qty_returned_good - l.qty_damaged)
+          + (l.qty_expected_pieces - l.qty_returned_good_pieces - l.qty_damaged_pieces),
+        0);
       await enqueue(
         "van_return",
         {
@@ -100,6 +129,9 @@ export function ReturnForm() {
             qty_expected: l.qty_expected,
             qty_returned_good: l.qty_returned_good,
             qty_damaged: l.qty_damaged,
+            qty_expected_pieces: l.qty_expected_pieces,
+            qty_returned_good_pieces: l.qty_returned_good_pieces,
+            qty_damaged_pieces: l.qty_damaged_pieces,
             damage_reason: l.damage_reason,
           })),
         },
@@ -139,6 +171,12 @@ export function ReturnForm() {
       sum + (s.qty_on_hand - number(good[s.product_id]) - number(damaged[s.product_id])),
     0,
   );
+  const outstandingPieces = stock.reduce(
+    (sum, s) =>
+      sum + ((s.qty_pieces ?? 0)
+        - number(goodPieces[s.product_id]) - number(damagedPieces[s.product_id])),
+    0,
+  );
 
   return (
     <Card>
@@ -164,7 +202,13 @@ export function ReturnForm() {
               <div>
                 <p className="text-sm font-medium text-[var(--text-primary)]">{s.name}</p>
                 <p className="numeric text-xs text-[var(--text-muted)]">
-                  {s.sku} · {formatQuantity(s.qty_on_hand)} should be on board
+                  {s.sku} ·{" "}
+                  {formatHolding(
+                    { units: s.qty_on_hand, pieces: s.qty_pieces ?? 0 },
+                    s.unit ?? "unit",
+                    { empty: "nothing" },
+                  )}{" "}
+                  should be on board
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-2">
@@ -193,7 +237,45 @@ export function ReturnForm() {
                   />
                 </Field>
               </div>
-              {number(damaged[s.product_id]) > 0 && (
+              {/*
+                The loose half, and only where the van is actually
+                carrying singles. A second pair of boxes on a product
+                that was never split is two more things to get wrong at
+                the end of a long day.
+              */}
+              {splittable(s) && (
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label="Good pieces" htmlFor={`good-pieces-${s.product_id}`}>
+                    <Input
+                      id={`good-pieces-${s.product_id}`}
+                      inputMode="numeric"
+                      placeholder="0"
+                      value={goodPieces[s.product_id] ?? ""}
+                      onChange={(e) =>
+                        setGoodPieces((c) => ({
+                          ...c, [s.product_id]: e.target.value.replace(/\D/g, ""),
+                        }))
+                      }
+                      className="numeric h-14 text-base"
+                    />
+                  </Field>
+                  <Field label="Damaged pieces" htmlFor={`damaged-pieces-${s.product_id}`}>
+                    <Input
+                      id={`damaged-pieces-${s.product_id}`}
+                      inputMode="numeric"
+                      placeholder="0"
+                      value={damagedPieces[s.product_id] ?? ""}
+                      onChange={(e) =>
+                        setDamagedPieces((c) => ({
+                          ...c, [s.product_id]: e.target.value.replace(/\D/g, ""),
+                        }))
+                      }
+                      className="numeric h-14 text-base"
+                    />
+                  </Field>
+                </div>
+              )}
+              {(number(damaged[s.product_id]) > 0 || number(damagedPieces[s.product_id]) > 0) && (
                 <Field label="What happened to it?" htmlFor={`reason-${s.product_id}`}>
                   <Input
                     id={`reason-${s.product_id}`}
@@ -206,11 +288,18 @@ export function ReturnForm() {
               )}
               <Button
                 type="button" variant="outline" size="sm"
-                onClick={() =>
-                  setGood((c) => ({ ...c, [s.product_id]: String(s.qty_on_hand) }))
-                }
+                onClick={() => {
+                  setGood((c) => ({ ...c, [s.product_id]: String(s.qty_on_hand) }));
+                  setGoodPieces((c) => ({ ...c, [s.product_id]: String(s.qty_pieces ?? 0) }));
+                }}
               >
-                All {formatQuantity(s.qty_on_hand)} are good
+                All{" "}
+                {formatHolding(
+                  { units: s.qty_on_hand, pieces: s.qty_pieces ?? 0 },
+                  s.unit ?? "unit",
+                  { empty: "of it" },
+                )}{" "}
+                is good
               </Button>
             </div>
           ))}
@@ -224,7 +313,17 @@ export function ReturnForm() {
               (outstanding > 0 ? "text-critical" : "text-positive")
             }
           >
+            {/*
+              A count across every product on the van, so no one unit
+              word fits - "units" is the honest label here, and the
+              loose half is named rather than folded in.
+            */}
             {formatQuantity(outstanding)}
+            {outstandingPieces !== 0 && (
+              <span className="ml-2 text-base font-medium">
+                + {formatQuantity(outstandingPieces)} loose
+              </span>
+            )}
           </span>
         </div>
 
