@@ -13,7 +13,9 @@ import { Plus, Trash2, Truck, Send } from "lucide-react";
 
 export interface LoadOption { id: string; label: string }
 export interface LoadProduct {
-  id: string; name: string; sku: string; available: number; listPrice: number;
+  id: string; name: string; sku: string; listPrice: number;
+  /** How many sit in each warehouse, keyed by warehouse id. */
+  availableBy: Record<string, number>;
 }
 
 interface Line { key: string; productId: string; quantity: string }
@@ -38,6 +40,10 @@ export function CreateLoadButton({
   const [open, setOpen] = useState(false);
   const [state, formAction, pending] = useActionState(createLoadAction, INITIAL_DISTRIBUTION_STATE);
   const [lines, setLines] = useState<Line[]>([{ key: "l0", productId: "", quantity: "" }]);
+  // Availability belongs to a warehouse. The load comes out of one of
+  // them, and stock in another is no use to it - so the figures beside
+  // each product follow this rather than summing every site.
+  const [warehouseId, setWarehouseId] = useState("");
   const [nextKey, setNextKey] = useState(1);
 
   const productBy = new Map(products.map((p) => [p.id, p]));
@@ -98,7 +104,8 @@ export function CreateLoadButton({
             <Field label="Loads from" htmlFor="warehouseId" required
                    error={state.fieldErrors?.warehouseId}>
               <Select id="warehouseId" name="warehouseId" required
-                      defaultValue={state.values?.warehouseId}>
+                      value={warehouseId || (state.values?.warehouseId ?? "")}
+                      onChange={(e) => setWarehouseId(e.target.value)}>
                 <option value="">Choose a warehouse</option>
                 {warehouses.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
               </Select>
@@ -130,15 +137,34 @@ export function CreateLoadButton({
                         onChange={(e) => setLine(line.key, { productId: e.target.value })}
                       >
                         <option value="">Choose a product</option>
-                        {products.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name} ({formatQuantity(p.available)} available)
-                          </option>
-                        ))}
+                        {/*
+                          Every active product, whether or not it has
+                          stock here. The picker used to take page one of
+                          the catalogue and then drop anything showing
+                          none, so most of it was missing with nothing to
+                          say why. A line with none in this warehouse now
+                          says so and cannot be given a quantity.
+                        */}
+                        {products.map((p) => {
+                          const here = warehouseId ? (p.availableBy[warehouseId] ?? 0) : null;
+                          return (
+                            <option key={p.id} value={p.id} disabled={here === 0}>
+                              {p.name}
+                              {here === null
+                                ? ""
+                                : here > 0
+                                  ? ` (${formatQuantity(here)} available)`
+                                  : " (none in this warehouse)"}
+                            </option>
+                          );
+                        })}
                       </Select>
                       {product && (
                         <p className="numeric mt-1 text-xs text-[var(--text-muted)]">
                           {formatMoney(product.listPrice)} each
+                          {warehouseId
+                            ? ` · ${formatQuantity(product.availableBy[warehouseId] ?? 0)} here`
+                            : ""}
                         </p>
                       )}
                     </div>

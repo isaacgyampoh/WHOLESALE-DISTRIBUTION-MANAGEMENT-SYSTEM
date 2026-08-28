@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
 import { requireUser } from "@/lib/auth/session";
 import { can } from "@/types/permissions";
-import { listLoads, PAGE_SIZE } from "@/features/distribution/queries";
+import {
+  listLoads, PAGE_SIZE, listLoadableProducts,
+} from "@/features/distribution/queries";
 import { LoadList } from "@/features/distribution/load-list";
 import { CreateLoadButton } from "@/features/distribution/load-form";
 import { listVans, listAssignableDrivers } from "@/features/distribution/queries";
-import { listWarehouses, listProducts } from "@/features/catalogue/queries";
+import { listWarehouses } from "@/features/catalogue/queries";
 import { PageHeader } from "@/components/layout/page-header";
 import { Forbidden } from "@/components/layout/forbidden";
 import { Card } from "@/components/ui/card";
@@ -49,9 +51,11 @@ export default async function LoadsPage({
     canCreate ? listVans() : Promise.resolve(null),
     canCreate ? listAssignableDrivers() : Promise.resolve(null),
     canCreate ? listWarehouses() : Promise.resolve(null),
-    // Only what can actually go on a van: an inactive line or one with
-    // nothing available would be offered and then refused on save.
-    canCreate ? listProducts({ status: "active", page: 1 }) : Promise.resolve(null),
+    // Every active product with its stock per warehouse. This used to
+    // be page one of the product list - twenty-five of sixty-eight -
+    // filtered again to those showing stock, so most of the catalogue
+    // never reached the picker and nothing said why.
+    canCreate ? listLoadableProducts() : Promise.resolve(null),
   ]);
 
   const buildLoad = canCreate && vans?.ok && drivers?.ok && warehouses?.ok && products?.ok
@@ -61,12 +65,7 @@ export default async function LoadsPage({
             .map((v) => ({ id: v.id, label: `${v.code} · ${v.registrationNo}` }))}
           drivers={drivers.data.map((d) => ({ id: d.id, label: d.fullName }))}
           warehouses={warehouses.data.map((w) => ({ id: w.id, label: w.name }))}
-          products={products.data.products
-            .filter((p) => p.available > 0)
-            .map((p) => ({
-              id: p.id, name: p.name, sku: p.sku,
-              available: p.available, listPrice: p.listPrice,
-            }))}
+          products={products.data}
         />
       )
     : undefined;

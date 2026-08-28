@@ -822,3 +822,64 @@ export async function getVanTransferContext(vanId: string): Promise<VanTransferC
     otherVans: (vans ?? []).map((v) => ({ id: v.id as string, code: v.code as string })),
   };
 }
+
+export interface LoadableProduct {
+  id: string;
+  name: string;
+  sku: string;
+  unit: string;
+  listPrice: number;
+  /** How many are in each warehouse, keyed by warehouse id. */
+  availableBy: Record<string, number>;
+}
+
+/**
+ * Everything that could go on a van, and where it actually is.
+ *
+ * The load form used to take page one of the product list - twenty-five
+ * of sixty-eight - and then drop anything showing no stock, so most of
+ * the catalogue was simply missing from the picker with nothing to say
+ * why. It also summed availability across every warehouse, which meant
+ * it could offer stock sitting somewhere the load was not coming from.
+ *
+ * Unpaginated on purpose: a picker that silently ends at twenty-five is
+ * worse than a long list. A wholesale catalogue is hundreds of lines,
+ * not thousands, and this is one read.
+ */
+export async function listLoadableProducts(): Promise<Result<LoadableProduct[]>> {
+  const supabase = await createSupabaseServerClient();
+
+  const [{ data: products, error }, { data: levels }] = await Promise.all([
+    supabase
+      .from("products_priced")
+      .select("id, name, sku, unit_of_measure, list_price")
+      .eq("is_active", true)
+      .order("name"),
+    // Per warehouse, because a load comes out of one of them and stock
+    // in another is no use to it.
+    supabase.from("inventory").select("product_id, warehouse_id, qty_on_hand, qty_reserved"),
+  ]);
+
+  if (error) return failed("distribution", error, "Products could not be loaded.");
+
+  const availability = new Map<string, Record<string, number>>();
+  for (const row of levels ?? []) {
+    const productId = row.product_id as string;
+    const byWarehouse = availability.get(productId) ?? {};
+    byWarehouse[row.warehouse_id as string] =
+      Number(row.qty_on_hand ?? 0) - Number(row.qty_reserved ?? 0);
+    availability.set(productId, byWarehouse);
+  }
+
+  return {
+    ok: true,
+    data: (products ?? []).map((p) => ({
+      id: p.id as string,
+      name: p.name as string,
+      sku: (p.sku as string) ?? "",
+      unit: (p.unit_of_measure as string) ?? "unit",
+      listPrice: Number(p.list_price ?? 0),
+      availableBy: availability.get(p.id as string) ?? {},
+    })),
+  };
+}
