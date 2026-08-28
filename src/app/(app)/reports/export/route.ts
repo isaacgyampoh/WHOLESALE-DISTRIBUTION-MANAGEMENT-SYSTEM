@@ -69,6 +69,10 @@ const REPORTS: Record<string, Report> = {
       { header: "SKU", value: (r) => r.sku },
       { header: "Product", value: (r) => r.name },
       { header: "Units sold", value: (r) => r.quantity },
+      // Its own column, not folded into the units. A spreadsheet that
+      // added ten cartons to five singles would be worse than one that
+      // left the singles out.
+      { header: "Loose pieces sold", value: (r) => r.pieces },
       { header: "Revenue (GHS)", value: (r) => r.revenue },
     ],
   ),
@@ -118,6 +122,7 @@ const REPORTS: Record<string, Report> = {
       { header: "Category", value: (r) => r.categoryName },
       { header: "Product lines", value: (r) => r.productLines },
       { header: "Units", value: (r) => r.units },
+      { header: "Loose pieces", value: (r) => r.pieces },
       { header: "Value at cost (GHS)", value: (r) => r.value },
     ],
     true,

@@ -161,6 +161,8 @@ export default async function ReportsPage({
               ),
             },
             { header: "Units", numeric: true, cell: (r) => formatQuantity(r.quantity) },
+            { header: "Loose", numeric: true,
+              cell: (r) => r.pieces > 0 ? formatQuantity(r.pieces) : "-" },
             { header: "Revenue", numeric: true, cell: (r) => formatMoney(r.revenue) },
           ]}
         />
@@ -373,6 +375,8 @@ export default async function ReportsPage({
               cell: (r) => formatQuantity(r.productLines),
             },
             { header: "Units", numeric: true, cell: (r) => formatQuantity(r.units) },
+            { header: "Loose", numeric: true,
+              cell: (r) => r.pieces > 0 ? formatQuantity(r.pieces) : "-" },
             { header: "Value at cost", numeric: true, cell: (r) => formatMoney(r.value) },
           ]}
         />

@@ -21,6 +21,8 @@ export interface SalesByProductRow {
   sku: string;
   name: string;
   quantity: number;
+  /** Loose pieces sold, counted apart from the units as everywhere else. */
+  pieces: number;
   revenue: number;
 }
 
@@ -30,7 +32,7 @@ export async function salesByProduct(periodDays = 30): Promise<Result<SalesByPro
 
   const { data, error } = await supabase
     .from("van_sale_items")
-    .select("product_id, quantity, line_total, products(sku, name), van_sales!inner(sold_at, status)")
+    .select("product_id, quantity, pieces, line_total, products(sku, name), van_sales!inner(sold_at, status)")
     .gte("van_sales.sold_at", since)
     .neq("van_sales.status", "void");
 
@@ -45,9 +47,11 @@ export async function salesByProduct(periodDays = 30): Promise<Result<SalesByPro
       sku: product?.sku ?? "",
       name: product?.name ?? "Unknown product",
       quantity: 0,
+      pieces: 0,
       revenue: 0,
     };
     entry.quantity += Number(row.quantity ?? 0);
+    entry.pieces += Number(row.pieces ?? 0);
     entry.revenue += parseAmount(row.line_total as string);
     by.set(id, entry);
   }
@@ -178,6 +182,8 @@ export interface InventoryValueRow {
   categoryName: string;
   productLines: number;
   units: number;
+  /** Loose pieces, never added to the units - only to the value. */
+  pieces: number;
   value: number;
 }
 
@@ -191,11 +197,11 @@ export async function inventoryValueReport(): Promise<Result<InventoryValueRow[]
   const { data, error } = capabilities.maskedProductPricing
     ? await supabase
         .from("products_priced")
-        .select("id, categories(name), inventory(qty_on_hand), cost_price, is_active")
+        .select("id, categories(name), inventory(qty_on_hand, qty_pieces), units_per_case, cost_price, is_active")
         .eq("is_active", true)
     : await supabase
         .from("products")
-        .select("id, categories(name), inventory(qty_on_hand), is_active")
+        .select("id, categories(name), inventory(qty_on_hand, qty_pieces), units_per_case, is_active")
         .eq("is_active", true);
 
   if (error) return failed("reports", error, "The inventory report could not be built.");
@@ -203,12 +209,22 @@ export async function inventoryValueReport(): Promise<Result<InventoryValueRow[]
   const by = new Map<string, InventoryValueRow>();
   for (const row of (data ?? []) as unknown as Record<string, unknown>[]) {
     const name = (row.categories as { name?: string } | null)?.name ?? "Uncategorised";
-    const units = ((row.inventory as Array<{ qty_on_hand: number }> | null) ?? [])
-      .reduce((s, i) => s + Number(i.qty_on_hand ?? 0), 0);
-    const entry = by.get(name) ?? { categoryName: name, productLines: 0, units: 0, value: 0 };
+    const held = (row.inventory as Array<{ qty_on_hand: number; qty_pieces?: number }> | null) ?? [];
+    const units = held.reduce((s, i) => s + Number(i.qty_on_hand ?? 0), 0);
+    const pieces = held.reduce((s, i) => s + Number(i.qty_pieces ?? 0), 0);
+
+    const entry = by.get(name)
+      ?? { categoryName: name, productLines: 0, units: 0, pieces: 0, value: 0 };
     entry.productLines += 1;
     entry.units += units;
-    entry.value += units * parseAmount(row.cost_price as string);
+    entry.pieces += pieces;
+
+    // Value is the one place the two combine, because a piece really is
+    // worth its share of what the case cost - cost carries no margin to
+    // distort. The counts stay apart.
+    const cost = parseAmount(row.cost_price as string);
+    const pack = Number(row.units_per_case ?? 1);
+    entry.value += units * cost + (pack > 1 ? (pieces * cost) / pack : 0);
     by.set(name, entry);
   }
 
