@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { SellForm } from "@/features/driver/sell-form";
-import { getSellingRound } from "@/features/driver/queries";
+import { getSellingRound, diagnoseRound } from "@/features/driver/queries";
 import { getCapabilities } from "@/lib/db/capabilities";
 import { PageHeader } from "@/components/layout/page-header";
 
@@ -10,6 +10,11 @@ export default async function DriverSellPage() {
   // Rendered server-side so the till has the round on first paint. The
   // device's cached copy takes over for the offline case.
   const [round, capabilities] = await Promise.all([getSellingRound(), getCapabilities()]);
+
+  // Why there is nothing to sell, when there is nothing to sell. Only
+  // asked in that case: it is three more queries and the answer is
+  // uninteresting when the round is fine.
+  const blocker = round.ok && round.data?.load ? null : await diagnoseRound();
 
   return (
     <>
@@ -21,6 +26,7 @@ export default async function DriverSellPage() {
       <SellForm
         initial={round.ok ? round.data : null}
         canRecordMethods={capabilities.salePaymentMethods}
+        blocker={blocker}
       />
     </>
   );

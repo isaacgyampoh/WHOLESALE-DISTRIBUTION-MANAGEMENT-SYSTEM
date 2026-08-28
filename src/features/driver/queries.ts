@@ -489,3 +489,76 @@ export async function getVanDayActivity(vanId: string): Promise<Result<VanDayAct
     },
   };
 }
+
+export type RoundBlocker =
+  | { kind: "ready" }
+  | { kind: "no_van" }
+  | { kind: "van_inactive"; vanCode: string }
+  | { kind: "no_load"; vanCode: string }
+  | { kind: "awaiting_driver"; vanCode: string; loadNumber: string }
+  | { kind: "not_dispatched"; vanCode: string; loadNumber: string }
+  | { kind: "empty_van"; vanCode: string; loadNumber: string };
+
+/**
+ * Why there is nothing to sell.
+ *
+ * The screen used to say "no load has been dispatched to your van" for
+ * every one of these, which is true of only one of them and actionable
+ * in none. A salesperson standing in a yard needs to know which link of
+ * the chain is open and who closes it - the warehouse, the driver, or
+ * the office - because they cannot fix any of it themselves and the one
+ * thing they must not do is wait quietly.
+ *
+ * Warehouse -> load -> driver confirms -> dispatched -> van stock.
+ */
+export async function diagnoseRound(): Promise<RoundBlocker> {
+  const user = await requireUser();
+  const supabase = await createSupabaseServerClient();
+
+  const { data: assignment } = await supabase
+    .from("van_assignments")
+    .select("van_id, vans(code, is_active)")
+    .eq("member_id", user.id)
+    .is("unassigned_at", null)
+    .maybeSingle();
+
+  const van = assignment?.vans as { code?: string; is_active?: boolean } | null;
+  if (!assignment?.van_id || !van) return { kind: "no_van" };
+
+  const vanCode = van.code ?? "your van";
+  // An inactive van is a vehicle the office has taken off the road. The
+  // crew is still assigned to it, which is how somebody ends up on a van
+  // that cannot trade and is told only that nothing is loaded.
+  if (van.is_active === false) return { kind: "van_inactive", vanCode };
+
+  const { data: load } = await supabase
+    .from("van_loads")
+    .select("id, load_number, status, driver_confirmed_at")
+    .eq("van_id", assignment.van_id)
+    .in("status", ["draft", "loaded", "dispatched"])
+    .order("load_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!load) return { kind: "no_load", vanCode };
+
+  const loadNumber = (load.load_number as string) ?? "the load";
+
+  if (load.status !== "dispatched") {
+    // The driver signs for the goods before they can leave. Until they
+    // do, dispatch refuses and the van stays empty.
+    return load.driver_confirmed_at
+      ? { kind: "not_dispatched", vanCode, loadNumber }
+      : { kind: "awaiting_driver", vanCode, loadNumber };
+  }
+
+  const { data: stock } = await supabase
+    .from("van_stock_summary")
+    .select("product_id")
+    .eq("van_id", assignment.van_id)
+    .limit(1);
+
+  if (!stock?.length) return { kind: "empty_van", vanCode, loadNumber };
+
+  return { kind: "ready" };
+}

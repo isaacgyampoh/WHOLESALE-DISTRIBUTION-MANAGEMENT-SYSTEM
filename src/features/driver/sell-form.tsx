@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatMoney, formatQuantity } from "@/lib/utils/format";
 import { productImageUrl } from "@/lib/catalogue/image";
 import type { OfflineSnapshot } from "@/lib/offline/queue";
+import type { RoundBlocker } from "@/features/driver/queries";
 import {
   Minus, Plus, PackageX, Search, Check, Banknote, CreditCard, ShoppingCart,
   Smartphone, Split,
@@ -72,6 +73,7 @@ interface Completed {
 
 export function SellForm({
   initial,
+  blocker,
   /**
    * False where the database cannot record a payment breakdown. The till
    * then offers cash and credit only, as it did before methods existed -
@@ -80,6 +82,8 @@ export function SellForm({
   canRecordMethods = true,
 }: {
   initial?: OfflineSnapshot | null;
+  /** Why there is nothing to sell, worked out on the server. */
+  blocker?: RoundBlocker | null;
   canRecordMethods?: boolean;
 }) {
   const router = useRouter();
@@ -165,18 +169,22 @@ export function SellForm({
     }));
 
   // ---- no load, nothing to sell -------------------------------------
+  //
+  // Four different situations used to share one sentence, which was true
+  // of one of them and useful in none. A salesperson cannot fix any of
+  // these themselves, so the screen names the link that is open and who
+  // closes it.
   if (!snapshot?.load) {
+    const said = !online
+      ? {
+          title: "Your round is not on this phone",
+          body: "It was not cached before you lost signal. Reconnect once and it will be here.",
+        }
+      : describeBlocker(blocker);
+
     return (
       <Card>
-        <EmptyState
-          icon={PackageX}
-          title="Nothing loaded on your van"
-          description={
-            online
-              ? "No load has been dispatched to your van, so there is nothing to sell yet."
-              : "Your round was not cached before you lost signal. Reconnect once and it will be here."
-          }
-        />
+        <EmptyState icon={PackageX} title={said.title} description={said.body} />
       </Card>
     );
   }
@@ -847,4 +855,50 @@ export function SellForm({
       </p>
     </div>
   );
+}
+
+/**
+ * The open link in the chain, in words the salesperson can act on -
+ * which mostly means knowing whose door to knock on.
+ *
+ * Warehouse -> load -> driver confirms -> dispatched -> van stock.
+ */
+function describeBlocker(blocker?: RoundBlocker | null): { title: string; body: string } {
+  switch (blocker?.kind) {
+    case "no_van":
+      return {
+        title: "You are not on a van yet",
+        body: "A field salesperson sells from the van they are crewed on. Ask the office to put you on one, under Vans.",
+      };
+    case "van_inactive":
+      return {
+        title: `${blocker.vanCode} is off the road`,
+        body: "The office has marked this van inactive, so it cannot trade. Ask them to bring it back into service or to move you to another van.",
+      };
+    case "no_load":
+      return {
+        title: `Nothing has been loaded onto ${blocker.vanCode}`,
+        body: "The warehouse builds a load before a round can start. Ask them to load the van under Van loads.",
+      };
+    case "awaiting_driver":
+      return {
+        title: `${blocker.loadNumber} is waiting for your driver`,
+        body: `The goods are picked but your driver has not signed for them yet, so nothing has left the warehouse. Once they confirm ${blocker.loadNumber}, the office dispatches it and ${blocker.vanCode} is stocked.`,
+      };
+    case "not_dispatched":
+      return {
+        title: `${blocker.loadNumber} has not been dispatched`,
+        body: `Your driver has signed for it. The office releases it under Van loads, and then ${blocker.vanCode} is stocked and you can sell.`,
+      };
+    case "empty_van":
+      return {
+        title: `${blocker.vanCode} is empty`,
+        body: `${blocker.loadNumber} went out, but nothing is on board now - it has all been sold or returned. Ask the warehouse for another load.`,
+      };
+    default:
+      return {
+        title: "Nothing loaded on your van",
+        body: "No load has been dispatched to your van, so there is nothing to sell yet.",
+      };
+  }
 }
