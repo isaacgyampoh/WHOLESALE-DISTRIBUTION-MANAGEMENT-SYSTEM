@@ -366,6 +366,78 @@ head("a broken-down van hands its stock to another");
   ok("a van cannot transfer to itself", !toItself.ok);
 }
 
+head("stock counts full units and loose pieces, independently");
+{
+  // Ten cartons and five pieces is not seventy-five of anything. The
+  // two columns never convert into one another on their own: opening a
+  // carton is a recorded movement, not arithmetic the database does
+  // quietly.
+  const org3 = (await c.query(
+    `insert into organizations (name, slug) values ('Units Co','units-co') returning id`)).rows[0].id;
+  const wh3 = (await c.query(
+    `insert into warehouses (org_id, code, name) values ($1,'W3','Store') returning id`,
+    [org3])).rows[0].id;
+  const cat3 = (await c.query(
+    `insert into categories (org_id, name) values ($1,'C3') returning id`, [org3])).rows[0].id;
+  const milk = (await c.query(
+    `insert into products (org_id, sku, name, unit_of_measure, units_per_case,
+                           list_price, cost_price, category_id)
+     values ($1,'MILK','Milk','box',12,100,60,$2) returning id`, [org3, cat3])).rows[0].id;
+
+  const held = async () => {
+    const r = (await c.query(
+      `select qty_on_hand u, qty_pieces p from inventory where warehouse_id=$1 and product_id=$2`,
+      [wh3, milk])).rows[0];
+    return { units: Number(r?.u ?? 0), pieces: Number(r?.p ?? 0) };
+  };
+
+  const move = (type, units, pieces) => c.query(
+    `insert into stock_movements (org_id, product_id, warehouse_id, type, quantity, pieces,
+                                  reference_type, created_by)
+     values ($1,$2,$3,$4::public.movement_type,$5,$6,'test',null)`,
+    [org3, milk, wh3, type, units, pieces]);
+
+  await move("opening_stock", 10, 5);
+  let now = await held();
+  ok("opening stock records ten boxes and five pieces",
+     now.units === 10 && now.pieces === 5, `(${now.units} boxes + ${now.pieces} pieces)`);
+  ok("it is not multiplied into one number", now.units * now.pieces !== 50 || now.units === 10);
+
+  // Selling two boxes must not touch the loose pieces.
+  await move("issue", 2, 0);
+  now = await held();
+  ok("selling two boxes leaves the pieces alone",
+     now.units === 8 && now.pieces === 5, `(${now.units} boxes + ${now.pieces} pieces)`);
+
+  // Selling three pieces must not touch the boxes.
+  await move("issue", 0, 3);
+  now = await held();
+  ok("selling three pieces leaves the boxes alone",
+     now.units === 8 && now.pieces === 2, `(${now.units} boxes + ${now.pieces} pieces)`);
+
+  // Both halves in one movement, one direction.
+  await move("adjustment_in", 2, 3);
+  now = await held();
+  ok("a movement can carry both at once",
+     now.units === 10 && now.pieces === 5, `(${now.units} boxes + ${now.pieces} pieces)`);
+
+  const emptyMove = await asUser(boss,
+    `insert into stock_movements (org_id, product_id, warehouse_id, type, quantity, pieces,
+                                  reference_type, created_by)
+     values ($1,$2,$3,'issue',0,0,'test',null)`, [org3, milk, wh3]);
+  ok("a movement that moves nothing is refused", !emptyMove.ok);
+
+  const negative = await asUser(boss,
+    `insert into stock_movements (org_id, product_id, warehouse_id, type, quantity, pieces,
+                                  reference_type, created_by)
+     values ($1,$2,$3,'issue',0,-5,'test',null)`, [org3, milk, wh3]);
+  ok("a negative piece count is refused", !negative.ok);
+
+  ok("the pack size is recorded but never applied on its own",
+     Number((await c.query(`select units_per_case u from products where id=$1`, [milk]))
+       .rows[0].u) === 12 && (await held()).pieces === 5);
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 await c.end();
 process.exit(fail ? 1 : 0);
