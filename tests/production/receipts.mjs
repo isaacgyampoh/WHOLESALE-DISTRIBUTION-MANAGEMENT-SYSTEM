@@ -119,7 +119,12 @@ try {
 
   ok("the receipt loads for a visitor with no session", res?.status() === 200, `status=${res?.status()}`);
   ok("it is not the sign-in page", !/Enter your 4-digit PIN/i.test(body));
-  ok("it names the business", body.includes(org.name) || /GAB Premium Ent/i.test(body));
+  // Compared without regard to case: the organisation name is rendered
+  // through a CSS uppercase rule, and innerText returns the transformed
+  // text, so "Default Organization" comes back as "DEFAULT ORGANIZATION".
+  ok("it names the business",
+     body.toLowerCase().includes(org.name.toLowerCase())
+       || /gab premium ent/i.test(body));
   ok("it names the customer", body.includes(customer.name));
   ok("it shows the total", body.includes("25.00"));
   ok("it shows what is still owed", /Outstanding/i.test(body) && body.includes("15.00"));
