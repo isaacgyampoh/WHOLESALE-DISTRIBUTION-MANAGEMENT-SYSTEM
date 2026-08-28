@@ -309,6 +309,63 @@ head("the van loads list is readable by the people who use it");
      direct.ok ? "(READABLE)" : "");
 }
 
+head("a broken-down van hands its stock to another");
+{
+  // Van A carries 50 and van B nothing. When A breaks down the goods
+  // have to follow the round, and before this there was no way to move
+  // them at all - the only option was editing quantities by hand, which
+  // is the thing an audited ledger exists to prevent.
+  const before = { a: await onVan(vanA), b: await onVan(vanB) };
+  ok("van A is carrying stock to move", before.a > 0, `(${before.a})`);
+
+  const lines = JSON.stringify([{ product_id: product, quantity: 20 }]);
+
+  const bySeller = await asUser(sellerA,
+    `select transfer_van_stock($1,$2,$3::jsonb,'Van broke down')`, [vanA, vanB, lines]);
+  ok("a salesperson may not move stock between vans", !bySeller.ok,
+     bySeller.ok ? "(MOVED)" : "");
+
+  await c.query("begin");
+  await c.query("select set_config('request.jwt.claims',$1,true)",
+    [JSON.stringify({ sub: boss, role: "authenticated" })]);
+  await c.query("set local role authenticated");
+  const ref = (await c.query(
+    `select transfer_van_stock($1,$2,$3::jsonb,'Van broke down') r`, [vanA, vanB, lines])).rows[0].r;
+  await c.query("reset role");
+  await c.query("commit");
+
+  ok("the office can move it", Boolean(ref));
+  ok("it leaves the broken van", await onVan(vanA) === before.a - 20, `(${await onVan(vanA)})`);
+  ok("and arrives on the other", await onVan(vanB) === before.b + 20, `(${await onVan(vanB)})`);
+
+  // The pair, readable as one event.
+  const legs = await c.query(
+    `select type, quantity, van_id, reason from stock_movements
+      where reference_type='van_transfer' and reference_id=$1 order by type`, [ref]);
+  ok("two movements are written, not an edited number", legs.rowCount === 2);
+  ok("one out of the broken van",
+     legs.rows.some((l) => l.type === "transfer_out" && l.van_id === vanA));
+  ok("one into the other",
+     legs.rows.some((l) => l.type === "transfer_in" && l.van_id === vanB));
+  ok("both carry the reason", legs.rows.every((l) => /broke down/i.test(l.reason ?? "")));
+
+  // Nothing is created from nothing.
+  const tooMuch = await asUser(boss,
+    `select transfer_van_stock($1,$2,$3::jsonb,'Too much')`,
+    [vanA, vanB, JSON.stringify([{ product_id: product, quantity: 9999 }])]);
+  ok("more than is on board is refused", !tooMuch.ok, tooMuch.ok ? "(MOVED)" : "");
+  ok("and says what is actually there",
+     /only \d+ of/i.test(tooMuch.error ?? ""), (tooMuch.error ?? "").slice(0, 60));
+
+  const noReason = await asUser(boss,
+    `select transfer_van_stock($1,$2,$3::jsonb,'')`, [vanA, vanB, lines]);
+  ok("a transfer with no reason is refused", !noReason.ok);
+
+  const toItself = await asUser(boss,
+    `select transfer_van_stock($1,$1,$2::jsonb,'Nonsense')`, [vanA, lines]);
+  ok("a van cannot transfer to itself", !toItself.ok);
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 await c.end();
 process.exit(fail ? 1 : 0);

@@ -4,9 +4,10 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth/session";
 import { can } from "@/types/permissions";
 import {
-  getVanCrew, listAssignableDrivers, listAssignableSalespeople,
+  getVanCrew, listAssignableDrivers, listAssignableSalespeople, getVanTransferContext,
 } from "@/features/distribution/queries";
 import { AssignCrewButton, RemoveCrewButton } from "@/features/distribution/crew-forms";
+import { TransferStockButton } from "@/features/distribution/transfer-stock-form";
 import { PageHeader } from "@/components/layout/page-header";
 import { Forbidden } from "@/components/layout/forbidden";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -37,10 +38,14 @@ export default async function VanCrewPage({
   const { id } = await params;
   const mayCrew = can(user.role, "vans.crew");
 
-  const [result, drivers, sellers] = await Promise.all([
+  const mayMoveStock = can(user.role, "inventory.transfer");
+
+  const [result, drivers, sellers, transfer] = await Promise.all([
     getVanCrew(id),
     mayCrew ? listAssignableDrivers() : Promise.resolve(null),
     mayCrew ? listAssignableSalespeople() : Promise.resolve(null),
+    // What is on board and where it could go, for the breakdown case.
+    mayMoveStock ? getVanTransferContext(id) : Promise.resolve(null),
   ]);
 
   if (!result.ok) {
@@ -66,6 +71,14 @@ export default async function VanCrewPage({
           { label: "Vans", href: "/vans" },
           { label: "Crew" },
         ]}
+        actions={
+          // A van that breaks down mid-round needs its goods moved, and
+          // this is the page somebody is already looking at when it
+          // happens.
+          transfer
+            ? <TransferStockButton vanId={van.vanId} vanCode={van.vanCode} context={transfer} />
+            : undefined
+        }
       />
 
       <Link

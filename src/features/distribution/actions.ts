@@ -1065,3 +1065,73 @@ export async function removeCrewAction(
 
   return { status: "done", message: `${name} has been taken off ${code}.` };
 }
+
+/**
+ * Move stock from one van to another.
+ *
+ * For the van that breaks down mid-round: the salesperson can already be
+ * reassigned, and this is how the goods follow them. The database
+ * function does the work in one transaction and writes both legs on the
+ * existing ledger, so this only has to carry the answer back in words.
+ */
+export async function transferVanStockAction(input: {
+  fromVanId: string;
+  toVanId: string;
+  reason: string;
+  lines: { productId: string; quantity: number }[];
+}): Promise<{ ok: boolean; message?: string; moved?: number }> {
+  const actor = await requirePermission("inventory.transfer");
+
+  if (!input.fromVanId || !input.toVanId) {
+    return { ok: false, message: "Choose both vans." };
+  }
+  if (input.fromVanId === input.toVanId) {
+    return { ok: false, message: "Choose two different vans." };
+  }
+  if (!input.reason?.trim()) {
+    return { ok: false, message: "Say why the stock is moving." };
+  }
+
+  const lines = (input.lines ?? []).filter((l) => l.quantity > 0);
+  if (lines.length === 0) return { ok: false, message: "Nothing was selected to move." };
+
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase.rpc("transfer_van_stock", {
+    p_from_van: input.fromVanId,
+    p_to_van: input.toVanId,
+    p_lines: lines.map((l) => ({ product_id: l.productId, quantity: l.quantity })),
+    p_reason: input.reason.trim(),
+  });
+
+  if (error) {
+    console.error("[distribution] van transfer failed", error);
+    // The database names the product and the shortfall, which is what
+    // the person moving the goods needs to read.
+    return { ok: false, message: error.message.replace(/^.*?:\s*/, "") };
+  }
+
+  const [{ data: from }, { data: to }] = await Promise.all([
+    createSupabaseAdminClient().from("vans").select("code").eq("id", input.fromVanId).maybeSingle(),
+    createSupabaseAdminClient().from("vans").select("code").eq("id", input.toVanId).maybeSingle(),
+  ]);
+
+  await recordAudit(actor, {
+    action: "stock.adjusted",
+    targetType: "van",
+    targetId: input.toVanId,
+    targetLabel: (to?.code as string) ?? "",
+    after: {
+      via: "van_transfer",
+      from: (from?.code as string) ?? input.fromVanId,
+      lines: lines.length,
+      units: lines.reduce((s, l) => s + l.quantity, 0),
+      reason: input.reason.trim(),
+    },
+  });
+
+  revalidatePath("/vans");
+  revalidatePath("/loads");
+  revalidatePath("/inventory/movements");
+
+  return { ok: true, moved: lines.length };
+}

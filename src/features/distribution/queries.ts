@@ -781,3 +781,44 @@ export async function getLoadDetail(loadId: string): Promise<Result<LoadDetail |
     },
   };
 }
+
+export interface VanTransferContext {
+  lines: { productId: string; name: string; sku: string; onHand: number }[];
+  otherVans: { id: string; code: string }[];
+}
+
+/**
+ * What a van is carrying, and where it could go.
+ *
+ * For the breakdown case: the office needs to see what is stranded and
+ * pick the vehicle taking over, in one place, without leaving the van
+ * they are looking at.
+ */
+export async function getVanTransferContext(vanId: string): Promise<VanTransferContext> {
+  const supabase = await createSupabaseServerClient();
+
+  const [{ data: stock }, { data: vans }] = await Promise.all([
+    supabase
+      .from("van_stock_summary")
+      .select("product_id, product_name, sku, qty_on_hand")
+      .eq("van_id", vanId)
+      .gt("qty_on_hand", 0)
+      .order("product_name"),
+    supabase
+      .from("vans")
+      .select("id, code")
+      .eq("is_active", true)
+      .neq("id", vanId)
+      .order("code"),
+  ]);
+
+  return {
+    lines: (stock ?? []).map((r) => ({
+      productId: r.product_id as string,
+      name: (r.product_name as string) ?? "Unknown product",
+      sku: (r.sku as string) ?? "",
+      onHand: Number(r.qty_on_hand ?? 0),
+    })),
+    otherVans: (vans ?? []).map((v) => ({ id: v.id as string, code: v.code as string })),
+  };
+}

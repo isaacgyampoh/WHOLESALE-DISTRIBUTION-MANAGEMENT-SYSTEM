@@ -223,8 +223,8 @@ report as (
           case when e.n = 20 then 'OK' else 'FAIL' end,
           (select names from enum_bad)
   from enum_match e
-  union all select  7, 'Functions', '83', c.functions::text,
-          case when c.functions = 83 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  7, 'Functions', '84', c.functions::text,
+          case when c.functions = 84 then 'OK' else 'CHECK' end, '' from counts c
   union all select  8, 'Triggers', '83', c.triggers::text,
           case when c.triggers = 83 then 'OK' else 'CHECK' end, '' from counts c
   union all select  9, 'RLS policies', '89', c.policies::text,
@@ -234,8 +234,8 @@ report as (
           case when c.rls_tables = c.all_tables then 'OK' else 'FAIL' end, '' from counts c
   union all select 11, 'Generated columns', '13', c.generated_cols::text,
           case when c.generated_cols = 13 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 12, 'Indexes', '175', c.indexes::text,
-          case when c.indexes = 175 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 12, 'Indexes', '176', c.indexes::text,
+          case when c.indexes = 176 then 'OK' else 'CHECK' end, '' from counts c
   union all select 13, 'Constraints', '306', c.constraints::text,
           case when c.constraints = 306 then 'OK' else 'CHECK' end, '' from counts c
   union all select 14, 'Security functions present', '8', s.n::text,
