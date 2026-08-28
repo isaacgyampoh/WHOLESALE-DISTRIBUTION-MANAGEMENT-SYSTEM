@@ -21,8 +21,11 @@ import { FileOutput, PenLine } from "lucide-react";
  */
 export function IssueWaybillButton({
   loads,
+  anyDispatched = true,
 }: {
   loads: { id: string; loadNumber: string; vanCode: string; driverName: string; loadDate: string }[];
+  /** Whether any load has left the warehouse at all. */
+  anyDispatched?: boolean;
 }) {
   return (
     <RecordForm
@@ -44,9 +47,15 @@ export function IssueWaybillButton({
             label: `${l.loadNumber} · ${l.vanCode} · ${l.driverName}`,
           })),
           hint:
-            loads.length === 0
-              ? "Every dispatched load already has a waybill."
-              : undefined,
+            loads.length > 0
+              ? undefined
+              // Two different empty states, and saying the wrong one
+              // sends somebody looking for a waybill that was never
+              // missing. A waybill travels with goods, so there is
+              // nothing to issue until a load has actually gone out.
+              : anyDispatched
+                ? "Every dispatched load already has a waybill."
+                : "No load has been dispatched yet. Dispatch one from Van loads and it will appear here.",
         },
       ]}
     />

@@ -638,3 +638,27 @@ export async function getSaleReceipt(id: string): Promise<Result<SaleReceipt | n
     },
   };
 }
+
+/**
+ * Has any load actually gone out?
+ *
+ * Only used to choose between the two reasons the waybill picker can be
+ * empty: nothing dispatched yet, or everything dispatched already has
+ * one. Telling somebody the second when the first is true sends them
+ * looking for a waybill that was never missing.
+ */
+export async function hasDispatchedLoad(): Promise<boolean> {
+  const supabase = await createSupabaseServerClient();
+  const { count, error } = await supabase
+    .from("van_loads")
+    .select("id", { count: "exact", head: true })
+    .in("status", ["dispatched", "returned"]);
+
+  if (error) {
+    console.error("[documents] dispatched-load check failed", error);
+    // Assume the ordinary case rather than accusing the warehouse of
+    // having sent nothing out.
+    return true;
+  }
+  return (count ?? 0) > 0;
+}

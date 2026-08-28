@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { requireUser } from "@/lib/auth/session";
 import { can } from "@/types/permissions";
 import {
-  listWaybills, listLoadsAwaitingWaybill, PAGE_SIZE,
+  listWaybills, listLoadsAwaitingWaybill, PAGE_SIZE, hasDispatchedLoad,
 } from "@/features/documents/queries";
 import { WaybillList } from "@/features/documents/waybill-list";
 import { IssueWaybillButton } from "@/features/documents/waybill-forms";
@@ -25,6 +25,10 @@ export default async function WaybillsPage({
   if (!can(user.role, "documents.view")) return <Forbidden />;
 
   const filters = await searchParams;
+  // Whether anything has left the warehouse at all, so the empty
+  // waybill picker can say which of the two reasons it is empty for.
+  const anyDispatched = await hasDispatchedLoad();
+
   const [result, pending] = await Promise.all([
     listWaybills({
       status: filters.status,
@@ -45,7 +49,9 @@ export default async function WaybillsPage({
         description="What left the warehouse, where it went and who signed for it."
         breadcrumbs={[{ label: "Distribution" }, { label: "Waybills" }]}
         actions={
-          pending?.ok ? <IssueWaybillButton loads={pending.data} /> : undefined
+          pending?.ok
+            ? <IssueWaybillButton loads={pending.data} anyDispatched={anyDispatched} />
+            : undefined
         }
       />
 
