@@ -223,8 +223,8 @@ report as (
           case when e.n = 20 then 'OK' else 'FAIL' end,
           (select names from enum_bad)
   from enum_match e
-  union all select  7, 'Functions', '82', c.functions::text,
-          case when c.functions = 82 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  7, 'Functions', '83', c.functions::text,
+          case when c.functions = 83 then 'OK' else 'CHECK' end, '' from counts c
   union all select  8, 'Triggers', '83', c.triggers::text,
           case when c.triggers = 83 then 'OK' else 'CHECK' end, '' from counts c
   union all select  9, 'RLS policies', '89', c.policies::text,

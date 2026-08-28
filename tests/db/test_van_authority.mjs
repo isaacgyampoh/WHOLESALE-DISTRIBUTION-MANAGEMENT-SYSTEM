@@ -268,6 +268,47 @@ head("every movement type has a direction");
   ok("and the balance is still a number, not null", (await level()) !== null);
 }
 
+head("the van loads list is readable by the people who use it");
+{
+  // The page showed "Van loads could not be loaded" to everybody,
+  // administrators included. van_load_summary runs as its caller and its
+  // body named van_load_items.unit_cost, which 0023 deliberately does
+  // not grant - and a security_invoker view that names an ungranted
+  // column is refused in full, not merely for that column.
+  const asRole = async (uid, sql) => {
+    await c.query("begin");
+    await c.query("select set_config('request.jwt.claims',$1,true)",
+      [JSON.stringify({ sub: uid, role: "authenticated" })]);
+    await c.query("set local role authenticated");
+    try { return { ok: true, rows: (await c.query(sql)).rows }; }
+    catch (e) { return { ok: false, error: e.message }; }
+    finally { await c.query("rollback"); }
+  };
+
+  const asBoss = await asRole(boss,
+    "select load_number, line_count, loaded_value from van_load_summary");
+  ok("an administrator can read the loads list", asBoss.ok,
+     asBoss.ok ? `${asBoss.rows.length} row(s)` : asBoss.error.slice(0, 70));
+  ok("and the list is not empty", asBoss.ok && asBoss.rows.length > 0);
+  ok("and carries the value at cost", asBoss.ok && asBoss.rows[0].loaded_value !== null,
+     String(asBoss.rows?.[0]?.loaded_value));
+
+  // The driver reads the same view and must not learn what it cost.
+  const asDriver = await asRole(driverA,
+    "select load_number, loaded_value from van_load_summary");
+  ok("a driver can read their own load", asDriver.ok,
+     asDriver.ok ? `${asDriver.rows.length} row(s)` : asDriver.error.slice(0, 70));
+  ok("but not what it is worth at cost",
+     asDriver.ok && asDriver.rows.every((r) => r.loaded_value === null),
+     asDriver.ok ? String(asDriver.rows[0]?.loaded_value) : "");
+
+  // The underlying column stays out of reach, which is the point of the
+  // whole arrangement.
+  const direct = await asRole(boss, "select unit_cost from van_load_items limit 1");
+  ok("nobody reads unit_cost directly, not even the office", !direct.ok,
+     direct.ok ? "(READABLE)" : "");
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 await c.end();
 process.exit(fail ? 1 : 0);
