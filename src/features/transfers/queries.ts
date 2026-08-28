@@ -45,6 +45,9 @@ export interface TransferRow {
   qtySent: number;
   qtyReceived: number;
   qtyShort: number;
+  /** The loose half of what was sent and what is missing. */
+  piecesSent: number;
+  piecesShort: number;
   approvedAt: string | null;
   dispatchedAt: string | null;
   receivedAt: string | null;
@@ -62,8 +65,10 @@ const mapTransfer = (row: Record<string, unknown>): TransferRow => ({
   toWarehouse: (row.to_warehouse as string) ?? "Unknown",
   lineCount: Number(row.line_count ?? 0),
   qtySent: Number(row.qty_sent ?? 0),
+  piecesSent: Number(row.pieces_sent ?? 0),
   qtyReceived: Number(row.qty_received ?? 0),
   qtyShort: Number(row.qty_short ?? 0),
+  piecesShort: Number(row.pieces_short ?? 0),
   approvedAt: (row.approved_at as string) ?? null,
   dispatchedAt: (row.dispatched_at as string) ?? null,
   receivedAt: (row.received_at as string) ?? null,
@@ -143,7 +148,8 @@ export async function getTransfer(id: string): Promise<Result<TransferDetail | n
   const [items, reason] = await Promise.all([
     supabase
       .from("stock_transfer_items")
-      .select("id, product_id, quantity, qty_received, notes, products(name, sku, unit_of_measure)")
+      .select("id, product_id, quantity, pieces, qty_received, qty_received_pieces, notes, " +
+              "products(name, sku, unit_of_measure)")
       .eq("transfer_id", id),
     supabase.from("stock_transfers").select("cancelled_reason").eq("id", id).maybeSingle(),
   ]);
@@ -185,6 +191,7 @@ export async function getTransfer(id: string): Promise<Result<TransferDetail | n
           sku: product?.sku ?? "",
           unit: product?.unit_of_measure ?? "unit",
           quantity: Number(r.quantity ?? 0),
+          pieces: Number(r.pieces ?? 0),
           qtyReceived: r.qty_received === null || r.qty_received === undefined
             ? null
             : Number(r.qty_received),
@@ -236,7 +243,10 @@ export async function getTransferSummary(): Promise<Result<TransferSummary>> {
 /** Goods that have left one depot and not arrived at the other. */
 export async function listStockInTransit(): Promise<Result<{
   transferNumber: string; fromWarehouse: string; toWarehouse: string;
-  productName: string; sku: string; quantity: number; daysInTransit: number;
+  productName: string; sku: string; quantity: number;
+  /** Loose pieces in transit, counted apart from the units. */
+  pieces: number;
+  daysInTransit: number;
 }[]>> {
   const unavailable = await requireTransfers();
   if (unavailable) return unavailable;
@@ -259,6 +269,7 @@ export async function listStockInTransit(): Promise<Result<{
       productName: r.product_name as string,
       sku: r.sku as string,
       quantity: Number(r.quantity ?? 0),
+      pieces: Number(r.pieces ?? 0),
       daysInTransit: Number(r.days_in_transit ?? 0),
     })),
   };

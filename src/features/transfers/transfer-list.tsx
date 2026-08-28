@@ -56,12 +56,22 @@ export function TransferList({ transfers }: { transfers: TransferRow[] }) {
                   </span>
                 </Td>
                 <Td numeric>{formatQuantity(t.lineCount)}</Td>
-                <Td numeric>{formatQuantity(t.qtySent)}</Td>
+                <Td numeric>
+                  {formatQuantity(t.qtySent)}
+                  {t.piecesSent > 0 && (
+                    <span className="ml-1 text-[var(--text-muted)]">
+                      + {formatQuantity(t.piecesSent)} loose
+                    </span>
+                  )}
+                </Td>
                 {/* Only meaningful once something has been counted at the
                     other end, so a transfer still on the road shows a
                     dash rather than a reassuring zero. */}
                 <Td numeric className={t.qtyShort > 0 ? "text-critical" : ""}>
-                  {t.status === "received" ? formatQuantity(t.qtyShort) : "—"}
+                  {t.status === "received"
+                    ? formatQuantity(t.qtyShort) +
+                      (t.piecesShort > 0 ? ` + ${formatQuantity(t.piecesShort)} loose` : "")
+                    : "—"}
                 </Td>
                 <Td>
                   <Badge tone={TONE[t.status] ?? "neutral"}>
@@ -91,15 +101,17 @@ export function TransferList({ transfers }: { transfers: TransferRow[] }) {
                 </div>
                 <span className="numeric shrink-0 text-sm text-[var(--text-secondary)]">
                   {formatQuantity(t.qtySent)} units
+                  {t.piecesSent > 0 ? ` + ${formatQuantity(t.piecesSent)} loose` : ""}
                 </span>
               </div>
               <div className="mt-2 flex items-center justify-between gap-2">
                 <Badge tone={TONE[t.status] ?? "neutral"}>
                   {TRANSFER_STATUS_LABELS[t.status] ?? t.status}
                 </Badge>
-                {t.status === "received" && t.qtyShort > 0 ? (
+                {t.status === "received" && (t.qtyShort > 0 || t.piecesShort > 0) ? (
                   <span className="numeric text-xs text-critical">
-                    {formatQuantity(t.qtyShort)} short
+                    {formatQuantity(t.qtyShort)}
+                    {t.piecesShort > 0 ? ` + ${formatQuantity(t.piecesShort)} loose` : ""} short
                   </span>
                 ) : (
                   <span className="numeric text-xs text-[var(--text-muted)]">
