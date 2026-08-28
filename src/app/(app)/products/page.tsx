@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth/session";
 import { can } from "@/types/permissions";
-import { listProducts, listCategories, PAGE_SIZE } from "@/features/catalogue/queries";
+import {
+  listProducts, listCategories, PAGE_SIZE, listWarehouses,
+} from "@/features/catalogue/queries";
 import { ProductList, CreateProductButton } from "@/features/catalogue/product-list";
 import { CatalogueFilters } from "@/features/catalogue/catalogue-filters";
 import { PageHeader } from "@/components/layout/page-header";
@@ -41,6 +43,12 @@ export default async function ProductsPage({
     listCategories(),
   ]);
 
+  // Somewhere to put opening stock. Only fetched for people who may
+  // actually move stock - for everyone else the section is not shown
+  // and the query would be wasted.
+  const warehouses = can(user.role, "inventory.adjust") ? await listWarehouses() : null;
+  const stockLocations = warehouses?.ok ? warehouses.data : [];
+
   const narrowed = Boolean(
     filters.search ||
     (filters.category && filters.category !== "all") ||
@@ -59,7 +67,9 @@ export default async function ProductsPage({
         actions={
           can(user.role, "products.create") && categories.ok
             ? <CreateProductButton categories={categories.data}
-                                   canTrackBatches={capabilities.batchesAndExpiry} />
+                                   canTrackBatches={capabilities.batchesAndExpiry}
+                                   warehouses={stockLocations}
+                                   canEnterStock={can(user.role, "inventory.adjust")} />
             : undefined
         }
       />
@@ -133,7 +143,9 @@ export default async function ProductsPage({
                   description="Add the first product to start tracking stock."
                   action={categories.ok
                     ? <CreateProductButton categories={categories.data}
-                                           canTrackBatches={capabilities.batchesAndExpiry} />
+                                           canTrackBatches={capabilities.batchesAndExpiry}
+                                           warehouses={stockLocations}
+                                           canEnterStock={can(user.role, "inventory.adjust")} />
                     : undefined}
                 />
               ) : (

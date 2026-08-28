@@ -108,9 +108,13 @@ export function ProductList({ products }: { products: ProductRow[] }) {
 export function CreateProductButton({
   categories,
   canTrackBatches = true,
+  warehouses = [],
+  canEnterStock = false,
 }: {
   categories: CategoryRow[];
   canTrackBatches?: boolean;
+  warehouses?: { id: string; name: string }[];
+  canEnterStock?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -123,10 +127,13 @@ export function CreateProductButton({
         open={open}
         onClose={() => setOpen(false)}
         title="Add product"
-        description="Stock is added separately, so every quantity has a reason recorded."
+        description={canEnterStock && warehouses.length > 0
+          ? "Say what is already on the shelf and it is recorded as opening stock."
+          : "Stock is added separately, so every quantity has a reason recorded."}
         className="sm:max-w-lg"
       >
         <ProductForm categories={categories} canTrackBatches={canTrackBatches}
+                     warehouses={warehouses} canEnterStock={canEnterStock}
                      onDone={() => setOpen(false)} />
       </Dialog>
     </>

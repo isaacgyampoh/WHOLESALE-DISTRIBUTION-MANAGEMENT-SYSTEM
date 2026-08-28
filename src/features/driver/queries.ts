@@ -3,6 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { parseAmount } from "@/lib/utils/format";
 import { type Result, failed } from "@/lib/query/result";
 import { getCapabilities } from "@/lib/db/capabilities";
+import { requireUser } from "@/lib/auth/session";
 
 /**
  * The driver's own round.
@@ -171,11 +172,25 @@ export async function getDriverRound(driverId: string): Promise<Result<DriverRou
  * driver in any case; not asking makes that explicit.
  */
 export async function getSellingRound(): Promise<Result<OfflineSnapshotShape | null>> {
+  const user = await requireUser();
   const supabase = await createSupabaseServerClient();
 
+  // Whose assignment, said explicitly.
+  //
+  // This used to select every assignment row the caller could see and
+  // take the single one, leaning entirely on row level security to make
+  // that "theirs". It holds for a salesperson, who can see only their
+  // own row - but a manager opening this screen sees the whole
+  // organization's, and maybeSingle turns more than one row into an
+  // error, so the round came back empty with nothing to explain it.
+  //
+  // The van a person sells from is a fact about who they are. It is
+  // resolved from the session here and checked again in the database
+  // when the sale completes.
   const { data: assignment } = await supabase
     .from("van_assignments")
     .select("van_id, vans(id, code, registration_no)")
+    .eq("member_id", user.id)
     .is("unassigned_at", null)
     .maybeSingle();
 
@@ -380,6 +395,97 @@ export async function getMyVanCrew(userId: string): Promise<Result<MyVan | null>
       openLoad: (load.data?.load_number as string) ?? null,
       loadStatus: (load.data?.status as string) ?? null,
       loadDate: (load.data?.load_date as string) ?? null,
+    },
+  };
+}
+
+export interface VanSaleToday {
+  productId: string;
+  productName: string;
+  sku: string;
+  soldToday: number;
+  /** What is left on the van now. */
+  remaining: number;
+}
+
+export interface VanDayActivity {
+  lines: VanSaleToday[];
+  saleCount: number;
+  /** Who sold from this van today. The driver is not among them. */
+  soldBy: string[];
+}
+
+/**
+ * What left this van today, and who took it off.
+ *
+ * The driver's question, and the one the van page could not answer: the
+ * load went out at fifty and there are forty-five on the shelf, and
+ * nothing on screen accounted for the five. It is read-only on purpose -
+ * the driver is responsible for the vehicle, not the till.
+ */
+export async function getVanDayActivity(vanId: string): Promise<Result<VanDayActivity>> {
+  const supabase = await createSupabaseServerClient();
+
+  const since = new Date();
+  since.setHours(0, 0, 0, 0);
+
+  const { data, error } = await supabase
+    .from("van_sales")
+    .select(
+      // Named explicitly: van_sales has two foreign keys to profiles
+      // since the crew model, and a bare embed cannot be resolved.
+      "id, sold_at, salesperson:profiles!van_sales_salesperson_id_fkey(full_name), " +
+      "van_sale_items(product_id, quantity, products(name, sku))",
+    )
+    .eq("van_id", vanId)
+    .eq("status", "completed")
+    .gte("sold_at", since.toISOString());
+
+  if (error) return failed("driver", error, "Today's sales could not be loaded.");
+
+  const byProduct = new Map<string, VanSaleToday>();
+  const soldBy = new Set<string>();
+
+  for (const sale of (data ?? []) as unknown as Record<string, unknown>[]) {
+    const seller = (sale.salesperson as { full_name?: string } | null)?.full_name;
+    if (seller) soldBy.add(seller);
+
+    for (const item of (sale.van_sale_items ?? []) as Record<string, unknown>[]) {
+      const id = item.product_id as string;
+      const product = item.products as { name?: string; sku?: string } | null;
+      const line = byProduct.get(id) ?? {
+        productId: id,
+        productName: product?.name ?? "Unknown product",
+        sku: product?.sku ?? "",
+        soldToday: 0,
+        remaining: 0,
+      };
+      line.soldToday += Number(item.quantity ?? 0);
+      byProduct.set(id, line);
+    }
+  }
+
+  // What is still on board, so the two figures sit side by side and the
+  // arithmetic is visible rather than implied.
+  if (byProduct.size > 0) {
+    const { data: stock } = await supabase
+      .from("van_stock_summary")
+      .select("product_id, qty_on_hand")
+      .eq("van_id", vanId)
+      .in("product_id", [...byProduct.keys()]);
+
+    for (const row of stock ?? []) {
+      const line = byProduct.get(row.product_id as string);
+      if (line) line.remaining = Number(row.qty_on_hand ?? 0);
+    }
+  }
+
+  return {
+    ok: true,
+    data: {
+      lines: [...byProduct.values()].sort((a, b) => b.soldToday - a.soldToday),
+      saleCount: (data ?? []).length,
+      soldBy: [...soldBy],
     },
   };
 }

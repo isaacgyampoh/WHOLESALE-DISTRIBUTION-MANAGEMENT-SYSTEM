@@ -25,11 +25,17 @@ export function ProductForm({
   onDone,
   /** False where the database has no batch columns to store the answer. */
   canTrackBatches = true,
+  warehouses = [],
+  canEnterStock = false,
 }: {
   product?: ProductRow;
   categories: CategoryRow[];
   onDone?: () => void;
   canTrackBatches?: boolean;
+  /** Somewhere to put the opening stock. Empty on the edit form. */
+  warehouses?: { id: string; name: string }[];
+  /** Whether this person may move stock, not merely add a product. */
+  canEnterStock?: boolean;
 }) {
   const router = useRouter();
   const [state, submit, pending] = useActionState(
@@ -120,6 +126,52 @@ export function ProductForm({
           />
         </Field>
       </div>
+
+      {/*
+        Opening stock, on creation only.
+        
+        A business writing down a product it already has on the shelf
+        should say how much in the same breath. Sending them to the
+        stock count for it is asking them to reconcile a figure they
+        have not entered yet - the count answers "what is actually
+        there", which is a different question from "this is what we
+        have".
+
+        Absent when editing: changing stock later is an adjustment with
+        a reason, which is the product page's job, not this form's.
+      */}
+      {!product && canEnterStock && warehouses.length > 0 && (
+        <div className="rounded-[var(--radius-panel)] border border-[var(--border-subtle)] p-4">
+          <p className="mb-3 text-sm font-medium text-[var(--text-primary)]">
+            Opening stock
+          </p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="Quantity on hand" htmlFor="openingQty" error={err.openingQty}
+              hint="What is already on the shelf. Leave blank if none yet."
+            >
+              <Input
+                id="openingQty" name="openingQty" inputMode="numeric" placeholder="0"
+                defaultValue={v?.openingQty ?? ""}
+                aria-invalid={Boolean(err.openingQty)}
+              />
+            </Field>
+            <Field
+              label="Held at" htmlFor="openingWarehouseId" error={err.openingWarehouseId}
+            >
+              <Select
+                id="openingWarehouseId" name="openingWarehouseId"
+                defaultValue={v?.openingWarehouseId ?? warehouses[0]?.id ?? ""}
+                aria-invalid={Boolean(err.openingWarehouseId)}
+              >
+                {warehouses.map((w) => (
+                  <option key={w.id} value={w.id}>{w.name}</option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field

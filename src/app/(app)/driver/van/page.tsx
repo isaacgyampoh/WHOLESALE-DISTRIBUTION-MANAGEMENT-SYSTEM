@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { requireUser } from "@/lib/auth/session";
 import { can } from "@/types/permissions";
-import { getMyVanCrew } from "@/features/driver/queries";
+import { getMyVanCrew, getVanDayActivity } from "@/features/driver/queries";
 import { PageHeader } from "@/components/layout/page-header";
 import { Forbidden } from "@/components/layout/forbidden";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -9,7 +9,7 @@ import { StatTile, StatGrid } from "@/components/ui/stat-tile";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState, ErrorState } from "@/components/ui/states";
 import { formatQuantity, formatDate } from "@/lib/utils/format";
-import { Truck, Users } from "lucide-react";
+import { Truck, Users, PackageMinus } from "lucide-react";
 
 export const metadata: Metadata = { title: "My van" };
 
@@ -26,6 +26,10 @@ export default async function MyVanPage() {
   if (!can(user.role, "vans.view")) return <Forbidden />;
 
   const result = await getMyVanCrew(user.id);
+  // Read-only, and only once there is a van to ask about.
+  const activity = result.ok && result.data
+    ? await getVanDayActivity(result.data.vanId)
+    : null;
 
   if (!result.ok) {
     return (
@@ -107,6 +111,55 @@ export default async function MyVanPage() {
           </ul>
         )}
       </Card>
+
+      {/*
+        What has gone off the van today, and who took it.
+        
+        The driver's actual question: the load went out at fifty, there
+        are forty-five on the shelf, and until this nothing on screen
+        accounted for the five. Read-only - the vehicle is the driver's
+        responsibility, the till is not.
+      */}
+      {activity?.ok && activity.data.lines.length > 0 && (
+        <Card>
+          <CardHeader
+            title="Sold from this van today"
+            description={activity.data.soldBy.length > 0
+              ? `${activity.data.saleCount} sale${activity.data.saleCount === 1 ? "" : "s"} by ${activity.data.soldBy.join(", ")}.`
+              : `${activity.data.saleCount} sale${activity.data.saleCount === 1 ? "" : "s"}.`}
+          />
+          <ul className="divide-y divide-[var(--border-subtle)]">
+            {activity.data.lines.map((line) => (
+              <li key={line.productId} className="flex items-center gap-3 px-5 py-3">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-[var(--text-primary)]">
+                    {line.productName}
+                  </p>
+                  <p className="numeric text-xs text-[var(--text-muted)]">{line.sku}</p>
+                </div>
+                <div className="text-right">
+                  <p className="numeric text-sm text-[var(--text-primary)]">
+                    {formatQuantity(line.soldToday)} sold
+                  </p>
+                  <p className="numeric text-xs text-[var(--text-muted)]">
+                    {formatQuantity(line.remaining)} left
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      {activity?.ok && activity.data.lines.length === 0 && (
+        <Card>
+          <EmptyState
+            icon={PackageMinus}
+            title="Nothing sold from this van yet today"
+            description="What the salespeople sell will show here, with what is left on board."
+          />
+        </Card>
+      )}
 
       {van.openLoad && (
         <Card>

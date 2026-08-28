@@ -310,6 +310,42 @@ export async function recordVanSaleAction(input: {
     return { ok: false, message: `${load.load_number} is ${load.status} and cannot take sales.` };
   }
 
+  // The van has to be the caller's own.
+  //
+  // The browser sends the load, and until this check that was taken on
+  // trust: anybody holding sales.create could sell another van's stock
+  // by naming its load. Row level security does not catch it because
+  // everything here runs with the service role.
+  //
+  // The office is exempt - settling somebody else's round is their job -
+  // which is the same line complete_van_sale draws. That function is the
+  // boundary that governs; this is here so the refusal is a sentence the
+  // salesperson can act on rather than a raised exception.
+  const officeCanSellAnywhere =
+    actor.role === "admin" || actor.role === "senior_manager" || actor.role === "manager";
+
+  if (!officeCanSellAnywhere) {
+    const { data: crewed } = await admin
+      .from("van_assignments")
+      .select("van_id")
+      .eq("member_id", actor.id)
+      .is("unassigned_at", null)
+      .maybeSingle();
+
+    if (!crewed) {
+      return {
+        ok: false,
+        message: "You are not crewed on a van. Ask the office to put you on one before selling.",
+      };
+    }
+    if (crewed.van_id !== load.van_id) {
+      return {
+        ok: false,
+        message: "That load belongs to another van. You can only sell from the van you are on.",
+      };
+    }
+  }
+
   const { data: customer } = await admin
     .from("customers").select("id, name, org_id, is_active")
     .eq("id", input.customerId).maybeSingle();

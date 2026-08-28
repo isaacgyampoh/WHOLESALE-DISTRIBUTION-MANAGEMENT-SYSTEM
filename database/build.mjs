@@ -1381,6 +1381,60 @@ select 'nobody signed out can read the table',
                           where tablename = 'receipt_tokens' and policyname = 'receipt_tokens_select')
             then 'PASS' else 'FAIL' end;`,
   },
+  {
+    migration: "0042_a_salesperson_sells_from_their_own_van.sql",
+    out: "UPGRADE_0042_VAN_AUTHORITY.sql",
+    title: "UPGRADE 0042 - a salesperson sells from their own van, and no other",
+    summary: `-- WHAT IT FIXES
+--
+-- Any account holding sales.create could sell another van's stock.
+--
+-- The sell screen sends the load it is drawing from. The server checked
+-- that the load existed, belonged to this organization and was out on
+-- the road - then trusted it. complete_van_sale checked that the caller
+-- owned the sale and that the van carried the goods. Between those two,
+-- nobody asked whether that salesperson had any business with that van.
+--
+-- The goods came off a vehicle they were never crewed on, that round
+-- reconciled short, and the ledger blamed the wrong van. Row level
+-- security did not catch it: the sale is written with the service role,
+-- which exists precisely to bypass it.
+--
+-- This adds one check to complete_van_sale - the seller must be crewed
+-- on the van the sale draws from - using is_van_crew, which has
+-- answered exactly that question since 0033 and was simply never asked
+-- here. A manager or administrator is exempt, because settling somebody
+-- else's round is their job.
+--
+-- Nothing else in the function changes. No table, policy or grant is
+-- touched.
+--
+-- AFTER RUNNING IT, redeploy so the application refuses the same thing
+-- with a sentence rather than a raised exception.`,
+    verify: `select 'the seller must be crewed on the van' as check,
+       case when position('is_van_crew' in
+              coalesce((select pg_get_functiondef(p.oid) from pg_proc p
+                          join pg_namespace n on n.oid = p.pronamespace
+                         where n.nspname = 'public' and p.proname = 'complete_van_sale'
+                         limit 1), '')) > 0
+            then 'PASS' else 'FAIL' end as result
+union all
+select 'the office can still settle a round',
+       case when position('has_role' in
+              coalesce((select pg_get_functiondef(p.oid) from pg_proc p
+                          join pg_namespace n on n.oid = p.pronamespace
+                         where n.nspname = 'public' and p.proname = 'complete_van_sale'
+                         limit 1), '')) > 0
+            then 'PASS' else 'FAIL' end
+union all
+select 'the van still has to carry the goods',
+       case when position('does not carry enough' in
+              coalesce((select pg_get_functiondef(p.oid) from pg_proc p
+                          join pg_namespace n on n.oid = p.pronamespace
+                         where n.nspname = 'public' and p.proname = 'complete_van_sale'
+                         limit 1), '')) > 0
+            then 'PASS' else 'FAIL' end;`,
+  },
 ];
 
 /** Final enum members, in the order `alter type ... add value` yields. */

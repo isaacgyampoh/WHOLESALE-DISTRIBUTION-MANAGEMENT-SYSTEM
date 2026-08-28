@@ -8,6 +8,7 @@ import { describeImageRefusal } from "@/lib/catalogue/image";
 import { getCapabilities } from "@/lib/db/capabilities";
 import { UNITS } from "@/lib/catalogue/units";
 import type { AuthenticatedUser } from "@/types/domain";
+import { can } from "@/types/permissions";
 import type { CatalogueState } from "./state";
 
 /**
@@ -98,6 +99,10 @@ function productFields(formData: FormData) {
     shelfLifeDays: String(formData.get("shelfLifeDays") ?? "").trim(),
     description: String(formData.get("description") ?? "").trim(),
     isActive: String(formData.get("isActive") ?? "true"),
+    // Opening stock, on creation only. What is already on the shelf the
+    // day this product is first written down.
+    openingQty: String(formData.get("openingQty") ?? "").trim(),
+    openingWarehouseId: String(formData.get("openingWarehouseId") ?? ""),
   };
 }
 
@@ -134,11 +139,41 @@ export async function createProductAction(
     errors.categoryId = "You can only add products to categories you manage.";
   }
 
+  // Opening stock is optional - a product can be listed before any of it
+  // arrives - but a quantity without somewhere to put it is not a fact
+  // anyone can act on.
+  const openingQty = v.openingQty
+    ? readWholeNumber(v.openingQty, "openingQty", errors)
+    : null;
+  if (openingQty !== null && openingQty < 0) {
+    errors.openingQty = "Enter a quantity of zero or more.";
+  }
+  if (openingQty !== null && openingQty > 0 && !v.openingWarehouseId) {
+    errors.openingWarehouseId = "Choose where this stock is held.";
+  }
+  // Putting stock somewhere is a stock movement, and not everyone who
+  // may add a product may make one.
+  if (openingQty !== null && openingQty > 0 && !can(actor.role, "inventory.adjust")) {
+    errors.openingQty = "You can add the product, but not its stock. Ask a manager to enter it.";
+  }
+
   if (Object.keys(errors).length) {
     return { status: "error", message: "Check the fields below.", values: v, fieldErrors: errors };
   }
 
   const admin = createSupabaseAdminClient();
+
+  if (openingQty !== null && openingQty > 0) {
+    const { data: warehouse } = await admin
+      .from("warehouses").select("id, org_id").eq("id", v.openingWarehouseId).maybeSingle();
+    if (!warehouse || warehouse.org_id !== actor.organizationId) {
+      return {
+        status: "error", message: "Check the fields below.", values: v,
+        fieldErrors: { openingWarehouseId: "Choose a warehouse." },
+      };
+    }
+  }
+
   const { data, error } = await admin
     .from("products")
     .insert({
@@ -177,6 +212,45 @@ export async function createProductAction(
     return { status: "error", message: "The product could not be saved. Please try again.", values: v };
   }
 
+  // The opening stock, as a movement on the existing ledger.
+  //
+  // Not a quantity written onto the product: nothing else in this system
+  // believes such a column, and a second place that claims to know the
+  // stock level is a second place that can be wrong. The trigger on
+  // stock_movements does the arithmetic, the same way a receipt or a
+  // count does.
+  //
+  // Deliberately after the insert, and deliberately not fatal. A product
+  // that exists with no stock is a five-second fix from its own page; a
+  // product that vanished because its opening stock failed is a mystery.
+  let openingStockMessage = "";
+  if (openingQty !== null && openingQty > 0) {
+    const { error: stockError } = await admin.from("stock_movements").insert({
+      org_id: actor.organizationId,
+      product_id: data.id as string,
+      warehouse_id: v.openingWarehouseId,
+      type: "adjustment_in",
+      quantity: openingQty,
+      reason: "Opening stock",
+      reference_type: "opening_stock",
+      created_by: actor.id,
+    });
+
+    if (stockError) {
+      console.error("[catalogue] opening stock failed", stockError);
+      openingStockMessage =
+        " The product was saved, but its opening stock was not - add it from the product page.";
+    } else {
+      await recordAudit(actor, {
+        action: "stock.adjusted",
+        targetType: "product",
+        targetId: data.id as string,
+        targetLabel: `${v.sku} ${v.name}`,
+        after: { via: "opening_stock", quantity: openingQty, warehouse: v.openingWarehouseId },
+      });
+    }
+  }
+
   await recordAudit(actor, {
     action: "product.created",
     targetType: "product",
@@ -187,7 +261,11 @@ export async function createProductAction(
 
   revalidatePath("/products");
   revalidatePath("/inventory");
-  return { status: "done", message: "Product created.", createdId: data.id as string };
+  return {
+    status: "done",
+    message: `Product created.${openingStockMessage}`,
+    createdId: data.id as string,
+  };
 }
 
 export async function updateProductAction(
