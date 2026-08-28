@@ -46,6 +46,8 @@ export interface DatabaseCapabilities {
   vanCrew: boolean;
   /** Migration 0037: a photograph of what is being sold. */
   productImages: boolean;
+  /** Migration 0048: stock counted as full units and loose pieces. */
+  loosePieces: boolean;
 }
 
 /**
@@ -59,6 +61,7 @@ const CAPABILITY_NAMES = [
   "maskedProductPricing", "batchesAndExpiry", "offlineSync", "salePaymentMethods",
   "documents", "warehouseTransfers", "notifications", "supplierDocuments",
   "supplierPortal", "supplierSubmissions", "vanCrew", "productImages",
+  "loosePieces",
 ] as const satisfies readonly (keyof DatabaseCapabilities)[];
 
 const NONE_AVAILABLE: DatabaseCapabilities = Object.fromEntries(
@@ -79,7 +82,7 @@ async function probe(): Promise<DatabaseCapabilities> {
   const admin = createSupabaseAdminClient();
 
   const [priced, batches, sync, payments, documents, transfers, alerts,
-         supplierDocs, portal, submissions, crew, images] = await Promise.all([
+         supplierDocs, portal, submissions, crew, images, pieces] = await Promise.all([
     admin.from("products_priced").select("id").limit(1),
     admin.from("products").select("track_expiry").limit(1),
     admin.from("sync_operations").select("id").limit(1),
@@ -92,6 +95,7 @@ async function probe(): Promise<DatabaseCapabilities> {
     admin.from("supplier_documents").select("status").limit(1),
     admin.from("van_crew").select("van_id").limit(1),
     admin.from("products").select("image_path").limit(1),
+    admin.from("inventory").select("qty_pieces").limit(1),
   ]);
 
   const capabilities: DatabaseCapabilities = {
@@ -107,6 +111,7 @@ async function probe(): Promise<DatabaseCapabilities> {
     supplierSubmissions: !submissions.error,
     vanCrew: !crew.error,
     productImages: !images.error,
+    loosePieces: !pieces.error,
   };
 
   const missing = Object.entries(capabilities)

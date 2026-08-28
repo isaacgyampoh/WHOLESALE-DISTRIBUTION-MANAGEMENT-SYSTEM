@@ -37,6 +37,12 @@ export interface ProductRow {
   reorderQty: number;
   isActive: boolean;
   onHand: number;
+  /**
+   * Loose pieces on hand, counted separately from onHand and never
+   * folded into it. Zero everywhere until somebody opens a carton, and
+   * zero against a database before migration 0048.
+   */
+  onHandPieces: number;
   reserved: number;
   available: number;
   state: StockState;
@@ -63,11 +69,16 @@ export const PAGE_SIZE = 25;
 
 const FAILED = "Something went wrong while loading products. Please try again.";
 
-interface InventoryRow { qty_on_hand: number | null; qty_reserved: number | null }
+interface InventoryRow {
+  qty_on_hand: number | null;
+  qty_reserved: number | null;
+  qty_pieces?: number | null;
+}
 
 function toProduct(row: Record<string, unknown>): ProductRow {
   const inventory = (row.inventory as InventoryRow[] | null) ?? [];
   const onHand = inventory.reduce((sum, i) => sum + Number(i.qty_on_hand ?? 0), 0);
+  const onHandPieces = inventory.reduce((sum, i) => sum + Number(i.qty_pieces ?? 0), 0);
   const reserved = inventory.reduce((sum, i) => sum + Number(i.qty_reserved ?? 0), 0);
   const available = onHand - reserved;
   const category = row.categories as { name?: string } | null;
@@ -89,6 +100,7 @@ function toProduct(row: Record<string, unknown>): ProductRow {
     reorderQty: Number(row.reorder_qty ?? 0),
     isActive: row.is_active as boolean,
     onHand,
+    onHandPieces,
     reserved,
     available,
     state: stockState(available, reorderPoint),
@@ -115,6 +127,7 @@ function toProduct(row: Record<string, unknown>): ProductRow {
  */
 function productSelect(capabilities: {
   maskedProductPricing: boolean; batchesAndExpiry: boolean; productImages: boolean;
+  loosePieces: boolean;
 }): string {
   const columns = [
     "id", "sku", "barcode", "name", "description", "category_id",
@@ -129,7 +142,14 @@ function productSelect(capabilities: {
   if (capabilities.batchesAndExpiry) {
     columns.push("track_batches", "track_expiry", "shelf_life_days");
   }
-  return `${columns.join(", ")}, categories(name), inventory(qty_on_hand, qty_reserved)`;
+  // qty_pieces arrives with 0048. Asked for only when it is there, so a
+  // database behind the application returns products rather than an
+  // error about an unknown column - and reads as all-sealed, which is
+  // what it was before anyone could open a carton.
+  const held = capabilities.loosePieces
+    ? "qty_on_hand, qty_reserved, qty_pieces"
+    : "qty_on_hand, qty_reserved";
+  return `${columns.join(", ")}, categories(name), inventory(${held})`;
 }
 
 /** The view where cost is masked, or the table where it is not asked for. */

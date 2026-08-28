@@ -7,6 +7,9 @@ import { recordAudit } from "@/lib/audit";
 import { describeImageRefusal } from "@/lib/catalogue/image";
 import { getCapabilities } from "@/lib/db/capabilities";
 import { UNITS } from "@/lib/catalogue/units";
+import {
+  readQuantity, packSize, covers, isEmpty, formatHolding, NOTHING,
+} from "@/lib/catalogue/quantity";
 import type { AuthenticatedUser } from "@/types/domain";
 import { can } from "@/types/permissions";
 import type { CatalogueState } from "./state";
@@ -53,7 +56,7 @@ async function ownedProduct(actor: AuthenticatedUser, id: string) {
   const admin = createSupabaseAdminClient();
   const { data } = await admin
     .from("products")
-    .select("id, sku, name, category_id, unit_of_measure, cost_price, list_price, reorder_point, reorder_qty, is_active, org_id, description, track_batches, track_expiry, shelf_life_days")
+    .select("id, sku, name, category_id, unit_of_measure, units_per_case, cost_price, list_price, reorder_point, reorder_qty, is_active, org_id, description, track_batches, track_expiry, shelf_life_days")
     .eq("id", id)
     .maybeSingle();
   return data && data.org_id === actor.organizationId ? data : null;
@@ -84,6 +87,54 @@ async function categoryAllowed(actor: AuthenticatedUser, categoryId: string | nu
   return Boolean(data);
 }
 
+/**
+ * The pack size, validated.
+ *
+ * Blank means 1 rather than an error: the field is prefilled and a
+ * person clearing it means "not split", not "reject my form". The
+ * ceiling is arbitrary but a carton of ten thousand pieces is a typo,
+ * and typos here quietly multiply every conversion that follows.
+ */
+/**
+ * Loose pieces of one product, anywhere they are held - warehouses and
+ * vans both. Zero against a database before 0048, where there is no
+ * such column and therefore no loose pieces to strand.
+ */
+async function loosePiecesHeld(productId: string): Promise<number> {
+  const capabilities = await getCapabilities();
+  if (!capabilities.loosePieces) return 0;
+
+  const admin = createSupabaseAdminClient();
+  const [shelves, vans] = await Promise.all([
+    admin.from("inventory").select("qty_pieces").eq("product_id", productId),
+    admin.from("van_inventory").select("qty_pieces").eq("product_id", productId),
+  ]);
+
+  const total = (rows: { qty_pieces: number | null }[] | null) =>
+    (rows ?? []).reduce((sum, r) => sum + Number(r.qty_pieces ?? 0), 0);
+
+  return total(shelves.data) + total(vans.data);
+}
+
+function readPackSize(raw: string, errors: Record<string, string>): number {
+  const text = raw.trim();
+  if (text === "") return 1;
+  if (!/^\d{1,5}$/.test(text)) {
+    errors.piecesPerUnit = "Enter a whole number, 1 or more.";
+    return 1;
+  }
+  const size = Number(text);
+  if (size < 1) {
+    errors.piecesPerUnit = "Enter a whole number, 1 or more.";
+    return 1;
+  }
+  if (size > 10000) {
+    errors.piecesPerUnit = "That is over ten thousand pieces. Check the figure.";
+    return 1;
+  }
+  return size;
+}
+
 function productFields(formData: FormData) {
   return {
     name: String(formData.get("name") ?? "").trim(),
@@ -102,7 +153,11 @@ function productFields(formData: FormData) {
     // Opening stock, on creation only. What is already on the shelf the
     // day this product is first written down.
     openingQty: String(formData.get("openingQty") ?? "").trim(),
+    openingPieces: String(formData.get("openingPieces") ?? "").trim(),
     openingWarehouseId: String(formData.get("openingWarehouseId") ?? ""),
+    // How many single pieces come out of one whole unit. 1 means this
+    // product is never split, which is true of most of them.
+    piecesPerUnit: String(formData.get("piecesPerUnit") ?? "1").trim(),
   };
 }
 
@@ -148,12 +203,32 @@ export async function createProductAction(
   if (openingQty !== null && openingQty < 0) {
     errors.openingQty = "Enter a quantity of zero or more.";
   }
-  if (openingQty !== null && openingQty > 0 && !v.openingWarehouseId) {
+  // Loose pieces are their own figure. A shelf can hold nothing but
+  // singles - a carton somebody opened last month - so this stands on
+  // its own rather than depending on whole units being entered.
+  const openingPieces = v.openingPieces
+    ? readWholeNumber(v.openingPieces, "openingPieces", errors)
+    : null;
+  if (openingPieces !== null && openingPieces < 0) {
+    errors.openingPieces = "Enter a quantity of zero or more.";
+  }
+
+  const packSize = readPackSize(v.piecesPerUnit, errors);
+  // Loose pieces without a pack size means nobody has said what a piece
+  // is. The number would be recorded and no screen could ever relate it
+  // to the cartons beside it.
+  if (openingPieces !== null && openingPieces > 0 && packSize <= 1) {
+    errors.piecesPerUnit =
+      "Say how many pieces come out of one unit before entering loose ones.";
+  }
+
+  const opensWithStock = (openingQty ?? 0) > 0 || (openingPieces ?? 0) > 0;
+  if (opensWithStock && !v.openingWarehouseId) {
     errors.openingWarehouseId = "Choose where this stock is held.";
   }
   // Putting stock somewhere is a stock movement, and not everyone who
   // may add a product may make one.
-  if (openingQty !== null && openingQty > 0 && !can(actor.role, "inventory.adjust")) {
+  if (opensWithStock && !can(actor.role, "inventory.adjust")) {
     errors.openingQty = "You can add the product, but not its stock. Ask a manager to enter it.";
   }
 
@@ -163,7 +238,7 @@ export async function createProductAction(
 
   const admin = createSupabaseAdminClient();
 
-  if (openingQty !== null && openingQty > 0) {
+  if (opensWithStock) {
     const { data: warehouse } = await admin
       .from("warehouses").select("id, org_id").eq("id", v.openingWarehouseId).maybeSingle();
     if (!warehouse || warehouse.org_id !== actor.organizationId) {
@@ -183,6 +258,7 @@ export async function createProductAction(
       description: v.description || null,
       category_id: categoryId,
       unit_of_measure: v.unit,
+      units_per_case: packSize,
       cost_price: cost,
       list_price: list,
       reorder_point: reorderPoint,
@@ -224,13 +300,19 @@ export async function createProductAction(
   // that exists with no stock is a five-second fix from its own page; a
   // product that vanished because its opening stock failed is a mystery.
   let openingStockMessage = "";
-  if (openingQty !== null && openingQty > 0) {
+  if (opensWithStock) {
+    const capabilities = await getCapabilities();
     const { error: stockError } = await admin.from("stock_movements").insert({
       org_id: actor.organizationId,
       product_id: data.id as string,
       warehouse_id: v.openingWarehouseId,
-      type: "adjustment_in",
-      quantity: openingQty,
+      type: "opening_stock",
+      quantity: openingQty ?? 0,
+      // Omitted entirely against a database before 0048, where the
+      // column does not exist. Nobody can have entered loose pieces
+      // there either - the form's own figure is gated on a pack size
+      // that schema cannot hold - so nothing is lost by leaving it out.
+      ...(capabilities.loosePieces ? { pieces: openingPieces ?? 0 } : {}),
       reason: "Opening stock",
       reference_type: "opening_stock",
       created_by: actor.id,
@@ -246,7 +328,12 @@ export async function createProductAction(
         targetType: "product",
         targetId: data.id as string,
         targetLabel: `${v.sku} ${v.name}`,
-        after: { via: "opening_stock", quantity: openingQty, warehouse: v.openingWarehouseId },
+        after: {
+          via: "opening_stock",
+          quantity: openingQty ?? 0,
+          pieces: openingPieces ?? 0,
+          warehouse: v.openingWarehouseId,
+        },
       });
     }
   }
@@ -299,6 +386,21 @@ export async function updateProductAction(
     errors.categoryId = "You can only manage products in categories you manage.";
   }
 
+  const packSize = readPackSize(v.piecesPerUnit, errors);
+
+  // Taking the pack size back to 1 says this product is never split.
+  // If loose pieces are already on a shelf somewhere, that would strand
+  // them: they stay in the ledger, and no screen has a way left to
+  // describe them. Pack them up or sell them first.
+  if (packSize <= 1 && Number(existing.units_per_case ?? 1) > 1) {
+    const loose = await loosePiecesHeld(id);
+    if (loose > 0) {
+      errors.piecesPerUnit =
+        `There are ${loose} loose pieces of this product. Pack them up or sell them ` +
+        `before saying it is never split.`;
+    }
+  }
+
   if (Object.keys(errors).length) {
     return { status: "error", message: "Check the fields below.", values: v, fieldErrors: errors };
   }
@@ -314,6 +416,7 @@ export async function updateProductAction(
       description: v.description || null,
       category_id: categoryId,
       unit_of_measure: v.unit,
+      units_per_case: packSize,
       cost_price: cost,
       list_price: list,
       reorder_point: reorderPoint,
@@ -431,8 +534,9 @@ export async function adjustStockAction(
   const warehouseId = String(formData.get("warehouseId") ?? "");
   const direction = String(formData.get("direction") ?? "in");
   const quantityRaw = String(formData.get("quantity") ?? "");
+  const piecesRaw = String(formData.get("pieces") ?? "");
   const reason = String(formData.get("reason") ?? "").trim();
-  const values = { direction, quantity: quantityRaw, reason, warehouseId };
+  const values = { direction, quantity: quantityRaw, pieces: piecesRaw, reason, warehouseId };
   const errors: Record<string, string> = {};
 
   const product = await ownedProduct(actor, productId);
@@ -442,8 +546,26 @@ export async function adjustStockAction(
     return { status: "error", message: "You can only adjust products in categories you manage." };
   }
 
-  const quantity = readWholeNumber(quantityRaw, "quantity", errors);
-  if (quantity !== null && quantity <= 0) errors.quantity = "Enter a quantity above zero.";
+  const capabilities = await getCapabilities();
+  const pack = packSize(Number(product.units_per_case ?? 1));
+  const unit = String(product.unit_of_measure ?? "unit");
+
+  // Both halves, read together. Either may be blank; the movement as a
+  // whole may not be empty, which is the rule the database enforces too.
+  const read = readQuantity(quantityRaw, capabilities.loosePieces ? piecesRaw : "");
+  if (!read.ok) {
+    errors[read.field === "units" ? "quantity" : "pieces"] = read.message;
+  }
+  const moving = read.ok ? read.value : NOTHING;
+
+  if (read.ok && isEmpty(moving)) {
+    errors.quantity = "Enter a quantity above zero.";
+  }
+  // A piece figure means nothing until somebody has said what a piece
+  // is - and the product page will not have offered the field either.
+  if (moving.pieces > 0 && pack === null) {
+    errors.pieces = `No pack size is set for this product. Say how many pieces come out of one ${unit} first.`;
+  }
   // A movement without a reason is an unexplained change, which is the
   // one thing an audited ledger must not contain.
   if (!reason) errors.reason = "Say why the stock is changing.";
@@ -460,19 +582,33 @@ export async function adjustStockAction(
     return { status: "error", message: "That warehouse could not be found." };
   }
 
-  // Taking stock out cannot leave a negative balance.
+  // Taking stock out cannot leave a negative balance - in either half,
+  // and each judged on its own. Two sealed cartons do not cover a
+  // request for three loose pieces, because until one is opened the
+  // pieces are not there.
   if (direction === "out") {
     const { data: level } = await admin
-      .from("inventory").select("qty_on_hand")
+      .from("inventory")
+      .select(capabilities.loosePieces ? "qty_on_hand, qty_pieces" : "qty_on_hand")
       .eq("product_id", productId).eq("warehouse_id", warehouseId).maybeSingle();
-    const onHand = Number(level?.qty_on_hand ?? 0);
-    if (quantity! > onHand) {
-      return {
-        status: "error", message: "Check the fields below.", values,
-        fieldErrors: {
-          quantity: `Only ${onHand} in stock at ${warehouse.name}.`,
-        },
-      };
+
+    const held = {
+      units: Number((level as { qty_on_hand?: number } | null)?.qty_on_hand ?? 0),
+      pieces: Number((level as { qty_pieces?: number } | null)?.qty_pieces ?? 0),
+    };
+
+    if (!covers(held, moving)) {
+      const fieldErrors: Record<string, string> = {};
+      if (moving.units > held.units) {
+        fieldErrors.quantity = `Only ${formatHolding({ units: held.units, pieces: 0 }, unit)} at ${warehouse.name}.`;
+      }
+      if (moving.pieces > held.pieces) {
+        fieldErrors.pieces = `Only ${held.pieces} loose pieces at ${warehouse.name}.` +
+          (held.units > 0 && pack !== null
+            ? " Open a full one first if you need more."
+            : "");
+      }
+      return { status: "error", message: "Check the fields below.", values, fieldErrors };
     }
   }
 
@@ -482,7 +618,8 @@ export async function adjustStockAction(
     product_id: productId,
     warehouse_id: warehouseId,
     type: direction === "out" ? "adjustment_out" : "adjustment_in",
-    quantity,
+    quantity: moving.units,
+    ...(capabilities.loosePieces ? { pieces: moving.pieces } : {}),
     reason,
     reference_type: "manual_adjustment",
     created_by: actor.id,
@@ -500,7 +637,8 @@ export async function adjustStockAction(
     targetLabel: `${product.sku} ${product.name}`,
     after: {
       direction: direction === "out" ? "decrease" : "increase",
-      quantity,
+      quantity: moving.units,
+      pieces: moving.pieces,
       warehouse: warehouse.name,
       reason,
     },
@@ -653,4 +791,116 @@ export async function removeProductImageAction(
   revalidatePath("/driver/sell");
 
   return { status: "done", message: "Picture removed." };
+}
+
+// ===================================================================
+// Opening a carton, and packing one back up
+// ===================================================================
+//
+// The one way stock crosses between full units and loose pieces.
+//
+// It is a server action rather than arithmetic on a screen because it
+// is a physical act: somebody cut the tape, and afterwards the shelf
+// holds one fewer carton and twelve more singles. A system that did
+// this quietly whenever a piece was needed would be inventing stock,
+// and the discrepancy would surface at stocktake with nothing in the
+// ledger to explain it.
+//
+// The database function does the work and holds the rules - the role
+// check, the pack size, whether there is enough to open. This reads the
+// form, calls it, and turns a refusal into a sentence.
+
+export async function convertStockUnitsAction(
+  _prev: CatalogueState,
+  formData: FormData,
+): Promise<CatalogueState> {
+  const actor = await requirePermission("inventory.adjust");
+
+  const productId = String(formData.get("productId") ?? "");
+  const warehouseId = String(formData.get("warehouseId") ?? "");
+  const action = String(formData.get("action") ?? "open");
+  const unitsRaw = String(formData.get("units") ?? "");
+  const reason = String(formData.get("reason") ?? "").trim();
+  const values = { action, units: unitsRaw, reason, warehouseId };
+  const errors: Record<string, string> = {};
+
+  const product = await ownedProduct(actor, productId);
+  if (!product) return { status: "error", message: "That product could not be found." };
+
+  if (!(await categoryAllowed(actor, product.category_id as string | null))) {
+    return { status: "error", message: "You can only change products in categories you manage." };
+  }
+
+  const capabilities = await getCapabilities();
+  if (!capabilities.loosePieces) {
+    return {
+      status: "error",
+      message: "This database does not record loose pieces yet. Apply the pending upgrade first.",
+      values,
+    };
+  }
+
+  const units = readWholeNumber(unitsRaw, "units", errors);
+  if (units !== null && units <= 0) errors.units = "Enter a number above zero.";
+  if (!reason) errors.reason = "Say why the stock is changing.";
+  if (!warehouseId) errors.warehouseId = "Choose a warehouse.";
+  if (action !== "open" && action !== "pack") {
+    errors.action = "Choose whether to open or pack up.";
+  }
+
+  if (Object.keys(errors).length) {
+    return { status: "error", message: "Check the fields below.", values, fieldErrors: errors };
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data: warehouse } = await admin
+    .from("warehouses").select("id, org_id, name").eq("id", warehouseId).maybeSingle();
+  if (!warehouse || warehouse.org_id !== actor.organizationId) {
+    return { status: "error", message: "That warehouse could not be found." };
+  }
+
+  const { error } = await admin.rpc("convert_stock_units", {
+    p_product: productId,
+    p_warehouse: warehouseId,
+    p_van: null,
+    p_action: action,
+    p_units: units,
+    p_reason: reason,
+  });
+
+  if (error) {
+    console.error("[catalogue] unit conversion failed", error);
+    // The function refuses by name - "Only 3 cartons there, 5 asked to
+    // be opened" - and that sentence is more use to whoever is standing
+    // at the shelf than anything this layer could invent.
+    return {
+      status: "error",
+      message: error.message || "The change could not be saved. Please try again.",
+      values,
+    };
+  }
+
+  await recordAudit(actor, {
+    action: "stock.adjusted",
+    targetType: "product",
+    targetId: productId,
+    targetLabel: `${product.sku} ${product.name}`,
+    after: {
+      via: action === "open" ? "unit_opened" : "unit_packed",
+      units,
+      pack_size: Number(product.units_per_case ?? 1),
+      warehouse: warehouse.name,
+      reason,
+    },
+  });
+
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/movements");
+  revalidatePath("/products");
+  revalidatePath(`/products/${productId}`);
+
+  return {
+    status: "done",
+    message: action === "open" ? "Opened." : "Packed up.",
+  };
 }

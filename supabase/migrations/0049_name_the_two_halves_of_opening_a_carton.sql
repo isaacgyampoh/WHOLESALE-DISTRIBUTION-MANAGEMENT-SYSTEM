@@ -1,0 +1,33 @@
+-- ===================================================================
+-- 0049  Name the two halves of opening a carton
+-- ===================================================================
+--
+-- 0048 gave the ledger a second quantity but no way to move stock
+-- between the two. A carton on the shelf and twelve loose pieces are
+-- different things, and the only honest way from one to the other is
+-- for somebody to physically open the carton.
+--
+-- WHY THIS CANNOT BE ONE MOVEMENT
+--
+-- apply_stock_movement takes one direction and applies it to both
+-- columns, deliberately: a movement out takes from full units and loose
+-- pieces alike, never one from each side. Opening a carton needs the
+-- opposite - units down, pieces up - so it is two movements sharing one
+-- reference, the same shape transfer_van_stock already uses.
+--
+-- WHY THE NAMES ARE NOT 'open_carton'
+--
+-- The same pair runs backwards. Packing twelve loose pieces back into a
+-- carton is units up and pieces down, which is these two types with
+-- their quantities swapped rather than two more labels. So they are
+-- named for what they are - the two halves of a conversion between
+-- sealed and loose form - and reference_type says which way round it
+-- was, for anyone reading the ledger back.
+--
+-- Alone, for the reason 0043 shipped alone: PostgreSQL refuses to use an
+-- enum label in the transaction that added it, and movement_direction is
+-- a SQL function whose body is parsed when it is created. 0050 gives
+-- these their direction and the operation that writes them.
+
+alter type public.movement_type add value if not exists 'conversion_in';
+alter type public.movement_type add value if not exists 'conversion_out';

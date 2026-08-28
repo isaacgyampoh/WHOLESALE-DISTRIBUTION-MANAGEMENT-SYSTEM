@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth/session";
 import { can } from "@/types/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { CountSheet, type CountableProduct } from "@/features/inventory/count-sheet";
+import { getCapabilities } from "@/lib/db/capabilities";
 import { PageHeader } from "@/components/layout/page-header";
 import { Forbidden } from "@/components/layout/forbidden";
 import { Card } from "@/components/ui/card";
@@ -65,21 +66,28 @@ export default async function StockCountPage({
 
   // Read through products_priced: table-level SELECT on products was
   // withdrawn in 0023, and the view is the only route to a row.
+  const capabilities = await getCapabilities();
+
   const [{ data: products }, { data: levels }] = await Promise.all([
     supabase
       .from("products_priced")
-      .select("id, sku, name, unit_of_measure")
+      .select("id, sku, name, unit_of_measure, units_per_case")
       .eq("is_active", true)
       .order("name"),
     supabase
       .from("inventory")
-      .select("product_id, qty_on_hand")
+      .select(capabilities.loosePieces
+        ? "product_id, qty_on_hand, qty_pieces"
+        : "product_id, qty_on_hand")
       .eq("warehouse_id", chosen),
   ]);
 
-  const onHand = new Map(
-    (levels ?? []).map((l) => [l.product_id as string, Number(l.qty_on_hand ?? 0)]),
-  );
+  const rows = (levels ?? []) as unknown as {
+    product_id: string; qty_on_hand: number | null; qty_pieces?: number | null;
+  }[];
+
+  const onHand = new Map(rows.map((l) => [l.product_id, Number(l.qty_on_hand ?? 0)]));
+  const onHandPieces = new Map(rows.map((l) => [l.product_id, Number(l.qty_pieces ?? 0)]));
 
   const countable: CountableProduct[] = (products ?? []).map((p) => ({
     id: p.id as string,
@@ -87,6 +95,10 @@ export default async function StockCountPage({
     name: p.name as string,
     unit: (p.unit_of_measure as string) ?? "unit",
     onHand: onHand.get(p.id as string) ?? 0,
+    onHandPieces: onHandPieces.get(p.id as string) ?? 0,
+    // Against a database before 0048 every product reads as unsplittable,
+    // so the sheet shows one box per line exactly as it did before.
+    piecesPerUnit: capabilities.loosePieces ? Number(p.units_per_case ?? 1) : 1,
   }));
 
   return (

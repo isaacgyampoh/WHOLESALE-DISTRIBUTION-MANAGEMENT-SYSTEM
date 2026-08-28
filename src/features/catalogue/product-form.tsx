@@ -94,19 +94,46 @@ export function ProductForm({
         </Field>
       </div>
 
-      <Field label="Category" htmlFor="categoryId" error={err.categoryId}>
-        <Select
-          id="categoryId" name="categoryId"
-          defaultValue={v?.categoryId ?? product?.categoryId ?? ""}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Category" htmlFor="categoryId" error={err.categoryId}>
+          <Select
+            id="categoryId" name="categoryId"
+            defaultValue={v?.categoryId ?? product?.categoryId ?? ""}
+          >
+            <option value="">No category</option>
+            {active.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}{c.isActive ? "" : " (retired)"}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
+        {/*
+          The pack size, and the only thing that makes loose pieces
+          possible for this product.
+
+          Left at 1, the product is only ever counted whole and the
+          second quantity never appears on any screen for it - which is
+          right for a bag of rice sold by the bag. Set to 12, a carton
+          can be opened into twelve pieces and both can be sold.
+
+          Nothing converts on this number alone: it is what an opening
+          is measured in, not permission to treat a sealed carton as
+          twelve loose pieces.
+        */}
+        <Field
+          label="Pieces per unit" htmlFor="piecesPerUnit" error={err.piecesPerUnit}
+          hint="How many single pieces come out of one whole unit. Leave at 1 if it is never split."
         >
-          <option value="">No category</option>
-          {active.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}{c.isActive ? "" : " (retired)"}
-            </option>
-          ))}
-        </Select>
-      </Field>
+          <Input
+            id="piecesPerUnit" name="piecesPerUnit" inputMode="numeric"
+            defaultValue={v?.piecesPerUnit ?? String(product?.unitsPerCase ?? 1)}
+            aria-invalid={Boolean(err.piecesPerUnit)}
+            placeholder="1"
+          />
+        </Field>
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Cost price" htmlFor="costPrice" required error={err.costPrice} hint="In cedis">
@@ -145,15 +172,31 @@ export function ProductForm({
           <p className="mb-3 text-sm font-medium text-[var(--text-primary)]">
             Opening stock
           </p>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-3">
             <Field
-              label="Quantity on hand" htmlFor="openingQty" error={err.openingQty}
-              hint="What is already on the shelf. Leave blank if none yet."
+              label="Whole units" htmlFor="openingQty" error={err.openingQty}
+              hint="Sealed cartons, boxes or bags. Leave blank if none yet."
             >
               <Input
                 id="openingQty" name="openingQty" inputMode="numeric" placeholder="0"
                 defaultValue={v?.openingQty ?? ""}
                 aria-invalid={Boolean(err.openingQty)}
+              />
+            </Field>
+            {/*
+              Counted separately because it is separate. A shelf holding
+              ten cartons and five loose pieces has both, and asking for
+              one number forces whoever is standing there to either
+              round or invent a conversion.
+            */}
+            <Field
+              label="Loose pieces" htmlFor="openingPieces" error={err.openingPieces}
+              hint="Singles already out of a carton. Leave blank if none."
+            >
+              <Input
+                id="openingPieces" name="openingPieces" inputMode="numeric" placeholder="0"
+                defaultValue={v?.openingPieces ?? ""}
+                aria-invalid={Boolean(err.openingPieces)}
               />
             </Field>
             <Field

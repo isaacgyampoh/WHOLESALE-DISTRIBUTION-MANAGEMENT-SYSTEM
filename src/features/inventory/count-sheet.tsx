@@ -9,6 +9,7 @@ import { Input, Select, Field } from "@/components/ui/field";
 import { Alert } from "@/components/ui/states";
 import { Badge } from "@/components/ui/badge";
 import { Search, ClipboardCheck, Check } from "lucide-react";
+import { formatHolding } from "@/lib/catalogue/quantity";
 
 export interface CountableProduct {
   id: string;
@@ -17,6 +18,10 @@ export interface CountableProduct {
   unit: string;
   /** What the system currently believes, at the chosen warehouse. */
   onHand: number;
+  /** Loose pieces the system believes are there, counted separately. */
+  onHandPieces: number;
+  /** How many pieces come out of one unit. 1 means it is never split. */
+  piecesPerUnit: number;
 }
 
 export interface CountWarehouse {
@@ -38,6 +43,40 @@ export interface CountWarehouse {
  * treating the first as the second would write off every product the
  * counter had not reached.
  */
+/**
+ * One line of the sheet, as it will be submitted - or null when nobody
+ * has counted it.
+ *
+ * A line counts when either half has been typed. The other half is then
+ * taken as zero, which is what a count means: the person walked up to
+ * the shelf and this is what was on it. Leaving both blank leaves the
+ * product alone entirely.
+ *
+ * Used by both the running preview and the submit, so what the counter
+ * is promised and what is written can never drift apart.
+ */
+function readLine(
+  entry: { units: string; pieces: string } | undefined,
+  product: CountableProduct,
+): { productId: string; counted: number; countedPieces?: number } | null {
+  if (!entry) return null;
+
+  const units = entry.units.trim();
+  const pieces = entry.pieces.trim();
+  if (units === "" && pieces === "") return null;
+
+  const splittable = product.piecesPerUnit > 1;
+  const counted = units === "" ? 0 : Number(units);
+  if (!Number.isInteger(counted) || counted < 0) return null;
+
+  if (!splittable) return { productId: product.id, counted };
+
+  const countedPieces = pieces === "" ? 0 : Number(pieces);
+  if (!Number.isInteger(countedPieces) || countedPieces < 0) return null;
+
+  return { productId: product.id, counted, countedPieces };
+}
+
 export function CountSheet({
   warehouses,
   products,
@@ -48,7 +87,10 @@ export function CountSheet({
   warehouseId: string;
 }) {
   const router = useRouter();
-  const [counts, setCounts] = useState<Record<string, string>>({});
+  // Two figures per line, held as typed. A blank is not a zero: it
+  // means nobody has counted that half yet, and the distinction has to
+  // survive all the way to the submit.
+  const [counts, setCounts] = useState<Record<string, { units: string; pieces: string }>>({});
   const [reason, setReason] = useState("Stock count");
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<CountResult | null>(null);
@@ -68,28 +110,28 @@ export function CountSheet({
   const pendingChanges = useMemo(() => {
     let changed = 0, up = 0, down = 0;
     for (const product of products) {
-      const raw = counts[product.id];
-      if (raw === undefined || raw.trim() === "") continue;
-      const counted = Number(raw);
-      if (!Number.isInteger(counted) || counted < 0) continue;
-      const delta = counted - product.onHand;
-      if (delta === 0) continue;
+      const line = readLine(counts[product.id], product);
+      if (!line) continue;
+      const unitDelta = line.counted - product.onHand;
+      const pieceDelta = line.countedPieces === undefined
+        ? 0 : line.countedPieces - product.onHandPieces;
+      if (unitDelta === 0 && pieceDelta === 0) continue;
       changed++;
-      if (delta > 0) up++; else down++;
+      if (unitDelta + pieceDelta > 0) up++; else down++;
     }
     return { changed, up, down };
   }, [counts, products]);
 
-  const countedLines = Object.entries(counts)
-    .filter(([, v]) => v.trim() !== "")
-    .map(([productId, v]) => ({ productId, counted: Number(v) }));
+  const countedLines = products
+    .map((product) => readLine(counts[product.id], product))
+    .filter((line): line is NonNullable<typeof line> => line !== null);
 
   const submit = () => {
     start(async () => {
       const outcome = await applyStockCountAction({
         warehouseId,
         reason,
-        lines: countedLines.filter((l) => Number.isInteger(l.counted) && l.counted >= 0),
+        lines: countedLines,
       });
       setResult(outcome);
       if (outcome.ok) {
@@ -201,12 +243,23 @@ export function CountSheet({
           ) : (
             <ul className="divide-y divide-[var(--border-subtle)]">
               {visible.map((product) => {
-                const raw = counts[product.id] ?? "";
-                const counted = raw.trim() === "" ? null : Number(raw);
-                const delta =
-                  counted !== null && Number.isInteger(counted) && counted >= 0
-                    ? counted - product.onHand
-                    : null;
+                const entry = counts[product.id] ?? { units: "", pieces: "" };
+                const splittable = product.piecesPerUnit > 1;
+                const line = readLine(entry, product);
+
+                const unitDelta = line ? line.counted - product.onHand : 0;
+                const pieceDelta = line && line.countedPieces !== undefined
+                  ? line.countedPieces - product.onHandPieces
+                  : 0;
+
+                const type = (half: "units" | "pieces") => (value: string) =>
+                  setCounts((prev) => ({
+                    ...prev,
+                    [product.id]: {
+                      ...(prev[product.id] ?? { units: "", pieces: "" }),
+                      [half]: value.replace(/[^\d]/g, ""),
+                    },
+                  }));
 
                 return (
                   <li key={product.id} className="flex items-center gap-3 py-3">
@@ -215,28 +268,61 @@ export function CountSheet({
                         {product.name}
                       </p>
                       <p className="numeric text-xs text-[var(--text-muted)]">
-                        {product.sku} · system holds {product.onHand} {product.unit}
+                        {product.sku} · system holds{" "}
+                        {formatHolding(
+                          { units: product.onHand, pieces: product.onHandPieces },
+                          product.unit,
+                          { empty: "none" },
+                        )}
                       </p>
                     </div>
 
-                    {/* The consequence, beside the number that causes it. */}
-                    {delta !== null && delta !== 0 && (
-                      <Badge tone={delta > 0 ? "positive" : "caution"}>
-                        {delta > 0 ? `+${delta}` : delta}
-                      </Badge>
-                    )}
+                    {/*
+                      The consequence, beside the numbers that cause it,
+                      and one badge per half. A shelf can be a carton
+                      short and three pieces over at the same time -
+                      somebody opened one - and a single combined figure
+                      would hide exactly the discrepancy worth seeing.
+                    */}
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      {unitDelta !== 0 && (
+                        <Badge tone={unitDelta > 0 ? "positive" : "caution"}>
+                          {unitDelta > 0 ? `+${unitDelta}` : unitDelta} {product.unit}
+                        </Badge>
+                      )}
+                      {pieceDelta !== 0 && (
+                        <Badge tone={pieceDelta > 0 ? "positive" : "caution"}>
+                          {pieceDelta > 0 ? `+${pieceDelta}` : pieceDelta} loose
+                        </Badge>
+                      )}
+                    </div>
 
                     <Input
-                      aria-label={`Counted quantity for ${product.name}`}
-                      value={raw}
-                      onChange={(e) => {
-                        const next = e.target.value.replace(/[^\d]/g, "");
-                        setCounts((prev) => ({ ...prev, [product.id]: next }));
-                      }}
+                      aria-label={splittable
+                        ? `Whole ${product.unit}s counted for ${product.name}`
+                        : `Counted quantity for ${product.name}`}
+                      value={entry.units}
+                      onChange={(e) => type("units")(e.target.value)}
                       inputMode="numeric"
                       placeholder="—"
                       className="numeric w-20 shrink-0 text-center"
                     />
+
+                    {/*
+                      Only for products somebody has given a pack size.
+                      A second box on a bag of rice would be a question
+                      with no possible answer.
+                    */}
+                    {splittable && (
+                      <Input
+                        aria-label={`Loose pieces counted for ${product.name}`}
+                        value={entry.pieces}
+                        onChange={(e) => type("pieces")(e.target.value)}
+                        inputMode="numeric"
+                        placeholder="—"
+                        className="numeric w-20 shrink-0 text-center"
+                      />
+                    )}
                   </li>
                 );
               })}

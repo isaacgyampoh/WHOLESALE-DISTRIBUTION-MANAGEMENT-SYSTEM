@@ -9,6 +9,7 @@ import { ProductActions } from "@/features/catalogue/product-detail";
 import { ProductImageForm } from "@/features/catalogue/product-image-form";
 import { getCapabilities } from "@/lib/db/capabilities";
 import { StockBadge } from "@/features/catalogue/stock-badge";
+import { formatHolding, formatPackSize } from "@/lib/catalogue/quantity";
 import { MovementList } from "@/features/catalogue/movement-list";
 import { PageHeader } from "@/components/layout/page-header";
 import { Forbidden } from "@/components/layout/forbidden";
@@ -78,7 +79,13 @@ export default async function ProductPage({
       <div className="mb-5 grid gap-3 grid-cols-2 xl:grid-cols-4">
         <Tile label="Available" value={formatQuantity(product.available)}
               sub={`${unitLabel(product.unit)}${product.available === 1 ? "" : "s"}`} />
-        <Tile label="On hand" value={formatQuantity(product.onHand)}
+        {/*
+          Both halves of what is on the shelf, and never added together.
+          A product with no pack size has no loose pieces and reads
+          exactly as it always did.
+        */}
+        <Tile label="On hand"
+              value={formatHolding({ units: product.onHand, pieces: product.onHandPieces }, product.unit)}
               sub={product.reserved > 0 ? `${formatQuantity(product.reserved)} reserved` : "Nothing reserved"} />
         <Tile label="Selling price" value={formatMoney(product.listPrice)}
               sub={`Cost ${formatMoney(product.costPrice)}`} />
@@ -112,6 +119,16 @@ export default async function ProductPage({
                 ? <Badge tone="neutral">Active</Badge>
                 : <Badge tone="critical">Inactive</Badge>} />
             <Row label="Unit" value={unitLabel(product.unit)} />
+            {/*
+              Shown only where it has been set. "1 piece per carton" is
+              what the column says for a product nobody has configured,
+              and printing that would read as a fact rather than a
+              default.
+            */}
+            <Row
+              label="Pack size"
+              value={formatPackSize(product.unit, product.unitsPerCase) ?? "Not split into pieces"}
+            />
             <Row label="Tax rate" value={`${product.taxRate}%`} />
             <Row label="Created" value={<span className="numeric">{formatDate(product.createdAt)}</span>} />
             <Row label="Updated" value={<span className="numeric">{formatDate(product.updatedAt)}</span>} />

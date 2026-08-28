@@ -47,9 +47,27 @@ export const MOVEMENT_LABELS: Record<string, string> = {
   supplier_return: "Returned to supplier",
   damage: "Damaged",
   shortage: "Shortage",
+  opening_stock: "Opening stock",
+  stocktake_in: "Counted up",
+  stocktake_out: "Counted down",
+  conversion_in: "Made up",
+  conversion_out: "Opened up",
 };
 
-/** Which way a movement moves stock. Mirrors movement_direction() in SQL. */
+/**
+ * Which way a movement moves stock.
+ *
+ * Mirrors movement_direction() in SQL, and has to keep mirroring it: a
+ * type listed there and forgotten here shows the ledger running
+ * backwards on screen while the balance moves the right way, which is
+ * the worst of both. The three stocktake types arrived in 0044 and this
+ * list did not follow them until pieces were added.
+ */
+const INBOUND = [
+  "receipt", "transfer_in", "customer_return", "adjustment_in",
+  "opening_stock", "stocktake_in", "conversion_in",
+];
+
 export function movementDirection(type: string): 1 | -1 {
-  return ["receipt", "transfer_in", "customer_return", "adjustment_in"].includes(type) ? 1 : -1;
+  return INBOUND.includes(type) ? 1 : -1;
 }
