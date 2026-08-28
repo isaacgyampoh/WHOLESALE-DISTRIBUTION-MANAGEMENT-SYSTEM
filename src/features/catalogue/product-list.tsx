@@ -55,6 +55,11 @@ export function ProductList({ products }: { products: ProductRow[] }) {
                 <Td numeric>{formatMoney(p.listPrice)}</Td>
                 <Td numeric>
                   {formatQuantity(p.available)}
+                  {p.onHandPieces > 0 && (
+                    <span className="ml-1 font-normal text-[var(--text-muted)]">
+                      + {formatQuantity(p.onHandPieces)} loose
+                    </span>
+                  )}
                   {p.reserved > 0 && (
                     <span className="block text-xs text-[var(--text-muted)]">
                       {formatQuantity(p.reserved)} reserved
@@ -88,7 +93,12 @@ export function ProductList({ products }: { products: ProductRow[] }) {
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   <StockBadge state={p.state} />
                   <span className="numeric text-xs text-[var(--text-secondary)]">
-                    {formatQuantity(p.available)} {unitLabel(p.unit).toLowerCase()}
+                    {formatQuantity(p.available)}
+                  {p.onHandPieces > 0 && (
+                    <span className="ml-1 font-normal text-[var(--text-muted)]">
+                      + {formatQuantity(p.onHandPieces)} loose
+                    </span>
+                  )} {unitLabel(p.unit).toLowerCase()}
                   </span>
                   <span className="numeric text-xs font-medium text-[var(--text-primary)]">
                     {formatMoney(p.listPrice)}

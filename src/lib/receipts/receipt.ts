@@ -12,9 +12,39 @@ export type ReceiptKind = "sale" | "credit_payment";
 export interface ReceiptLine {
   name: string;
   sku: string | null;
+  /** Whole units. May be zero on a line of loose pieces only. */
   quantity: number;
+  /** Loose pieces, counted apart from the units and never folded in. */
+  pieces?: number;
+  /** What one loose piece was charged at on this sale. */
+  piecePrice?: number;
+  /** The product's own unit, for wording the line. */
+  unit?: string | null;
   unitPrice: number;
   lineTotal: number;
+}
+
+/**
+ * How a receipt line's quantity reads: "2 Cartons + 3 Pieces".
+ *
+ * Shared by the page and the PDF so the customer's copy and the one
+ * they were shown cannot say different things. Falls back to the bare
+ * number for a line with no pieces, which is every line ever issued
+ * before this existed.
+ */
+export function receiptQuantity(line: ReceiptLine): string {
+  const units = Number(line.quantity ?? 0);
+  const pieces = Number(line.pieces ?? 0);
+  if (pieces === 0) return String(units);
+
+  const unit = (line.unit ?? "unit").trim() || "unit";
+  const word = (n: number, w: string) =>
+    `${n} ${w}${n === 1 ? "" : "s"}`;
+
+  const parts: string[] = [];
+  if (units !== 0) parts.push(word(units, unit.charAt(0).toUpperCase() + unit.slice(1)));
+  parts.push(word(pieces, "Piece"));
+  return parts.join(" + ");
 }
 
 export interface ReceiptPayment {

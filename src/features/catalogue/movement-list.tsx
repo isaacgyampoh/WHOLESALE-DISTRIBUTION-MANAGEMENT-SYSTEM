@@ -2,6 +2,7 @@ import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { MOVEMENT_LABELS, movementDirection } from "@/lib/catalogue/units";
 import { formatDateTime, formatQuantity } from "@/lib/utils/format";
+import { formatHolding } from "@/lib/catalogue/quantity";
 import type { MovementRow } from "./queries";
 
 /**
@@ -11,6 +12,24 @@ import type { MovementRow } from "./queries";
  * it is shown signed here: what a reader needs to know is whether stock
  * went up or down.
  */
+/**
+ * What a movement moved.
+ *
+ * A movement carries full units, loose pieces, or both, and one
+ * direction governs the lot - so the sign sits outside this and the
+ * two halves read together: "+2 Cartons + 3 Pieces". Bare number for
+ * the overwhelming majority, which move units only.
+ */
+function moved(m: { quantity: number; pieces?: number; unit?: string }): string {
+  const pieces = Number(m.pieces ?? 0);
+  if (pieces === 0) return formatQuantity(m.quantity);
+  return formatHolding(
+    { units: m.quantity, pieces },
+    m.unit ?? "unit",
+    { empty: "0" },
+  );
+}
+
 export function MovementList({
   movements,
   showProduct = true,
@@ -53,7 +72,7 @@ export function MovementList({
                     </Badge>
                   </Td>
                   <Td numeric className={sign > 0 ? "text-positive" : "text-caution"}>
-                    {sign > 0 ? "+" : "-"}{formatQuantity(m.quantity)}
+                    {sign > 0 ? "+" : "-"}{moved(m)}
                   </Td>
                   <Td className="text-[var(--text-secondary)]">{m.warehouseName ?? "Van"}</Td>
                   <Td className="text-[var(--text-secondary)]">
@@ -77,7 +96,7 @@ export function MovementList({
                   {MOVEMENT_LABELS[m.type] ?? m.type}
                 </Badge>
                 <span className={`numeric shrink-0 font-medium ${sign > 0 ? "text-positive" : "text-caution"}`}>
-                  {sign > 0 ? "+" : "-"}{formatQuantity(m.quantity)}
+                  {sign > 0 ? "+" : "-"}{moved(m)}
                 </span>
               </div>
               {showProduct && (

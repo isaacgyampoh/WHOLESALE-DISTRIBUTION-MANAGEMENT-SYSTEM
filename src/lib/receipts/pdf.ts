@@ -1,7 +1,7 @@
 import "server-only";
 import { PDFDocument, StandardFonts, rgb, type PDFFont } from "pdf-lib";
 import type { Receipt } from "./receipt";
-import { toNumber, formatPhone } from "./receipt";
+import { toNumber, formatPhone, receiptQuantity } from "./receipt";
 
 /**
  * The receipt as a real PDF file.
@@ -189,7 +189,9 @@ export async function receiptPdf(receipt: Receipt): Promise<Uint8Array> {
       page.drawText(fit(line.name, body, 9, qtyX - MARGIN - 8), {
         x: MARGIN, y, size: 9, font: body, color: INK,
       });
-      page.drawText(String(toNumber(line.quantity)), { x: qtyX, y, size: 9, font: body, color: INK });
+      // The same wording as the page. A customer holding the PDF and a
+      // customer looking at the link must not see different quantities.
+      page.drawText(receiptQuantity(line), { x: qtyX, y, size: 9, font: body, color: INK });
       page.drawText(amount(line.unitPrice), { x: priceX, y, size: 9, font: body, color: INK });
       const lt = amount(line.lineTotal);
       page.drawText(lt, {

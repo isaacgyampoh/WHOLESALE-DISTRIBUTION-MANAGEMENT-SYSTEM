@@ -1,5 +1,5 @@
 import type { Receipt } from "@/lib/receipts/receipt";
-import { money, toNumber } from "@/lib/receipts/receipt";
+import { money, toNumber, receiptQuantity } from "@/lib/receipts/receipt";
 
 const WHEN = new Intl.DateTimeFormat("en-GB", {
   day: "2-digit", month: "short", year: "numeric",
@@ -59,7 +59,7 @@ export function ReceiptDocument({ receipt }: { receipt: Receipt }) {
               {(receipt.items ?? []).map((line, i) => (
                 <tr key={i}>
                   <td className="py-2.5 pr-2 text-[var(--text-primary)]">{line.name}</td>
-                  <td className="numeric py-2.5 text-right">{toNumber(line.quantity)}</td>
+                  <td className="numeric py-2.5 text-right">{receiptQuantity(line)}</td>
                   <td className="numeric py-2.5 text-right">{money(toNumber(line.unitPrice))}</td>
                   <td className="numeric py-2.5 text-right">{money(toNumber(line.lineTotal))}</td>
                 </tr>

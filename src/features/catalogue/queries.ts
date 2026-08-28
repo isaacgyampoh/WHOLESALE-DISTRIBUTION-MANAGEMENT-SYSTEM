@@ -235,6 +235,12 @@ export interface CategoryRow {
   /** Units on hand across every product in this category. */
   stockUnits: number;
   /**
+   * Loose pieces across the same products, counted apart. Added to the
+   * units it would be a number that means nothing: ten cartons and five
+   * pieces is not fifteen of anything.
+   */
+  stockPieces: number;
+  /**
    * What that stock is worth at cost, or null for a role not allowed to
    * know. stock_summary already masks it per caller through
    * product_cost(), so this is the same figure the rest of the system
@@ -267,11 +273,15 @@ export async function listCategories(includeInactive = true): Promise<Result<Cat
   // product_cost(id) * qty_on_hand - already null for a caller who may
   // not see cost. Counting and valuing from one read keeps the category
   // total and the product rows in agreement by construction.
+  const categoryCapabilities = await getCapabilities();
+
   const [categories, stock] = await Promise.all([
     query,
     supabase
       .from("stock_summary")
-      .select("category_id, qty_on_hand, stock_value")
+      .select(categoryCapabilities.loosePieces
+        ? "category_id, qty_on_hand, qty_pieces, stock_value"
+        : "category_id, qty_on_hand, stock_value")
       .eq("is_active", true),
   ]);
 
@@ -284,14 +294,16 @@ export async function listCategories(includeInactive = true): Promise<Result<Cat
   // without totals is far better than no screen.
   if (stock.error) console.error("[catalogue] category totals failed", stock.error);
 
-  const totals = new Map<string, { count: number; units: number; value: number | null }>();
-  for (const row of (stock.data ?? []) as Record<string, unknown>[]) {
+  const totals = new Map<string,
+    { count: number; units: number; pieces: number; value: number | null }>();
+  for (const row of (stock.data ?? []) as unknown as Record<string, unknown>[]) {
     const id = row.category_id as string | null;
     if (!id) continue;
 
-    const entry = totals.get(id) ?? { count: 0, units: 0, value: null };
+    const entry = totals.get(id) ?? { count: 0, units: 0, pieces: 0, value: null };
     entry.count += 1;
     entry.units += Number(row.qty_on_hand ?? 0);
+    entry.pieces += Number(row.qty_pieces ?? 0);
 
     // Null means "not allowed to know", and one unknown line makes the
     // whole total unknowable - a partial sum presented as a total would
@@ -312,6 +324,7 @@ export async function listCategories(includeInactive = true): Promise<Result<Cat
       isActive: row.is_active as boolean,
       productCount: totals.get(row.id as string)?.count ?? 0,
       stockUnits: totals.get(row.id as string)?.units ?? 0,
+      stockPieces: totals.get(row.id as string)?.pieces ?? 0,
       stockValue: totals.get(row.id as string)?.value ?? null,
     })),
   };
@@ -359,6 +372,10 @@ export interface MovementRow {
   productSku: string;
   type: string;
   quantity: number;
+  /** Loose pieces moved, beside the full units. Zero for most movements. */
+  pieces: number;
+  /** The product's own unit, for wording the movement. */
+  unit: string;
   reason: string | null;
   referenceType: string | null;
   actorName: string | null;
@@ -381,8 +398,8 @@ export async function listMovements(
   let query = supabase
     .from("stock_movements")
     .select(
-      "id, created_at, type, quantity, reason, reference_type, " +
-      "products(name, sku), warehouses(name), profiles(full_name)",
+      "id, created_at, type, quantity, pieces, reason, reference_type, " +
+      "products(name, sku, unit_of_measure), warehouses(name), profiles(full_name)",
     )
     .order("created_at", { ascending: false })
     .limit(limit);
@@ -412,6 +429,8 @@ export async function listMovements(
       productSku: product?.sku ?? "",
       type: row.type as string,
       quantity: Number(row.quantity ?? 0),
+      pieces: Number(row.pieces ?? 0),
+      unit: ((row.products as { unit_of_measure?: string } | null)?.unit_of_measure) ?? "unit",
       reason: (row.reason as string | null) ?? null,
       referenceType: (row.reference_type as string | null) ?? null,
       actorName: actor?.full_name ?? null,

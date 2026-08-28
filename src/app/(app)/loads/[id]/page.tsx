@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { ErrorState, EmptyState } from "@/components/ui/states";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/table";
 import { formatQuantity, formatDate } from "@/lib/utils/format";
+import { formatHolding } from "@/lib/catalogue/quantity";
 import { PackageX, Users } from "lucide-react";
 
 export const metadata: Metadata = { title: "Van load" };
@@ -53,6 +54,10 @@ export default async function LoadDetailPage({
   const totalLoaded = load.lines.reduce((s, l) => s + l.loaded, 0);
   const totalSold = load.lines.reduce((s, l) => s + l.sold, 0);
   const totalLeft = load.lines.reduce((s, l) => s + l.remaining, 0);
+  // Counted separately for the summary line. This spans every product on
+  // the load, so no single unit word fits and the two are named apart.
+  const loosePieces = load.lines.reduce(
+    (s, l) => s + l.loadedPieces + l.soldPieces + l.remainingPieces, 0);
 
   return (
     <>
@@ -105,7 +110,8 @@ export default async function LoadDetailPage({
           title="What is on the van"
           description={
             load.lines.length
-              ? `${formatQuantity(totalLoaded)} loaded · ${formatQuantity(totalSold)} sold · ${formatQuantity(totalLeft)} left`
+              ? `${formatQuantity(totalLoaded)} loaded · ${formatQuantity(totalSold)} sold · ${formatQuantity(totalLeft)} left` +
+                (loosePieces > 0 ? " · loose pieces counted separately below" : "")
               : undefined
           }
         />
@@ -139,11 +145,27 @@ export default async function LoadDetailPage({
                       </span>
                     </Td>
                     <Td className="text-[var(--text-secondary)]">{line.unit}</Td>
-                    <Td numeric>{formatQuantity(line.loaded)}</Td>
-                    <Td numeric>{formatQuantity(line.sold)}</Td>
                     <Td numeric>
-                      <span className={line.remaining === 0 ? "text-[var(--text-muted)]" : ""}>
-                        {formatQuantity(line.remaining)}
+                      {formatHolding(
+                        { units: line.loaded, pieces: line.loadedPieces },
+                        line.unit, { empty: "0" },
+                      )}
+                    </Td>
+                    <Td numeric>
+                      {formatHolding(
+                        { units: line.sold, pieces: line.soldPieces },
+                        line.unit, { empty: "0" },
+                      )}
+                    </Td>
+                    <Td numeric>
+                      <span className={
+                        line.remaining === 0 && line.remainingPieces === 0
+                          ? "text-[var(--text-muted)]" : ""
+                      }>
+                        {formatHolding(
+                          { units: line.remaining, pieces: line.remainingPieces },
+                          line.unit, { empty: "0" },
+                        )}
                       </span>
                     </Td>
                   </Tr>

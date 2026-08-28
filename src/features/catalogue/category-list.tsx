@@ -73,8 +73,16 @@ export function CategoryList({
                   )}
                 </Td>
                 <Td numeric>
-                  <span className={category.stockUnits === 0 ? "text-[var(--text-muted)]" : ""}>
+                  <span className={
+                    category.stockUnits === 0 && category.stockPieces === 0
+                      ? "text-[var(--text-muted)]" : ""
+                  }>
                     {formatQuantity(category.stockUnits)}
+                    {category.stockPieces > 0 && (
+                      <span className="ml-1 font-normal text-[var(--text-muted)]">
+                        + {formatQuantity(category.stockPieces)} loose
+                      </span>
+                    )}
                   </span>
                 </Td>
                 <Td numeric>
@@ -120,6 +128,9 @@ export function CategoryList({
                 <p className="numeric mt-0.5 text-xs text-[var(--text-muted)]">
                   {formatQuantity(category.productCount)} product{category.productCount === 1 ? "" : "s"}
                   {" · "}{formatQuantity(category.stockUnits)} in stock
+                  {category.stockPieces > 0
+                    ? ` + ${formatQuantity(category.stockPieces)} loose`
+                    : ""}
                   {category.stockValue !== null ? ` · ${formatMoney(category.stockValue)}` : ""}
                 </p>
               </div>

@@ -657,6 +657,10 @@ export interface LoadLine {
   sold: number;
   /** Still on the van now. */
   remaining: number;
+  /** The loose half of each, never folded into the figure beside it. */
+  loadedPieces: number;
+  soldPieces: number;
+  remainingPieces: number;
 }
 
 export interface LoadDetail {
@@ -688,6 +692,8 @@ export interface LoadDetail {
 export async function getLoadDetail(loadId: string): Promise<Result<LoadDetail | null>> {
   const supabase = await createSupabaseServerClient();
 
+  const loadCapabilities = await getCapabilities();
+
   const { data: loadRow, error } = await supabase
     .from("van_loads")
     .select(
@@ -715,11 +721,15 @@ export async function getLoadDetail(loadId: string): Promise<Result<LoadDetail |
   const [{ data: items }, { data: onVan }, { data: crew }, { data: sales }] = await Promise.all([
     supabase
       .from("van_load_items")
-      .select("product_id, qty_loaded, products(name, sku, unit_of_measure)")
+      .select(loadCapabilities.loosePieces
+        ? "product_id, qty_loaded, qty_loaded_pieces, products(name, sku, unit_of_measure)"
+        : "product_id, qty_loaded, products(name, sku, unit_of_measure)")
       .eq("load_id", loadId),
     supabase
       .from("van_stock_summary")
-      .select("product_id, qty_on_hand")
+      .select(loadCapabilities.loosePieces
+        ? "product_id, qty_on_hand, qty_pieces"
+        : "product_id, qty_on_hand")
       .eq("van_id", vanId),
     supabase
       .from("van_assignments")
@@ -731,24 +741,31 @@ export async function getLoadDetail(loadId: string): Promise<Result<LoadDetail |
     // load rather than to everything the van has ever done.
     supabase
       .from("van_sales")
-      .select("id, van_sale_items(product_id, quantity)")
+      .select(loadCapabilities.loosePieces
+        ? "id, van_sale_items(product_id, quantity, pieces)"
+        : "id, van_sale_items(product_id, quantity)")
       .eq("load_id", loadId)
       .eq("status", "completed"),
   ]);
 
-  const remainingBy = new Map(
-    (onVan ?? []).map((r) => [r.product_id as string, Number(r.qty_on_hand ?? 0)]),
-  );
+  const onVanRows = (onVan ?? []) as unknown as {
+    product_id: string; qty_on_hand: number | null; qty_pieces?: number | null;
+  }[];
+  const remainingBy = new Map(onVanRows.map((r) => [r.product_id, Number(r.qty_on_hand ?? 0)]));
+  const remainingPiecesBy = new Map(
+    onVanRows.map((r) => [r.product_id, Number(r.qty_pieces ?? 0)]));
 
   const soldBy = new Map<string, number>();
+  const soldPiecesBy = new Map<string, number>();
   for (const sale of (sales ?? []) as unknown as Record<string, unknown>[]) {
     for (const item of (sale.van_sale_items ?? []) as Record<string, unknown>[]) {
       const id = item.product_id as string;
       soldBy.set(id, (soldBy.get(id) ?? 0) + Number(item.quantity ?? 0));
+      soldPiecesBy.set(id, (soldPiecesBy.get(id) ?? 0) + Number(item.pieces ?? 0));
     }
   }
 
-  const lines: LoadLine[] = (items ?? []).map((i) => {
+  const lines: LoadLine[] = ((items ?? []) as unknown as Record<string, unknown>[]).map((i) => {
     const product = i.products as { name?: string; sku?: string; unit_of_measure?: string } | null;
     const id = i.product_id as string;
     return {
@@ -759,6 +776,12 @@ export async function getLoadDetail(loadId: string): Promise<Result<LoadDetail |
       loaded: Number(i.qty_loaded ?? 0),
       sold: soldBy.get(id) ?? 0,
       remaining: remainingBy.get(id) ?? 0,
+      // The loose half of each figure, kept beside its own number rather
+      // than added in. A load of four cartons and ten singles that has
+      // sold three singles is not a load of fourteen that has sold three.
+      loadedPieces: Number(i.qty_loaded_pieces ?? 0),
+      soldPieces: soldPiecesBy.get(id) ?? 0,
+      remainingPieces: remainingPiecesBy.get(id) ?? 0,
     };
   }).sort((a, b) => a.productName.localeCompare(b.productName));
 
