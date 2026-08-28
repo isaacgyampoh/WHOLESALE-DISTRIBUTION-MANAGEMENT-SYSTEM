@@ -135,6 +135,13 @@ try {
 
   ok("the form is actually submitted", submitPosts > 0, `${submitPosts} POST(s)`);
 
+  // The row appears in the database inside the action; the confirmation
+  // reaches the browser afterwards. Reading the page the instant the row
+  // lands catches the form still on screen, which is a race in this test
+  // rather than anything wrong with the portal.
+  await page.getByText(/invoice received/i)
+    .first().waitFor({ state: "visible", timeout: 30000 }).catch(() => {});
+
   // The portal lists what it has received, so the reference appearing on
   // the page is the supplier's own confirmation that it landed.
   const notice = await page.locator("body").innerText().catch(() => "");
