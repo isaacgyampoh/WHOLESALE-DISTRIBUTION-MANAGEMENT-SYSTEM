@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
 import { Alert } from "@/components/ui/states";
 import { formatQuantity } from "@/lib/utils/format";
+import { formatHolding } from "@/lib/catalogue/quantity";
 import { issueWaybillAction, markWaybillDeliveredAction } from "./actions";
 import { INITIAL_DOCUMENT_STATE } from "./state";
 import { FileOutput, PenLine } from "lucide-react";
@@ -78,7 +79,11 @@ export function MarkDeliveredButton({
 }: {
   waybillId: string;
   waybillNumber: string;
-  lines: { id: string; productName: string; unit: string; quantity: number }[];
+  lines: {
+    id: string; productName: string; unit: string; quantity: number;
+    /** Loose pieces sent on this line, signed for separately. */
+    pieces: number;
+  }[];
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -154,7 +159,10 @@ export function MarkDeliveredButton({
                         {line.productName}
                       </p>
                       <p className="numeric text-xs text-[var(--text-muted)]">
-                        {formatQuantity(line.quantity)} {line.unit} sent
+                        {formatHolding(
+                          { units: line.quantity, pieces: line.pieces },
+                          line.unit, { empty: "nothing" },
+                        )} sent
                       </p>
                     </div>
                     <Input

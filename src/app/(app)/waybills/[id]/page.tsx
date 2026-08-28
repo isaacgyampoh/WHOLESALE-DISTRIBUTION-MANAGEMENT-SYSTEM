@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { ErrorState } from "@/components/ui/states";
 import { BRAND } from "@/lib/brand";
 import { formatDate, formatDateTime, formatQuantity } from "@/lib/utils/format";
+import { formatHolding } from "@/lib/catalogue/quantity";
 
 export const metadata: Metadata = { title: "Waybill" };
 
@@ -69,6 +70,7 @@ export default async function WaybillPage({
                 productName: l.productName,
                 unit: l.unit,
                 quantity: l.quantity,
+                pieces: l.pieces,
               }))}
             />
           )}
@@ -85,6 +87,12 @@ export default async function WaybillPage({
         { label: "Issued", value: formatDate(waybill.issuedOn) },
         { label: "Lines", value: formatQuantity(waybill.itemCount) },
         { label: "Total units", value: formatQuantity(waybill.totalQuantity) },
+        // Its own row when there are any. This spans every product on
+        // the waybill, so no one unit word fits and adding the two would
+        // make a figure nobody could check against a pallet.
+        ...(waybill.totalPieces > 0
+          ? [{ label: "Loose pieces", value: formatQuantity(waybill.totalPieces) }]
+          : []),
         ...(waybill.deliveredAt
           ? [{ label: "Delivered", value: formatDateTime(waybill.deliveredAt) }]
           : []),
@@ -159,7 +167,10 @@ export default async function WaybillPage({
               </td>
               <td className="py-2.5 px-3 text-[var(--text-secondary)]">{line.unit}</td>
               <td className="numeric py-2.5 px-3 text-right font-medium">
-                {formatQuantity(line.quantity)}
+                {formatHolding(
+                  { units: line.quantity, pieces: line.pieces },
+                  line.unit, { empty: "0" },
+                )}
               </td>
               {waybill.status === "delivered" ? (
                 <>

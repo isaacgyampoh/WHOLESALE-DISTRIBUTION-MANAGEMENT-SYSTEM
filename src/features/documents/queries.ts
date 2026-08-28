@@ -106,6 +106,10 @@ export interface InvoiceLine {
   productName: string;
   sku: string;
   quantity: number;
+  /** Loose pieces on this line, counted apart from the units. */
+  pieces: number;
+  /** The product's own unit, for wording the line. */
+  unit: string;
   unitPrice: number;
   taxRate: number;
   lineTotal: number;
@@ -157,7 +161,8 @@ export async function getInvoice(id: string): Promise<Result<InvoiceDocument | n
     saleId
       ? supabase
           .from("van_sale_items")
-          .select("quantity, unit_price, tax_rate, line_total, products(name, sku)")
+          .select("quantity, pieces, unit_price, piece_price, tax_rate, line_total, " +
+                  "products(name, sku, unit_of_measure)")
           .eq("sale_id", saleId)
       : Promise.resolve({ data: [], error: null }),
     supabase
@@ -184,12 +189,14 @@ export async function getInvoice(id: string): Promise<Result<InvoiceDocument | n
       taxTotal: parseAmount(row.tax_total as string),
       soldAt: (row.sold_at as string) ?? null,
       soldBy: (row.sold_by as string) ?? null,
-      lines: (lines.data ?? []).map((l: Record<string, unknown>) => {
+      lines: ((lines.data ?? []) as unknown as Record<string, unknown>[]).map((l) => {
         const product = l.products as { name?: string; sku?: string } | null;
         return {
           productName: product?.name ?? "Item",
           sku: product?.sku ?? "",
           quantity: Number(l.quantity ?? 0),
+          pieces: Number(l.pieces ?? 0),
+          unit: ((l.products as { unit_of_measure?: string } | null)?.unit_of_measure) ?? "unit",
           unitPrice: parseAmount(l.unit_price as string),
           taxRate: parseAmount(l.tax_rate as string),
           lineTotal: parseAmount(l.line_total as string),
@@ -316,6 +323,8 @@ export interface WaybillSummaryRow {
   driverName: string | null;
   itemCount: number;
   totalQuantity: number;
+  /** Loose pieces on the whole waybill, kept apart from the units. */
+  totalPieces: number;
   referenceType: string | null;
 }
 
@@ -333,7 +342,7 @@ export async function listWaybills(
     .select(
       "id, waybill_number, status, issued_on, destination, reference_type, " +
       "vans(code), customers(name), profiles!waybills_driver_id_fkey(full_name), " +
-      "waybill_items(quantity)",
+      "waybill_items(quantity, pieces)",
       { count: "exact" },
     )
     .order("issued_on", { ascending: false })
@@ -352,7 +361,7 @@ export async function listWaybills(
     const van = row.vans as { code?: string } | null;
     const customer = row.customers as { name?: string } | null;
     const driver = row.profiles as { full_name?: string } | null;
-    const items = (row.waybill_items as { quantity: number }[] | null) ?? [];
+    const items = (row.waybill_items as { quantity: number; pieces?: number }[] | null) ?? [];
     return {
       id: row.id as string,
       waybillNumber: row.waybill_number as string,
@@ -364,6 +373,7 @@ export async function listWaybills(
       driverName: driver?.full_name ?? null,
       itemCount: items.length,
       totalQuantity: items.reduce((sum, i) => sum + Number(i.quantity ?? 0), 0),
+      totalPieces: items.reduce((sum, i) => sum + Number(i.pieces ?? 0), 0),
       referenceType: (row.reference_type as string) ?? null,
     };
   });
@@ -378,6 +388,8 @@ export interface WaybillLine {
   sku: string;
   unit: string;
   quantity: number;
+  /** Loose pieces sent, counted apart from the units. */
+  pieces: number;
   qtyReceived: number | null;
   qtyDamaged: number;
   qtyShort: number;
@@ -407,7 +419,8 @@ export async function getWaybill(id: string): Promise<Result<WaybillDocument | n
       "delivered_at, received_by, notes, " +
       "vans(code, registration_no), customers(name), warehouses(name), " +
       "profiles!waybills_driver_id_fkey(full_name), " +
-      "waybill_items(id, quantity, qty_received, qty_damaged, qty_short, notes, " +
+      "waybill_items(id, quantity, pieces, qty_received, qty_received_pieces, " +
+      "qty_damaged, qty_damaged_pieces, qty_short, qty_short_pieces, notes, " +
       "products(name, sku, unit_of_measure))",
     )
     .eq("id", id)
@@ -434,6 +447,7 @@ export async function getWaybill(id: string): Promise<Result<WaybillDocument | n
       driverName: driver?.full_name ?? null,
       itemCount: items.length,
       totalQuantity: items.reduce((sum, i) => sum + Number(i.quantity ?? 0), 0),
+      totalPieces: items.reduce((sum, i) => sum + Number(i.pieces ?? 0), 0),
       referenceType: (row.reference_type as string) ?? null,
       vanCode: van?.code ?? null,
       vanRegistration: van?.registration_no ?? null,
@@ -451,6 +465,7 @@ export async function getWaybill(id: string): Promise<Result<WaybillDocument | n
           sku: product?.sku ?? "",
           unit: product?.unit_of_measure ?? "unit",
           quantity: Number(i.quantity ?? 0),
+          pieces: Number(i.pieces ?? 0),
           // Null until the waybill is signed in; zero once it is and
           // nothing was wrong.
           qtyReceived: i.qty_received === null || i.qty_received === undefined
@@ -624,6 +639,8 @@ export async function getSaleReceipt(id: string): Promise<Result<SaleReceipt | n
           productName: product?.name ?? "Item",
           sku: product?.sku ?? "",
           quantity: Number(l.quantity ?? 0),
+          pieces: Number(l.pieces ?? 0),
+          unit: ((l.products as { unit_of_measure?: string } | null)?.unit_of_measure) ?? "unit",
           unitPrice: parseAmount(l.unit_price as string),
           lineTotal: parseAmount(l.line_total as string),
         };

@@ -13,6 +13,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ErrorState } from "@/components/ui/states";
 import { formatMoney, formatDate, formatQuantity } from "@/lib/utils/format";
+import { formatHolding } from "@/lib/catalogue/quantity";
 import { METHOD_LABELS } from "@/features/commercial/payment-list";
 import { ShareButton } from "@/features/documents/share-button";
 
@@ -110,7 +111,12 @@ export default async function InvoicePage({
                   <span className="numeric ml-2 text-xs text-[var(--text-muted)]">{line.sku}</span>
                 )}
               </td>
-              <td className="numeric py-2.5 px-3 text-right">{formatQuantity(line.quantity)}</td>
+              <td className="numeric py-2.5 px-3 text-right">
+                {formatHolding(
+                  { units: line.quantity, pieces: line.pieces },
+                  line.unit, { empty: "0" },
+                )}
+              </td>
               <td className="numeric py-2.5 px-3 text-right">{formatMoney(line.unitPrice)}</td>
               <td className="numeric py-2.5 pl-3 text-right">{formatMoney(line.lineTotal)}</td>
             </tr>
