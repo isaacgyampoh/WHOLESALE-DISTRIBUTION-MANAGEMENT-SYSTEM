@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { createLoadAction, dispatchLoadAction } from "./actions";
 import { INITIAL_DISTRIBUTION_STATE } from "./state";
@@ -44,9 +44,20 @@ export function CreateLoadButton({
   // them, and stock in another is no use to it - so the figures beside
   // each product follow this rather than summing every site.
   const [warehouseId, setWarehouseId] = useState("");
+  // Sixty-eight products in a dropdown is a scroll, not a choice. Name
+  // or code, the same two things the till searches on, so somebody who
+  // uses both screens does not have to learn a second habit.
+  const [query, setQuery] = useState("");
   const [nextKey, setNextKey] = useState(1);
 
   const productBy = new Map(products.map((p) => [p.id, p]));
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return products;
+    return products.filter(
+      (p) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q));
+  }, [products, query]);
   const value = lines.reduce((sum, line) => {
     const product = productBy.get(line.productId);
     return sum + (product?.listPrice ?? 0) * Number(line.quantity || 0);
@@ -125,6 +136,25 @@ export function CreateLoadButton({
               {state.fieldErrors?.lines && (
                 <p className="text-xs text-critical">{state.fieldErrors.lines}</p>
               )}
+
+              {/*
+                Narrows every dropdown below at once. The whole catalogue
+                is in them - which is the point, and also why finding one
+                line by scrolling is no way to build a load.
+              */}
+              <Input
+                aria-label="Search products by name or code"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={`Search ${products.length} products by name or code`}
+              />
+              {query.trim() !== "" && (
+                <p className="text-xs text-[var(--text-muted)]">
+                  {visible.length === 0
+                    ? "Nothing matches that."
+                    : `${visible.length} of ${products.length} shown`}
+                </p>
+              )}
               {lines.map((line, index) => {
                 const product = productBy.get(line.productId);
                 return (
@@ -145,7 +175,14 @@ export function CreateLoadButton({
                           say why. A line with none in this warehouse now
                           says so and cannot be given a quantity.
                         */}
-                        {products.map((p) => {
+                        {/* Whatever the search left, plus whatever this
+                            line already holds, so a chosen product never
+                            vanishes from its own dropdown mid-edit. */}
+                        {((visible.some((v: LoadProduct) => v.id === line.productId)
+                          || !line.productId)
+                          ? visible
+                          : [productBy.get(line.productId)!, ...visible]
+                        ).map((p: LoadProduct) => {
                           const here = warehouseId ? (p.availableBy[warehouseId] ?? 0) : null;
                           return (
                             <option key={p.id} value={p.id} disabled={here === 0}>
