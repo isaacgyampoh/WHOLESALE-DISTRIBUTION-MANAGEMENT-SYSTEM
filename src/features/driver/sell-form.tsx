@@ -96,7 +96,11 @@ export function SellForm({
   const snapshot = cached ?? initial ?? null;
 
   const [customerId, setCustomerId] = useState("");
+  // Two figures per product. Cartons and singles are different things
+  // on the shelf and different money at the counter, so the till keeps
+  // them apart all the way to the sale line.
   const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [pieceQuantities, setPieceQuantities] = useState<Record<string, number>>({});
   const [query, setQuery] = useState("");
   const [notes, setNotes] = useState("");
   const [stage, setStage] = useState<Stage>("cart");
@@ -131,19 +135,25 @@ export function SellForm({
 
   const lines = useMemo(
     () => stock
-      .filter((s) => (quantities[s.product_id] ?? 0) > 0)
+      .filter((s) => (quantities[s.product_id] ?? 0) > 0 || (pieceQuantities[s.product_id] ?? 0) > 0)
       .map((s) => ({
         product_id: s.product_id,
         name: s.name,
-        quantity: quantities[s.product_id],
+        quantity: quantities[s.product_id] ?? 0,
+        pieces: pieceQuantities[s.product_id] ?? 0,
+        unit: s.unit,
         unit_price: priceBy.get(s.product_id)?.unit_price ?? 0,
+        piece_price: priceBy.get(s.product_id)?.piece_price ?? 0,
         tax_rate: priceBy.get(s.product_id)?.tax_rate ?? 0,
       })),
-    [stock, quantities, priceBy],
+    [stock, quantities, pieceQuantities, priceBy],
   );
 
-  const total = lines.reduce((sum, l) => sum + l.unit_price * l.quantity, 0);
-  const itemCount = lines.reduce((sum, l) => sum + l.quantity, 0);
+  const total = lines.reduce(
+    (sum, l) => sum + l.unit_price * l.quantity + l.piece_price * l.pieces, 0);
+  // Cartons and singles counted together here on purpose: this is "how
+  // many things am I handing over", not a stock figure.
+  const itemCount = lines.reduce((sum, l) => sum + l.quantity + l.pieces, 0);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -164,6 +174,15 @@ export function SellForm({
 
   const setQty = (productId: string, next: number, available: number) =>
     setQuantities((current) => ({
+      ...current,
+      [productId]: Math.max(0, Math.min(next, available)),
+    }));
+
+  // The loose half, clamped against the loose half of what is on board.
+  // Never against the cartons: a sealed one does not become singles
+  // because the till would like it to.
+  const setPieceQty = (productId: string, next: number, available: number) =>
+    setPieceQuantities((current) => ({
       ...current,
       [productId]: Math.max(0, Math.min(next, available)),
     }));
@@ -253,7 +272,7 @@ export function SellForm({
           <div className="space-y-2">
             <Button size="touch" onClick={() => {
               setCompleted(null); setStage("cart"); setCustomerId("");
-              setQuantities({}); setNotes(""); setQuery("");
+              setQuantities({}); setPieceQuantities({}); setNotes(""); setQuery("");
               setTender(null); setCashPart(""); setMomoRef("");
             }}>
               <ShoppingCart className="size-5" aria-hidden />
@@ -326,8 +345,25 @@ export function SellForm({
         setStage("cart");
         return;
       }
-      if (!line.unit_price) {
+      // Judged on its own. Sealed cartons on the van do not cover a
+      // request for singles - somebody has to open one first, and the
+      // depot is where that is recorded.
+      if (line.pieces > (held?.qty_pieces ?? 0)) {
+        setError(
+          `Only ${held?.qty_pieces ?? 0} loose pieces of ${line.name} left on the van.`,
+        );
+        setStage("cart");
+        return;
+      }
+      if (line.quantity > 0 && !line.unit_price) {
         setError(`${line.name} has no price on this load. Ask the depot.`);
+        setStage("cart");
+        return;
+      }
+      if (line.pieces > 0 && !line.piece_price) {
+        setError(
+          `${line.name} has no price for a single piece. Ask the depot to set one.`,
+        );
         setStage("cart");
         return;
       }
@@ -347,8 +383,9 @@ export function SellForm({
       return;
     }
 
-    const payloadLines = lines.map(({ product_id, quantity, unit_price, tax_rate }) =>
-      ({ product_id, quantity, unit_price, tax_rate }));
+    const payloadLines = lines.map(
+      ({ product_id, quantity, pieces, unit_price, piece_price, tax_rate }) =>
+        ({ product_id, quantity, pieces, unit_price, piece_price, tax_rate }));
     const summary =
       `${saleType === "cash" ? "Cash" : "Credit"} sale to ${customer?.name ?? "customer"} · ${formatMoney(total)}`;
 
@@ -505,14 +542,22 @@ export function SellForm({
           ) : (
             visible.map((s) => {
               const qty = quantities[s.product_id] ?? 0;
+              const pieceQty = pieceQuantities[s.product_id] ?? 0;
               const price = priceBy.get(s.product_id)?.unit_price ?? 0;
+              const piecePrice = priceBy.get(s.product_id)?.piece_price ?? 0;
               const soldOut = s.qty_on_hand <= 0;
+              // Only where the depot has actually opened one. A product
+              // with a pack size but nothing loose on board offers no
+              // second row: the singles are not there to sell.
+              const splittable = s.pieces_per_unit > 1;
+              const noLoose = s.qty_pieces <= 0;
+              const lineTotal = price * qty + piecePrice * pieceQty;
               return (
                 <li
                   key={s.product_id}
                   className={
                     "rounded-[var(--radius-panel)] border p-3 " +
-                    (qty > 0
+                    (qty > 0 || pieceQty > 0
                       ? "border-brand-600 bg-brand-50/60 dark:bg-brand-950/40"
                       : "border-[var(--border-subtle)] bg-[var(--surface-raised)]")
                   }
@@ -539,18 +584,32 @@ export function SellForm({
                       <p className="numeric mt-0.5 text-xs text-[var(--text-secondary)]">
                         {formatMoney(price)} each · {formatQuantity(s.qty_on_hand)} left
                       </p>
+                      {splittable && (
+                        <p className="numeric mt-0.5 text-xs text-[var(--text-secondary)]">
+                          {formatMoney(piecePrice)} a piece ·{" "}
+                          {formatQuantity(s.qty_pieces)} loose
+                        </p>
+                      )}
                     </div>
-                    {qty > 0 && (
+                    {lineTotal > 0 && (
                       <span className="numeric shrink-0 text-sm font-semibold text-[var(--text-primary)]">
-                        {formatMoney(price * qty)}
+                        {formatMoney(lineTotal)}
                       </span>
                     )}
                   </div>
 
+                  {/*
+                    One stepper for whole units, and a second for loose
+                    pieces where the van is carrying any. Two rows rather
+                    than a unit toggle: at a counter, with one hand on
+                    the goods, a control that silently changes what the
+                    next tap means is the one that gets pressed wrong.
+                    Both are visible, both say what they are.
+                  */}
                   <div className="mt-3 flex items-center gap-2">
                     <button
                       type="button"
-                      aria-label={`One fewer ${s.name}`}
+                      aria-label={`One fewer ${s.unit} of ${s.name}`}
                       onClick={() => setQty(s.product_id, qty - 1, s.qty_on_hand)}
                       disabled={qty === 0}
                       className="grid size-14 shrink-0 place-items-center rounded-[var(--radius-panel)] border border-[var(--border-strong)] text-[var(--text-primary)] disabled:opacity-40"
@@ -558,7 +617,7 @@ export function SellForm({
                       <Minus className="size-5" aria-hidden />
                     </button>
                     <Input
-                      aria-label={`Quantity of ${s.name}`}
+                      aria-label={splittable ? `Whole ${s.unit}s of ${s.name}` : `Quantity of ${s.name}`}
                       inputMode="numeric"
                       value={qty === 0 ? "" : String(qty)}
                       placeholder="0"
@@ -570,7 +629,7 @@ export function SellForm({
                     />
                     <button
                       type="button"
-                      aria-label={`One more ${s.name}`}
+                      aria-label={`One more ${s.unit} of ${s.name}`}
                       onClick={() => setQty(s.product_id, qty + 1, s.qty_on_hand)}
                       disabled={soldOut || qty >= s.qty_on_hand}
                       className="grid size-14 shrink-0 place-items-center rounded-[var(--radius-panel)] border border-[var(--border-strong)] text-[var(--text-primary)] disabled:opacity-40"
@@ -578,6 +637,44 @@ export function SellForm({
                       <Plus className="size-5" aria-hidden />
                     </button>
                   </div>
+
+                  {splittable && (
+                    <div className="mt-2 flex items-center gap-2">
+                      <button
+                        type="button"
+                        aria-label={`One fewer loose piece of ${s.name}`}
+                        onClick={() => setPieceQty(s.product_id, pieceQty - 1, s.qty_pieces)}
+                        disabled={pieceQty === 0}
+                        className="grid size-14 shrink-0 place-items-center rounded-[var(--radius-panel)] border border-[var(--border-strong)] text-[var(--text-primary)] disabled:opacity-40"
+                      >
+                        <Minus className="size-5" aria-hidden />
+                      </button>
+                      <Input
+                        aria-label={`Loose pieces of ${s.name}`}
+                        inputMode="numeric"
+                        value={pieceQty === 0 ? "" : String(pieceQty)}
+                        placeholder={noLoose ? "none loose" : "pieces"}
+                        onChange={(e) =>
+                          setPieceQty(
+                            s.product_id,
+                            Number(e.target.value.replace(/\D/g, "") || 0),
+                            s.qty_pieces,
+                          )
+                        }
+                        disabled={noLoose}
+                        className="numeric h-14 flex-1 text-center text-lg"
+                      />
+                      <button
+                        type="button"
+                        aria-label={`One more loose piece of ${s.name}`}
+                        onClick={() => setPieceQty(s.product_id, pieceQty + 1, s.qty_pieces)}
+                        disabled={noLoose || pieceQty >= s.qty_pieces}
+                        className="grid size-14 shrink-0 place-items-center rounded-[var(--radius-panel)] border border-[var(--border-strong)] text-[var(--text-primary)] disabled:opacity-40"
+                      >
+                        <Plus className="size-5" aria-hidden />
+                      </button>
+                    </div>
+                  )}
                 </li>
               );
             })

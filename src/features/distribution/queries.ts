@@ -831,6 +831,10 @@ export interface LoadableProduct {
   listPrice: number;
   /** How many are in each warehouse, keyed by warehouse id. */
   availableBy: Record<string, number>;
+  /** Loose pieces in each warehouse, kept apart from the full units. */
+  piecesBy: Record<string, number>;
+  /** 1 means this product is never split, and has no loose half. */
+  piecesPerUnit: number;
 }
 
 /**
@@ -849,26 +853,41 @@ export interface LoadableProduct {
 export async function listLoadableProducts(): Promise<Result<LoadableProduct[]>> {
   const supabase = await createSupabaseServerClient();
 
+  const capabilities = await getCapabilities();
+
   const [{ data: products, error }, { data: levels }] = await Promise.all([
     supabase
       .from("products_priced")
-      .select("id, name, sku, unit_of_measure, list_price")
+      .select("id, name, sku, unit_of_measure, units_per_case, list_price")
       .eq("is_active", true)
       .order("name"),
     // Per warehouse, because a load comes out of one of them and stock
     // in another is no use to it.
-    supabase.from("inventory").select("product_id, warehouse_id, qty_on_hand, qty_reserved"),
+    supabase.from("inventory").select(capabilities.loosePieces
+      ? "product_id, warehouse_id, qty_on_hand, qty_reserved, qty_pieces"
+      : "product_id, warehouse_id, qty_on_hand, qty_reserved"),
   ]);
 
   if (error) return failed("distribution", error, "Products could not be loaded.");
 
+  const rows = (levels ?? []) as unknown as {
+    product_id: string; warehouse_id: string;
+    qty_on_hand: number | null; qty_reserved: number | null; qty_pieces?: number | null;
+  }[];
+
   const availability = new Map<string, Record<string, number>>();
-  for (const row of levels ?? []) {
-    const productId = row.product_id as string;
-    const byWarehouse = availability.get(productId) ?? {};
-    byWarehouse[row.warehouse_id as string] =
+  const looseBy = new Map<string, Record<string, number>>();
+  for (const row of rows) {
+    const byWarehouse = availability.get(row.product_id) ?? {};
+    byWarehouse[row.warehouse_id] =
       Number(row.qty_on_hand ?? 0) - Number(row.qty_reserved ?? 0);
-    availability.set(productId, byWarehouse);
+    availability.set(row.product_id, byWarehouse);
+
+    // Kept apart from the units and never netted against reserved:
+    // nothing reserves a loose piece.
+    const piecesHere = looseBy.get(row.product_id) ?? {};
+    piecesHere[row.warehouse_id] = Number(row.qty_pieces ?? 0);
+    looseBy.set(row.product_id, piecesHere);
   }
 
   return {
@@ -880,6 +899,8 @@ export async function listLoadableProducts(): Promise<Result<LoadableProduct[]>>
       unit: (p.unit_of_measure as string) ?? "unit",
       listPrice: Number(p.list_price ?? 0),
       availableBy: availability.get(p.id as string) ?? {},
+      piecesBy: looseBy.get(p.id as string) ?? {},
+      piecesPerUnit: capabilities.loosePieces ? Number(p.units_per_case ?? 1) : 1,
     })),
   };
 }

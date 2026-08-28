@@ -47,23 +47,42 @@ async function owned(
 
 /**
  * Lines arrive as parallel arrays from a repeating form fieldset:
- * productId[] and quantity[]. Rows left blank are dropped rather than
- * rejected, so a driver can leave spare rows on the form.
+ * productId[], quantity[] and, where the form offers it, pieces[]. Rows
+ * left blank are dropped rather than rejected, so a spare row on the
+ * form costs nothing.
+ *
+ * A line counts when either half carries something. Two cartons and no
+ * singles is a line; three singles and no cartons is equally a line;
+ * both blank is a row nobody filled in.
  */
-function readLines(formData: FormData, quantityField = "quantity") {
+function readLines(formData: FormData, quantityField = "quantity", piecesField = "pieces") {
   const ids = formData.getAll("productId").map(String);
   const quantities = formData.getAll(quantityField).map(String);
-  const lines: { productId: string; quantity: number }[] = [];
+  const pieces = formData.getAll(piecesField).map(String);
+  const lines: { productId: string; quantity: number; pieces: number }[] = [];
   const errors: string[] = [];
 
   ids.forEach((productId, i) => {
-    const raw = (quantities[i] ?? "").trim();
-    if (!productId || !raw || raw === "0") return;
-    if (!WHOLE.test(raw)) {
+    if (!productId) return;
+
+    const rawUnits = (quantities[i] ?? "").trim();
+    const rawPieces = (pieces[i] ?? "").trim();
+    if ((!rawUnits || rawUnits === "0") && (!rawPieces || rawPieces === "0")) return;
+
+    if (rawUnits && !WHOLE.test(rawUnits)) {
       errors.push(`Line ${i + 1}: use a whole number.`);
       return;
     }
-    lines.push({ productId, quantity: Number(raw) });
+    if (rawPieces && !WHOLE.test(rawPieces)) {
+      errors.push(`Line ${i + 1}: use a whole number of pieces.`);
+      return;
+    }
+
+    lines.push({
+      productId,
+      quantity: rawUnits ? Number(rawUnits) : 0,
+      pieces: rawPieces ? Number(rawPieces) : 0,
+    });
   });
 
   return { lines, errors };
@@ -92,7 +111,7 @@ export async function createLoadAction(
   if (!warehouseId) fieldErrors.warehouseId = "Choose the warehouse it loads from.";
   if (!MONEY.test(openingFloat)) fieldErrors.openingFloat = "Use an amount like 200 or 200.00.";
 
-  const { lines, errors } = readLines(formData, "qtyLoaded");
+  const { lines, errors } = readLines(formData, "qtyLoaded", "qtyLoadedPieces");
   if (!lines.length) fieldErrors.lines = "Add at least one product to the load.";
   if (errors.length) fieldErrors.lines = errors[0];
 
@@ -125,16 +144,37 @@ export async function createLoadAction(
     );
   }
 
-  // Stock has to be there before it can be promised to a van.
+  // Stock has to be there before it can be promised to a van, and each
+  // half is judged on its own. Sealed cartons in the depot do not cover
+  // a request for loose singles: opening one is a recorded act somebody
+  // has to perform first.
+  const capabilities = await getCapabilities();
   const shortages: string[] = [];
   for (const line of lines) {
     const { data: level } = await admin
-      .from("inventory").select("qty_on_hand, qty_reserved, products(name)")
+      .from("inventory")
+      .select(capabilities.loosePieces
+        ? "qty_on_hand, qty_reserved, qty_pieces, products(name)"
+        : "qty_on_hand, qty_reserved, products(name)")
       .eq("product_id", line.productId).eq("warehouse_id", warehouseId).maybeSingle();
-    const available = Number(level?.qty_on_hand ?? 0) - Number(level?.qty_reserved ?? 0);
+
+    const held = level as {
+      qty_on_hand?: number; qty_reserved?: number; qty_pieces?: number;
+      products?: { name?: string } | null;
+    } | null;
+
+    const available = Number(held?.qty_on_hand ?? 0) - Number(held?.qty_reserved ?? 0);
+    const availablePieces = Number(held?.qty_pieces ?? 0);
+    const name = held?.products?.name ?? "That product";
+
     if (line.quantity > available) {
-      const name = (level?.products as { name?: string } | null)?.name ?? "That product";
       shortages.push(`${name}: ${available} available, ${line.quantity} requested`);
+    }
+    if (line.pieces > availablePieces) {
+      shortages.push(
+        `${name}: ${availablePieces} loose pieces available, ${line.pieces} requested` +
+        (available > 0 ? " - open a full one first" : ""),
+      );
     }
   }
   if (shortages.length) {
@@ -169,6 +209,7 @@ export async function createLoadAction(
       return {
         org_id: actor.organizationId, load_id: load.id, product_id: line.productId,
         qty_loaded: line.quantity,
+        ...(capabilities.loosePieces ? { qty_loaded_pieces: line.pieces } : {}),
         unit_price: product?.list_price ?? 0,
         unit_cost: product?.cost_price ?? 0,
       };

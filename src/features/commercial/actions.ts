@@ -257,7 +257,17 @@ export async function recordVanSaleAction(input: {
   customerId: string;
   saleType: "cash" | "credit";
   notes?: string | null;
-  lines: { product_id: string; quantity: number; unit_price: number; tax_rate: number }[];
+  lines: {
+    product_id: string;
+    /** Whole units. May be zero when the line is loose pieces only. */
+    quantity: number;
+    /** Loose pieces. May be zero. Both zero is not a line. */
+    pieces?: number;
+    unit_price: number;
+    /** What one loose piece was charged at on this sale. */
+    piece_price?: number;
+    tax_rate: number;
+  }[];
   /**
    * How the customer paid, in the terms a driver thinks in.
    *
@@ -357,17 +367,47 @@ export async function recordVanSaleAction(input: {
   // What the van is actually carrying decides what can be sold. Checked
   // here for a clear message; complete_van_sale() checks it again, and
   // that is the one that governs.
+  const capabilities = await getCapabilities();
+
   for (const line of input.lines) {
-    if (!Number.isInteger(line.quantity) || line.quantity <= 0) {
-      return { ok: false, message: "Quantities must be whole numbers above zero." };
+    const units = Number(line.quantity ?? 0);
+    const pieces = capabilities.loosePieces ? Number(line.pieces ?? 0) : 0;
+
+    if (!Number.isInteger(units) || units < 0 ||
+        !Number.isInteger(pieces) || pieces < 0) {
+      return { ok: false, message: "Quantities must be whole numbers, zero or more." };
     }
+    // A line for nothing at all is a mistake, not a sale - the same rule
+    // the database holds. Either half may be zero; both may not.
+    if (units === 0 && pieces === 0) {
+      return { ok: false, message: "Every line needs a quantity above zero." };
+    }
+
     const { data: held } = await admin
-      .from("van_inventory").select("qty_on_hand, products(name)")
+      .from("van_inventory")
+      .select(capabilities.loosePieces
+        ? "qty_on_hand, qty_pieces, products(name)"
+        : "qty_on_hand, products(name)")
       .eq("van_id", load.van_id).eq("product_id", line.product_id).maybeSingle();
-    const available = Number(held?.qty_on_hand ?? 0);
-    if (line.quantity > available) {
-      const name = (held?.products as { name?: string } | null)?.name ?? "that product";
+
+    const board = held as {
+      qty_on_hand?: number; qty_pieces?: number; products?: { name?: string } | null;
+    } | null;
+    const name = board?.products?.name ?? "that product";
+
+    const available = Number(board?.qty_on_hand ?? 0);
+    if (units > available) {
       return { ok: false, message: `Only ${available} of ${name} left on the van.` };
+    }
+
+    // Judged on its own: a sealed carton on the van is not three loose
+    // pieces until somebody opens it, and that happens at the depot.
+    const looseAvailable = Number(board?.qty_pieces ?? 0);
+    if (pieces > looseAvailable) {
+      return {
+        ok: false,
+        message: `Only ${looseAvailable} loose pieces of ${name} left on the van.`,
+      };
     }
   }
 
@@ -402,8 +442,13 @@ export async function recordVanSaleAction(input: {
       org_id: actor.organizationId,
       sale_id: sale.id,
       product_id: l.product_id,
-      quantity: l.quantity,
+      quantity: Number(l.quantity ?? 0),
       unit_price: l.unit_price,
+      // Both kept on the line, so a price change tomorrow cannot rewrite
+      // what this customer was billed today.
+      ...(capabilities.loosePieces
+        ? { pieces: Number(l.pieces ?? 0), piece_price: Number(l.piece_price ?? 0) }
+        : {}),
       discount_pct: 0,
       tax_rate: l.tax_rate ?? 0,
     })),
@@ -420,8 +465,7 @@ export async function recordVanSaleAction(input: {
 
   // How it was paid, before it is completed: the breakdown may only be
   // written while the sale is still a draft, and completing it is what
-  // moves the stock and the ledger.
-  const capabilities = await getCapabilities();
+  // moves the stock and the ledger. Probed once above and reused.
 
   // What is actually owed, including tax, worked out by the database
   // from the lines just written. Everything below is measured against

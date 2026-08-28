@@ -16,9 +16,13 @@ export interface LoadProduct {
   id: string; name: string; sku: string; listPrice: number;
   /** How many sit in each warehouse, keyed by warehouse id. */
   availableBy: Record<string, number>;
+  /** Loose pieces in each warehouse, kept apart from the full units. */
+  piecesBy: Record<string, number>;
+  /** 1 means this product is never split, and has no loose half. */
+  piecesPerUnit: number;
 }
 
-interface Line { key: string; productId: string; quantity: string }
+interface Line { key: string; productId: string; quantity: string; pieces: string }
 
 /**
  * Building a load.
@@ -39,7 +43,9 @@ export function CreateLoadButton({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [state, formAction, pending] = useActionState(createLoadAction, INITIAL_DISTRIBUTION_STATE);
-  const [lines, setLines] = useState<Line[]>([{ key: "l0", productId: "", quantity: "" }]);
+  const [lines, setLines] = useState<Line[]>([
+    { key: "l0", productId: "", quantity: "", pieces: "" },
+  ]);
   // Availability belongs to a warehouse. The load comes out of one of
   // them, and stock in another is no use to it - so the figures beside
   // each product follow this rather than summing every site.
@@ -202,16 +208,42 @@ export function CreateLoadButton({
                           {warehouseId
                             ? ` · ${formatQuantity(product.availableBy[warehouseId] ?? 0)} here`
                             : ""}
+                          {/*
+                            The loose half, said separately. A depot with
+                            forty cartons and no singles cannot fill a
+                            request for singles, and the picker should
+                            say so before the load is refused.
+                          */}
+                          {warehouseId && product.piecesPerUnit > 1
+                            ? ` · ${formatQuantity(product.piecesBy[warehouseId] ?? 0)} loose`
+                            : ""}
                         </p>
                       )}
                     </div>
                     <Input
                       name="qtyLoaded"
-                      aria-label={`Quantity for product ${index + 1}`}
+                      aria-label={`Whole units for product ${index + 1}`}
                       inputMode="numeric" placeholder="Qty"
                       value={line.quantity}
                       onChange={(e) => setLine(line.key, { quantity: e.target.value.replace(/\D/g, "") })}
                       className="numeric w-24 shrink-0"
+                    />
+                    {/*
+                      The loose half, and only for products somebody has
+                      given a pack size. The input is always rendered for
+                      those so the parallel arrays the action reads stay
+                      lined up with productId - a box hidden on some rows
+                      and not others would shift every line below it.
+                    */}
+                    <Input
+                      name="qtyLoadedPieces"
+                      aria-label={`Loose pieces for product ${index + 1}`}
+                      inputMode="numeric"
+                      placeholder={product && product.piecesPerUnit > 1 ? "Pieces" : "—"}
+                      disabled={!product || product.piecesPerUnit <= 1}
+                      value={line.pieces}
+                      onChange={(e) => setLine(line.key, { pieces: e.target.value.replace(/\D/g, "") })}
+                      className="numeric w-24 shrink-0 disabled:opacity-40"
                     />
                     <button
                       type="button"
@@ -227,7 +259,9 @@ export function CreateLoadButton({
               <Button
                 type="button" variant="outline" size="sm"
                 onClick={() => {
-                  setLines((c) => [...c, { key: `l${nextKey}`, productId: "", quantity: "" }]);
+                  setLines((c) => [
+                    ...c, { key: `l${nextKey}`, productId: "", quantity: "", pieces: "" },
+                  ]);
                   setNextKey((k) => k + 1);
                 }}
               >

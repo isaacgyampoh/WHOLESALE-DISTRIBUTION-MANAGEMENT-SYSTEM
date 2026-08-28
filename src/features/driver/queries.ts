@@ -207,16 +207,22 @@ export async function getSellingRound(): Promise<Result<OfflineSnapshotShape | n
     .limit(1)
     .maybeSingle();
 
+  const capabilities = await getCapabilities();
+
   const [stockRes, priceRes, customerRes] = await Promise.all([
     supabase
       .from("van_stock_summary")
-      .select("product_id, sku, product_name, qty_on_hand")
+      .select(capabilities.loosePieces
+        ? "product_id, sku, product_name, qty_on_hand, qty_pieces, units_per_case, unit_of_measure"
+        : "product_id, sku, product_name, qty_on_hand")
       .eq("van_id", vanRow.id)
       .order("product_name"),
     load
       ? supabase
           .from("van_load_items")
-          .select("product_id, unit_price, products(tax_rate, image_path)")
+          .select(capabilities.loosePieces
+            ? "product_id, unit_price, products(tax_rate, image_path, piece_price, units_per_case)"
+            : "product_id, unit_price, products(tax_rate, image_path)")
           .eq("load_id", load.id)
       : Promise.resolve({ data: [] as unknown[] }),
     supabase
@@ -253,19 +259,38 @@ export async function getSellingRound(): Promise<Result<OfflineSnapshotShape | n
             opening_float: parseAmount(load.opening_float as string),
           }
         : null,
-      stock: (stockRes.data ?? []).map((s) => ({
+      stock: ((stockRes.data ?? []) as unknown as Record<string, unknown>[]).map((s) => ({
         product_id: s.product_id as string,
         sku: (s.sku as string) ?? "",
         name: (s.product_name as string) ?? "",
         qty_on_hand: Number(s.qty_on_hand ?? 0),
+        qty_pieces: Number(s.qty_pieces ?? 0),
+        pieces_per_unit: Number(s.units_per_case ?? 1),
+        unit: (s.unit_of_measure as string) ?? "unit",
       })),
-      prices: ((priceRes.data ?? []) as unknown as Record<string, unknown>[]).map((p) => ({
-        product_id: p.product_id as string,
-        unit_price: parseAmount(p.unit_price as string),
-        tax_rate: parseAmount((p.products as { tax_rate?: string } | null)?.tax_rate),
-        image_path:
-          (p.products as { image_path?: string } | null)?.image_path ?? null,
-      })),
+      prices: ((priceRes.data ?? []) as unknown as Record<string, unknown>[]).map((p) => {
+        const product = p.products as {
+          tax_rate?: string; image_path?: string; piece_price?: string; units_per_case?: number;
+        } | null;
+        const unitPrice = parseAmount(p.unit_price as string);
+        const pack = Number(product?.units_per_case ?? 1);
+        // Derived only where nobody has set a real one, and only where
+        // there is a pack size to divide by. It is the wrong price - a
+        // single always costs more per piece than the carton it came
+        // from - but a visible wrong price beats a piece sold for
+        // nothing, and the product page says where to fix it.
+        const piecePrice = product?.piece_price !== undefined && product.piece_price !== null
+          ? parseAmount(product.piece_price)
+          : pack > 1 ? Math.round((unitPrice / pack) * 100) / 100 : 0;
+
+        return {
+          product_id: p.product_id as string,
+          unit_price: unitPrice,
+          tax_rate: parseAmount(product?.tax_rate),
+          piece_price: piecePrice,
+          image_path: product?.image_path ?? null,
+        };
+      }),
       customers: ((customerRes.data ?? []) as unknown as Record<string, unknown>[]).map((c) => {
         const position = positionBy.get(c.id as string);
         return {
@@ -290,9 +315,23 @@ export interface OfflineSnapshotShape {
   cached_at: string;
   van: { id: string; code: string; registration_no: string } | null;
   load: { id: string; load_number: string; status: string; opening_float: number } | null;
-  stock: { product_id: string; sku: string; name: string; qty_on_hand: number }[];
+  stock: {
+    product_id: string; sku: string; name: string; qty_on_hand: number;
+    /** Loose pieces on board, never folded into qty_on_hand. */
+    qty_pieces: number;
+    /** 1 means never split, and the till offers no second figure. */
+    pieces_per_unit: number;
+    /** For wording the two halves: "3 Cartons + 2 Pieces". */
+    unit: string;
+  }[];
   prices: {
     product_id: string; unit_price: number; tax_rate: number;
+    /**
+     * What one loose piece sells for. Falls back to unit_price over the
+     * pack size where nobody has set one - the wrong number, but a
+     * visible one rather than a piece sold for nothing.
+     */
+    piece_price: number;
     /** Public bucket path, so the till can show it with no signal. */
     image_path: string | null;
   }[];

@@ -206,9 +206,19 @@ export interface OfflineSnapshot {
   cached_at: string;
   van: { id: string; code: string; registration_no: string } | null;
   load: { id: string; load_number: string; status: string; opening_float: number } | null;
-  stock: { product_id: string; sku: string; name: string; qty_on_hand: number }[];
+  stock: {
+    product_id: string; sku: string; name: string; qty_on_hand: number;
+    /** Loose pieces on board, never folded into qty_on_hand. */
+    qty_pieces: number;
+    /** 1 means never split, and the till offers no second figure. */
+    pieces_per_unit: number;
+    /** For wording the two halves: "3 Cartons + 2 Pieces". */
+    unit: string;
+  }[];
   prices: {
     product_id: string; unit_price: number; tax_rate: number;
+    /** What one loose piece sells for. See OfflineSnapshotShape. */
+    piece_price: number;
     /** Public bucket path. Cacheable, so the picture survives the signal going. */
     image_path?: string | null;
   }[];
