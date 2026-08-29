@@ -262,7 +262,16 @@ export function CountSheet({
                   }));
 
                 return (
-                  <li key={product.id} className="flex items-center gap-3 py-3">
+                  /*
+                    Stacked on a phone, one row from sm up.
+                    
+                    Two count boxes, two delta badges and a product name
+                    do not fit across 375px - the name is what gives way,
+                    and a count sheet whose product names are three
+                    characters wide is useless to the person holding it.
+                  */
+                  <li key={product.id}
+                      className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-[var(--text-primary)]">
                         {product.name}
@@ -284,7 +293,8 @@ export function CountSheet({
                       somebody opened one - and a single combined figure
                       would hide exactly the discrepancy worth seeing.
                     */}
-                    <div className="flex shrink-0 flex-col items-end gap-1">
+                    <div className="flex items-center gap-2 sm:gap-3">
+                    <div className="flex flex-1 shrink-0 flex-col items-end gap-1 sm:flex-none">
                       {unitDelta !== 0 && (
                         <Badge tone={unitDelta > 0 ? "positive" : "caution"}>
                           {unitDelta > 0 ? `+${unitDelta}` : unitDelta} {product.unit}
@@ -323,6 +333,7 @@ export function CountSheet({
                         className="numeric w-20 shrink-0 text-center"
                       />
                     )}
+                    </div>
                   </li>
                 );
               })}

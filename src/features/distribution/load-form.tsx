@@ -164,7 +164,18 @@ export function CreateLoadButton({
               {lines.map((line, index) => {
                 const product = productBy.get(line.productId);
                 return (
-                  <div key={line.key} className="flex items-start gap-2">
+                  /*
+                    Two rows on a phone, one from sm up.
+                    
+                    Three controls and a delete button will not sit
+                    beside a product picker at 375px: the two quantity
+                    boxes and the button take 250 of about 335 usable
+                    pixels, which leaves the select too narrow to read a
+                    product name in. So the product gets its own line and
+                    the numbers sit under it, which is also the order
+                    somebody fills them in.
+                  */
+                  <div key={line.key} className="flex flex-col gap-2 sm:flex-row sm:items-start">
                     <div className="min-w-0 flex-1">
                       <Select
                         name="productId"
@@ -220,6 +231,7 @@ export function CreateLoadButton({
                         </p>
                       )}
                     </div>
+                    <div className="flex items-start gap-2">
                     <Input
                       name="qtyLoaded"
                       aria-label={`Whole units for product ${index + 1}`}
@@ -253,6 +265,7 @@ export function CreateLoadButton({
                     >
                       <Trash2 className="size-4" aria-hidden />
                     </button>
+                    </div>
                   </div>
                 );
               })}

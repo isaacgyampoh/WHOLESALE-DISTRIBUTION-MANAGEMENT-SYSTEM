@@ -124,7 +124,11 @@ export function TransferStockButton({
               </p>
               <ul className="divide-y divide-[var(--border-subtle)] rounded-[var(--radius-panel)] border border-[var(--border-subtle)]">
                 {context.lines.map((line) => (
-                  <li key={line.productId} className="flex items-center gap-3 px-3 py-2.5">
+                  /* Stacked on a phone, one row from sm up - the same
+                     reason as the load form and the count sheet: two
+                     number boxes leave no room for a product name. */
+                  <li key={line.productId}
+                      className="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm text-[var(--text-primary)]">{line.name}</p>
                       <p className="numeric text-xs text-[var(--text-muted)]">
@@ -137,6 +141,7 @@ export function TransferStockButton({
                         on board
                       </p>
                     </div>
+                    <div className="flex items-center gap-2">
                     <Input
                       aria-label={line.onHandPieces > 0
                         ? `Whole ${line.unit}s of ${line.name} to move`
@@ -168,6 +173,7 @@ export function TransferStockButton({
                         className="numeric w-20 shrink-0 text-center"
                       />
                     )}
+                    </div>
                   </li>
                 ))}
               </ul>
