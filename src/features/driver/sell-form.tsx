@@ -613,7 +613,15 @@ export function SellForm({
                     next tap means is the one that gets pressed wrong.
                     Both are visible, both say what they are.
                   */}
-                  <div className="mt-3 flex items-center gap-2">
+                  {splittable && (
+                    <p className="mt-3 flex items-baseline justify-between text-xs font-medium text-[var(--text-secondary)]">
+                      <span className="uppercase tracking-wide">
+                        {s.unit}{qty === 1 ? "" : "s"}
+                      </span>
+                      <span className="numeric">{formatMoney(price)} each</span>
+                    </p>
+                  )}
+                  <div className={`flex items-center gap-2 ${splittable ? "mt-1" : "mt-3"}`}>
                     <button
                       type="button"
                       aria-label={`One fewer ${s.unit} of ${s.name}`}
@@ -646,7 +654,14 @@ export function SellForm({
                   </div>
 
                   {splittable && !noPiecePrice && (
-                    <div className="mt-2 flex items-center gap-2">
+                    <>
+                    <p className="mt-3 flex items-baseline justify-between text-xs font-medium text-[var(--text-secondary)]">
+                      <span className="uppercase tracking-wide">
+                        Piece{pieceQty === 1 ? "" : "s"}
+                      </span>
+                      <span className="numeric">{formatMoney(piecePrice)} each</span>
+                    </p>
+                    <div className="mt-1 flex items-center gap-2">
                       <button
                         type="button"
                         aria-label={`One fewer loose piece of ${s.name}`}
@@ -681,6 +696,7 @@ export function SellForm({
                         <Plus className="size-5" aria-hidden />
                       </button>
                     </div>
+                    </>
                   )}
                 </li>
               );
