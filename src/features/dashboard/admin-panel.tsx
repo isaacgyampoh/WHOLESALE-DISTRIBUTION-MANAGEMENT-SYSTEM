@@ -97,8 +97,21 @@ export function AdminPanel({ view }: { view: AdminView }) {
           <Alert tone="warning" title="Staff who cannot sign in">
             {formatQuantity(view.cannotSignIn)}{" "}
             {view.cannotSignIn === 1 ? "person is active but has" : "people are active but have"}{" "}
-            no PIN set, so they cannot get in at all. Nobody finds out until they try.{" "}
-            <Link href="/users" className="underline">Set their PIN</Link>
+            no PIN set, so they cannot get in at all. Nobody finds out until they try.
+            {/*
+              On its own line with a real tap height rather than a word
+              inside the sentence. Inline it measured 17px tall on a
+              phone, which is the one thing on this alert somebody needs
+              to hit and the hardest thing on it to hit. The
+              pointer-fine: variant keeps it tight where there is a
+              mouse, matching the PIN reveal on the sign-in screen.
+            */}
+            <Link
+              href="/users"
+              className="mt-1 inline-flex min-h-11 items-center font-medium underline underline-offset-2 pointer-fine:mt-0 pointer-fine:min-h-0"
+            >
+              Set their PIN
+            </Link>
           </Alert>
         </div>
       )}

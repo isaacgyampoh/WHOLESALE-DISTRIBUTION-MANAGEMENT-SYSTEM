@@ -66,10 +66,22 @@ async function cookiesFor(email) {
   }));
 }
 
+/**
+ * touch matters, and not only for the screenshots.
+ *
+ * The interface sizes its controls with the pointer-fine: variant - a
+ * 44px tap target on a touch screen, tighter where there is a mouse.
+ * Without hasTouch every viewport here reported as a fine pointer, the
+ * tighter rule applied, and diagnose() then complained that the touch
+ * targets were too small on tablet and mobile. They were not: the
+ * browser simply was not a touch device. A check that cries wolf on
+ * every run is worse than no check, because the real finding is the one
+ * that gets scrolled past.
+ */
 const VIEWPORTS = [
-  { name: "desktop", width: 1440, height: 900 },
-  { name: "tablet", width: 834, height: 1112 },
-  { name: "mobile", width: 390, height: 844 },
+  { name: "desktop", width: 1440, height: 900, touch: false },
+  { name: "tablet", width: 834, height: 1112, touch: true },
+  { name: "mobile", width: 390, height: 844, touch: true },
 ];
 
 const browser = await chromium.launch();
@@ -139,7 +151,8 @@ try {
 
   for (const viewport of VIEWPORTS) {
     // Public pages, no session.
-    const anon = await browser.newContext({ viewport, deviceScaleFactor: 2 });
+    const anon = await browser.newContext({ viewport, deviceScaleFactor: 2,
+      hasTouch: viewport.touch, isMobile: viewport.touch });
     const p1 = await anon.newPage();
     await p1.goto(`${BASE}/sign-in`, { waitUntil: "domcontentloaded" });
     await shoot("signin", viewport, p1);
@@ -150,7 +163,8 @@ try {
     await anon.close();
 
     // Admin dashboard.
-    const adm = await browser.newContext({ viewport, deviceScaleFactor: 2 });
+    const adm = await browser.newContext({ viewport, deviceScaleFactor: 2,
+      hasTouch: viewport.touch, isMobile: viewport.touch });
     await adm.addCookies(adminCookies);
     const p2 = await adm.newPage();
     await p2.goto(`${BASE}/`, { waitUntil: "domcontentloaded" });
@@ -170,7 +184,8 @@ try {
     await adm.close();
 
     // Driver dashboard.
-    const drv = await browser.newContext({ viewport, deviceScaleFactor: 2 });
+    const drv = await browser.newContext({ viewport, deviceScaleFactor: 2,
+      hasTouch: viewport.touch, isMobile: viewport.touch });
     await drv.addCookies(driverCookies);
     const p3 = await drv.newPage();
     await p3.goto(`${BASE}/`, { waitUntil: "domcontentloaded" });
@@ -182,6 +197,7 @@ try {
   // Dark mode, desktop only, to check the token set.
   const dark = await browser.newContext({
     viewport: VIEWPORTS[0], deviceScaleFactor: 2, colorScheme: "dark",
+    hasTouch: VIEWPORTS[0].touch, isMobile: VIEWPORTS[0].touch,
   });
   await dark.addCookies(adminCookies);
   const p4 = await dark.newPage();
