@@ -155,6 +155,28 @@ export function ProductForm({
       </div>
 
       {/*
+        What one loose piece sells for.
+        
+        Left blank the till divides the selling price by the pack size,
+        which is always too low: wholesale exists because the carton is
+        cheaper per piece than the singles, and selling singles at the
+        carton rate gives away the whole reason for breaking one open.
+        The hint says so, and the field is only offered for a product
+        that can actually be split.
+      */}
+      <Field
+        label="Price for one piece" htmlFor="piecePrice" error={err.piecePrice}
+        hint="In cedis. Leave blank and the till divides the selling price by the pack size, which is usually too low."
+      >
+        <Input
+          id="piecePrice" name="piecePrice" inputMode="decimal"
+          defaultValue={v?.piecePrice ?? product?.piecePrice?.toFixed(2) ?? ""}
+          aria-invalid={Boolean(err.piecePrice)}
+          placeholder="6.00"
+        />
+      </Field>
+
+      {/*
         Opening stock, on creation only.
         
         A business writing down a product it already has on the shelf

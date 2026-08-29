@@ -161,8 +161,10 @@ export async function getInvoice(id: string): Promise<Result<InvoiceDocument | n
     saleId
       ? supabase
           .from("van_sale_items")
-          .select("quantity, pieces, unit_price, piece_price, tax_rate, line_total, " +
-                  "products(name, sku, unit_of_measure)")
+          .select(((await getCapabilities()).loosePieces
+            ? "quantity, pieces, unit_price, piece_price, tax_rate, line_total, "
+            : "quantity, unit_price, tax_rate, line_total, ") +
+            "products(name, sku, unit_of_measure)")
           .eq("sale_id", saleId)
       : Promise.resolve({ data: [], error: null }),
     supabase
@@ -342,7 +344,9 @@ export async function listWaybills(
     .select(
       "id, waybill_number, status, issued_on, destination, reference_type, " +
       "vans(code), customers(name), profiles!waybills_driver_id_fkey(full_name), " +
-      "waybill_items(quantity, pieces)",
+      ((await getCapabilities()).loosePieces
+        ? "waybill_items(quantity, pieces)"
+        : "waybill_items(quantity)"),
       { count: "exact" },
     )
     .order("issued_on", { ascending: false })
@@ -419,8 +423,10 @@ export async function getWaybill(id: string): Promise<Result<WaybillDocument | n
       "delivered_at, received_by, notes, " +
       "vans(code, registration_no), customers(name), warehouses(name), " +
       "profiles!waybills_driver_id_fkey(full_name), " +
-      "waybill_items(id, quantity, pieces, qty_received, qty_received_pieces, " +
-      "qty_damaged, qty_damaged_pieces, qty_short, qty_short_pieces, notes, " +
+      ((await getCapabilities()).loosePieces
+        ? "waybill_items(id, quantity, pieces, qty_received, qty_received_pieces, " +
+          "qty_damaged, qty_damaged_pieces, qty_short, qty_short_pieces, notes, "
+        : "waybill_items(id, quantity, qty_received, qty_damaged, qty_short, notes, ") +
       "products(name, sku, unit_of_measure))",
     )
     .eq("id", id)

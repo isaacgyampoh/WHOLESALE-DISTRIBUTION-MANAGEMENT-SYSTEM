@@ -129,6 +129,21 @@ export default async function ProductPage({
               label="Pack size"
               value={formatPackSize(product.unit, product.unitsPerCase) ?? "Not split into pieces"}
             />
+            {/*
+              Only for a product that can be split, and it says plainly
+              when nobody has set one - because the fallback the till
+              uses is the carton rate, which undercharges every single
+              sold and is the reason to set a real figure.
+            */}
+            {formatPackSize(product.unit, product.unitsPerCase) && (
+              <Row
+                label="Price per piece"
+                value={product.piecePrice === null
+                  ? `Not set - the till would charge ${formatMoney(
+                      product.listPrice / Math.max(product.unitsPerCase, 1))}`
+                  : formatMoney(product.piecePrice)}
+              />
+            )}
             <Row label="Tax rate" value={`${product.taxRate}%`} />
             <Row label="Created" value={<span className="numeric">{formatDate(product.createdAt)}</span>} />
             <Row label="Updated" value={<span className="numeric">{formatDate(product.updatedAt)}</span>} />

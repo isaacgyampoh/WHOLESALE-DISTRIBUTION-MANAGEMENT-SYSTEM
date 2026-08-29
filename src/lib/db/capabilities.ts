@@ -46,7 +46,13 @@ export interface DatabaseCapabilities {
   vanCrew: boolean;
   /** Migration 0037: a photograph of what is being sold. */
   productImages: boolean;
-  /** Migration 0048: stock counted as full units and loose pieces. */
+  /**
+   * Migrations 0048-0061: stock counted as full units and loose pieces.
+   *
+   * Probed on the last thing the set adds rather than the first, so this
+   * is true only when the whole feature is there. Half of it applied is
+   * the one state no screen is written for.
+   */
   loosePieces: boolean;
 }
 
@@ -95,7 +101,7 @@ async function probe(): Promise<DatabaseCapabilities> {
     admin.from("supplier_documents").select("status").limit(1),
     admin.from("van_crew").select("van_id").limit(1),
     admin.from("products").select("image_path").limit(1),
-    admin.from("inventory").select("qty_pieces").limit(1),
+    admin.from("products_priced").select("piece_price").limit(1),
   ]);
 
   const capabilities: DatabaseCapabilities = {

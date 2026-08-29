@@ -148,8 +148,10 @@ export async function getTransfer(id: string): Promise<Result<TransferDetail | n
   const [items, reason] = await Promise.all([
     supabase
       .from("stock_transfer_items")
-      .select("id, product_id, quantity, pieces, qty_received, qty_received_pieces, notes, " +
-              "products(name, sku, unit_of_measure)")
+      .select(((await getCapabilities()).loosePieces
+        ? "id, product_id, quantity, pieces, qty_received, qty_received_pieces, notes, "
+        : "id, product_id, quantity, qty_received, notes, ") +
+        "products(name, sku, unit_of_measure)")
       .eq("transfer_id", id),
     supabase.from("stock_transfers").select("cancelled_reason").eq("id", id).maybeSingle(),
   ]);

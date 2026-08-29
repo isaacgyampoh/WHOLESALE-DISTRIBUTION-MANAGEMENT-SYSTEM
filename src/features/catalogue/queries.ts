@@ -31,6 +31,12 @@ export interface ProductRow {
    */
   costPrice: number | null;
   listPrice: number;
+  /**
+   * What one loose piece sells for, or null where nobody has set one.
+   * Null is not zero: it means the till falls back to the pack rate,
+   * which is deliberately visible rather than silently applied.
+   */
+  piecePrice: number | null;
   /** Path in the public product-images bucket, or null. */
   imagePath: string | null;
   reorderPoint: number;
@@ -95,6 +101,9 @@ function toProduct(row: Record<string, unknown>): ProductRow {
       ? null
       : parseAmount(row.cost_price as string),
     listPrice: parseAmount(row.list_price as string),
+    piecePrice: row.piece_price === null || row.piece_price === undefined
+      ? null
+      : parseAmount(row.piece_price as string),
     imagePath: (row.image_path as string) ?? null,
     reorderPoint,
     reorderQty: Number(row.reorder_qty ?? 0),
@@ -138,6 +147,10 @@ function productSelect(capabilities: {
   // database behind the application returns products rather than an
   // error about an unknown column.
   if (capabilities.productImages) columns.push("image_path");
+  // Reaches products_priced with 0061. Asked for only when it is there,
+  // so a database behind the application lists products rather than
+  // failing on an unknown column.
+  if (capabilities.loosePieces) columns.push("piece_price");
   if (capabilities.maskedProductPricing) columns.push("cost_price");
   if (capabilities.batchesAndExpiry) {
     columns.push("track_batches", "track_expiry", "shelf_life_days");
@@ -395,10 +408,18 @@ export async function listMovements(
 ): Promise<Result<MovementRow[]>> {
   const supabase = await createSupabaseServerClient();
 
+  // pieces arrives with 0048. Asked for only when it is there, so a
+  // database behind the application lists movements rather than failing
+  // on an unknown column - and every movement reads as units only,
+  // which is what it was.
+  const movementCapabilities = await getCapabilities();
+
   let query = supabase
     .from("stock_movements")
     .select(
-      "id, created_at, type, quantity, pieces, reason, reference_type, " +
+      (movementCapabilities.loosePieces
+        ? "id, created_at, type, quantity, pieces, reason, reference_type, "
+        : "id, created_at, type, quantity, reason, reference_type, ") +
       "products(name, sku, unit_of_measure), warehouses(name), profiles(full_name)",
     )
     .order("created_at", { ascending: false })

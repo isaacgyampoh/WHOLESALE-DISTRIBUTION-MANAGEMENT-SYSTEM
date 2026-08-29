@@ -32,7 +32,10 @@ export async function salesByProduct(periodDays = 30): Promise<Result<SalesByPro
 
   const { data, error } = await supabase
     .from("van_sale_items")
-    .select("product_id, quantity, pieces, line_total, products(sku, name), van_sales!inner(sold_at, status)")
+    .select(((await getCapabilities()).loosePieces
+      ? "product_id, quantity, pieces, line_total, "
+      : "product_id, quantity, line_total, ") +
+      "products(sku, name), van_sales!inner(sold_at, status)")
     .gte("van_sales.sold_at", since)
     .neq("van_sales.status", "void");
 
@@ -197,11 +200,15 @@ export async function inventoryValueReport(): Promise<Result<InventoryValueRow[]
   const { data, error } = capabilities.maskedProductPricing
     ? await supabase
         .from("products_priced")
-        .select("id, categories(name), inventory(qty_on_hand, qty_pieces), units_per_case, cost_price, is_active")
+        .select(capabilities.loosePieces
+          ? "id, categories(name), inventory(qty_on_hand, qty_pieces), units_per_case, cost_price, is_active"
+          : "id, categories(name), inventory(qty_on_hand), cost_price, is_active")
         .eq("is_active", true)
     : await supabase
         .from("products")
-        .select("id, categories(name), inventory(qty_on_hand, qty_pieces), units_per_case, is_active")
+        .select(capabilities.loosePieces
+          ? "id, categories(name), inventory(qty_on_hand, qty_pieces), units_per_case, is_active"
+          : "id, categories(name), inventory(qty_on_hand), is_active")
         .eq("is_active", true);
 
   if (error) return failed("reports", error, "The inventory report could not be built.");

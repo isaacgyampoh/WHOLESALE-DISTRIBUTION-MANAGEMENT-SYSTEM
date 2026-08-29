@@ -116,6 +116,23 @@ async function loosePiecesHeld(productId: string): Promise<number> {
   return total(shelves.data) + total(vans.data);
 }
 
+/**
+ * The price of one loose piece, or null where nobody has set one.
+ *
+ * Optional on purpose: most products are never split, and forcing a
+ * figure for them would be a field nobody can answer. Null is what the
+ * till reads as "fall back to the pack rate".
+ */
+function readPiecePrice(raw: string, errors: Record<string, string>): number | null {
+  const text = raw.trim();
+  if (text === "") return null;
+  if (!/^\d{1,9}(\.\d{1,2})?$/.test(text)) {
+    errors.piecePrice = "Use an amount like 6 or 6.50.";
+    return null;
+  }
+  return Number(text);
+}
+
 function readPackSize(raw: string, errors: Record<string, string>): number {
   const text = raw.trim();
   if (text === "") return 1;
@@ -143,6 +160,7 @@ function productFields(formData: FormData) {
     unit: String(formData.get("unit") ?? "piece"),
     costPrice: String(formData.get("costPrice") ?? ""),
     listPrice: String(formData.get("listPrice") ?? ""),
+    piecePrice: String(formData.get("piecePrice") ?? "").trim(),
     reorderPoint: String(formData.get("reorderPoint") ?? "0"),
     reorderQty: String(formData.get("reorderQty") ?? "0"),
     trackBatches: formData.get("trackBatches") === "on" ? "on" : "",
@@ -214,6 +232,15 @@ export async function createProductAction(
   }
 
   const packSize = readPackSize(v.piecesPerUnit, errors);
+  const piecePrice = readPiecePrice(v.piecePrice, errors);
+  const capabilitiesForWrite = await getCapabilities();
+
+  // A price for a piece of something nobody has said can be split is a
+  // figure that could never be charged.
+  if (piecePrice !== null && packSize <= 1) {
+    errors.piecePrice =
+      "Say how many pieces come out of one unit before pricing a single one.";
+  }
   // Loose pieces without a pack size means nobody has said what a piece
   // is. The number would be recorded and no screen could ever relate it
   // to the cartons beside it.
@@ -261,6 +288,7 @@ export async function createProductAction(
       units_per_case: packSize,
       cost_price: cost,
       list_price: list,
+      ...(capabilitiesForWrite.loosePieces ? { piece_price: piecePrice } : {}),
       reorder_point: reorderPoint,
       reorder_qty: reorderQty,
       // Expiry has nowhere to live without a batch, so asking for one
@@ -387,6 +415,13 @@ export async function updateProductAction(
   }
 
   const packSize = readPackSize(v.piecesPerUnit, errors);
+  const piecePrice = readPiecePrice(v.piecePrice, errors);
+  const capabilitiesForWrite = await getCapabilities();
+
+  if (piecePrice !== null && packSize <= 1) {
+    errors.piecePrice =
+      "Say how many pieces come out of one unit before pricing a single one.";
+  }
 
   // Taking the pack size back to 1 says this product is never split.
   // If loose pieces are already on a shelf somewhere, that would strand
@@ -419,6 +454,7 @@ export async function updateProductAction(
       units_per_case: packSize,
       cost_price: cost,
       list_price: list,
+      ...(capabilitiesForWrite.loosePieces ? { piece_price: piecePrice } : {}),
       reorder_point: reorderPoint,
       reorder_qty: reorderQty,
       // Expiry has nowhere to live without a batch, so asking for one
