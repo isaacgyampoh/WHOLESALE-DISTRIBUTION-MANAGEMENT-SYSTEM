@@ -273,15 +273,17 @@ export async function getSellingRound(): Promise<Result<OfflineSnapshotShape | n
           tax_rate?: string; image_path?: string; piece_price?: string; units_per_case?: number;
         } | null;
         const unitPrice = parseAmount(p.unit_price as string);
-        const pack = Number(product?.units_per_case ?? 1);
-        // Derived only where nobody has set a real one, and only where
-        // there is a pack size to divide by. It is the wrong price - a
-        // single always costs more per piece than the carton it came
-        // from - but a visible wrong price beats a piece sold for
-        // nothing, and the product page says where to fix it.
-        const piecePrice = product?.piece_price !== undefined && product.piece_price !== null
-          ? parseAmount(product.piece_price)
-          : pack > 1 ? Math.round((unitPrice / pack) * 100) / 100 : 0;
+        // Never derived.
+        //
+        // Dividing the carton price by the pack size is always the wrong
+        // number - wholesale exists because a carton is cheaper per
+        // piece than singles are - and a wrong price that looks like a
+        // real one is worse than none, because it gets charged. A
+        // product with no piece price cannot be sold by the piece until
+        // somebody with the authority to set prices sets one.
+        const piecePrice = product?.piece_price === undefined || product.piece_price === null
+          ? 0
+          : parseAmount(product.piece_price);
 
         return {
           product_id: p.product_id as string,
@@ -327,9 +329,9 @@ export interface OfflineSnapshotShape {
   prices: {
     product_id: string; unit_price: number; tax_rate: number;
     /**
-     * What one loose piece sells for. Falls back to unit_price over the
-     * pack size where nobody has set one - the wrong number, but a
-     * visible one rather than a piece sold for nothing.
+     * What one loose piece sells for. Zero means nobody has set one,
+     * and the till refuses to sell pieces of that product rather than
+     * inventing a price for them.
      */
     piece_price: number;
     /** Public bucket path, so the till can show it with no signal. */

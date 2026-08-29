@@ -1,5 +1,5 @@
 import type { Receipt } from "@/lib/receipts/receipt";
-import { money, toNumber, receiptQuantity } from "@/lib/receipts/receipt";
+import { money, toNumber, receiptUnitLines } from "@/lib/receipts/receipt";
 
 const WHEN = new Intl.DateTimeFormat("en-GB", {
   day: "2-digit", month: "short", year: "numeric",
@@ -56,14 +56,25 @@ export function ReceiptDocument({ receipt }: { receipt: Receipt }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border-subtle)]">
-              {(receipt.items ?? []).map((line, i) => (
-                <tr key={i}>
-                  <td className="py-2.5 pr-2 text-[var(--text-primary)]">{line.name}</td>
-                  <td className="numeric py-2.5 text-right">{receiptQuantity(line)}</td>
-                  <td className="numeric py-2.5 text-right">{money(toNumber(line.unitPrice))}</td>
-                  <td className="numeric py-2.5 text-right">{money(toNumber(line.lineTotal))}</td>
-                </tr>
-              ))}
+              {(receipt.items ?? []).map((line, i) => {
+                // One row per unit actually sold. A line of two cartons
+                // and three singles is two priced rows under one product
+                // name, because a single "Price" column cannot say which
+                // rate applied to which half.
+                const priced = receiptUnitLines(line, (n) => money(n));
+                return priced.map((part, j) => (
+                  <tr key={`${i}-${j}`}>
+                    <td className="py-2.5 pr-2 text-[var(--text-primary)]">
+                      {j === 0 ? line.name : ""}
+                    </td>
+                    <td className="numeric py-2.5 text-right">{part.what}</td>
+                    <td className="numeric py-2.5 text-right">{part.each}</td>
+                    <td className="numeric py-2.5 text-right">
+                      {j === priced.length - 1 ? money(toNumber(line.lineTotal)) : ""}
+                    </td>
+                  </tr>
+                ));
+              })}
             </tbody>
           </table>
 

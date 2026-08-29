@@ -551,6 +551,11 @@ export function SellForm({
               // second row: the singles are not there to sell.
               const splittable = s.pieces_per_unit > 1;
               const noLoose = s.qty_pieces <= 0;
+              // Nobody has priced a single of this product, so there is
+              // no honest figure to charge for one. The row says so
+              // instead of offering a control that could only ever sell
+              // at the wrong price.
+              const noPiecePrice = splittable && piecePrice <= 0;
               const lineTotal = price * qty + piecePrice * pieceQty;
               return (
                 <li
@@ -586,8 +591,10 @@ export function SellForm({
                       </p>
                       {splittable && (
                         <p className="numeric mt-0.5 text-xs text-[var(--text-secondary)]">
-                          {formatMoney(piecePrice)} a piece ·{" "}
-                          {formatQuantity(s.qty_pieces)} loose
+                          {noPiecePrice
+                            ? "No price set for a single - ask the office"
+                            : `${formatMoney(piecePrice)} a piece`}
+                          {" · "}{formatQuantity(s.qty_pieces)} loose
                         </p>
                       )}
                     </div>
@@ -638,7 +645,7 @@ export function SellForm({
                     </button>
                   </div>
 
-                  {splittable && (
+                  {splittable && !noPiecePrice && (
                     <div className="mt-2 flex items-center gap-2">
                       <button
                         type="button"

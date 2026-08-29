@@ -2,7 +2,7 @@
 
 import { useActionState } from "react";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { createProductAction, updateProductAction  } from "./actions";
 import { INITIAL_CATALOGUE_STATE } from "@/features/catalogue/state";
 import { Button } from "@/components/ui/button";
@@ -42,6 +42,18 @@ export function ProductForm({
     product ? updateProductAction : createProductAction,
     INITIAL_CATALOGUE_STATE,
   );
+
+  // The chosen unit, held in state so every label that names it moves
+  // with the dropdown: "Pieces per Carton", "Carton price". A form that
+  // says "unit" throughout makes whoever is filling it in translate,
+  // and the field they get wrong is the pack size.
+  const [unit, setUnit] = useState(
+    state.values?.unit ?? product?.unit ?? "piece",
+  );
+  const unitName = unit.charAt(0).toUpperCase() + unit.slice(1);
+  // A product sold by the piece has no second unit to split into, so
+  // the pack size and piece price have nothing to describe.
+  const splittable = unit !== "piece";
 
   useEffect(() => {
     if (state.status !== "done") return;
@@ -85,8 +97,11 @@ export function ProductForm({
           />
         </Field>
 
-        <Field label="Unit" htmlFor="unit" required error={err.unit}>
-          <Select id="unit" name="unit" defaultValue={v?.unit ?? product?.unit ?? "piece"}>
+        <Field label="Selling unit" htmlFor="unit" required error={err.unit}>
+          <Select
+            id="unit" name="unit" value={unit}
+            onChange={(e) => setUnit(e.target.value)}
+          >
             {UNITS.map((unit) => (
               <option key={unit} value={unit}>{unitLabel(unit)}</option>
             ))}
@@ -122,9 +137,13 @@ export function ProductForm({
           is measured in, not permission to treat a sealed carton as
           twelve loose pieces.
         */}
+        {splittable && (
         <Field
-          label="Pieces per unit" htmlFor="piecesPerUnit" error={err.piecesPerUnit}
-          hint="How many single pieces come out of one whole unit. Leave at 1 if it is never split."
+          label={`Pieces per ${unit}`}
+          htmlFor="piecesPerUnit" error={err.piecesPerUnit}
+          hint={splittable
+            ? `How many single pieces come out of one ${unit}. Leave at 1 if it is never split.`
+            : "This product is sold by the piece, so there is nothing to split."}
         >
           <Input
             id="piecesPerUnit" name="piecesPerUnit" inputMode="numeric"
@@ -133,6 +152,7 @@ export function ProductForm({
             placeholder="1"
           />
         </Field>
+        )}
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -144,7 +164,10 @@ export function ProductForm({
             placeholder="42.00"
           />
         </Field>
-        <Field label="Selling price" htmlFor="listPrice" required error={err.listPrice} hint="In cedis">
+        <Field
+          label={`${unitName} price`} htmlFor="listPrice" required error={err.listPrice}
+          hint={`In cedis, for one whole ${unit}`}
+        >
           <Input
             id="listPrice" name="listPrice" required inputMode="decimal"
             defaultValue={v?.listPrice ?? product?.listPrice?.toFixed(2) ?? ""}
@@ -157,16 +180,17 @@ export function ProductForm({
       {/*
         What one loose piece sells for.
         
-        Left blank the till divides the selling price by the pack size,
-        which is always too low: wholesale exists because the carton is
-        cheaper per piece than the singles, and selling singles at the
-        carton rate gives away the whole reason for breaking one open.
-        The hint says so, and the field is only offered for a product
-        that can actually be split.
+        Nothing derives this from the selling price. Dividing a carton by
+        its pack size is always too low - wholesale exists because the
+        carton is cheaper per piece than singles are - and a figure that
+        looks like a price gets charged. Left blank, the product simply
+        cannot be sold by the piece, and the till says so rather than
+        inventing one.
       */}
+      {splittable && (
       <Field
-        label="Price for one piece" htmlFor="piecePrice" error={err.piecePrice}
-        hint="In cedis. Leave blank and the till divides the selling price by the pack size, which is usually too low."
+        label="Piece price" htmlFor="piecePrice" error={err.piecePrice}
+        hint="In cedis. Leave blank and this product cannot be sold by the piece - nothing is worked out from the selling price."
       >
         <Input
           id="piecePrice" name="piecePrice" inputMode="decimal"
@@ -175,6 +199,7 @@ export function ProductForm({
           placeholder="6.00"
         />
       </Field>
+      )}
 
       {/*
         Opening stock, on creation only.
@@ -196,8 +221,11 @@ export function ProductForm({
           </p>
           <div className="grid gap-4 sm:grid-cols-3">
             <Field
-              label="Whole units" htmlFor="openingQty" error={err.openingQty}
-              hint="Sealed cartons, boxes or bags. Leave blank if none yet."
+              label={splittable ? `${unitName}s` : "Pieces"}
+              htmlFor="openingQty" error={err.openingQty}
+              hint={splittable
+                ? `Whole, unopened ${unit}s. Leave blank if none yet.`
+                : "What is already on the shelf. Leave blank if none yet."}
             >
               <Input
                 id="openingQty" name="openingQty" inputMode="numeric" placeholder="0"
@@ -211,6 +239,7 @@ export function ProductForm({
               one number forces whoever is standing there to either
               round or invent a conversion.
             */}
+            {splittable && (
             <Field
               label="Loose pieces" htmlFor="openingPieces" error={err.openingPieces}
               hint="Singles already out of a carton. Leave blank if none."
@@ -221,6 +250,7 @@ export function ProductForm({
                 aria-invalid={Boolean(err.openingPieces)}
               />
             </Field>
+            )}
             <Field
               label="Held at" htmlFor="openingWarehouseId" error={err.openingWarehouseId}
             >

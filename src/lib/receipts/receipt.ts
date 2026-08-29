@@ -37,14 +37,50 @@ export function receiptQuantity(line: ReceiptLine): string {
   const pieces = Number(line.pieces ?? 0);
   if (pieces === 0) return String(units);
 
-  const unit = (line.unit ?? "unit").trim() || "unit";
-  const word = (n: number, w: string) =>
-    `${n} ${w}${n === 1 ? "" : "s"}`;
-
   const parts: string[] = [];
-  if (units !== 0) parts.push(word(units, unit.charAt(0).toUpperCase() + unit.slice(1)));
+  if (units !== 0) parts.push(word(units, unitWord(line)));
   parts.push(word(pieces, "Piece"));
   return parts.join(" + ");
+}
+
+function unitWord(line: ReceiptLine): string {
+  const unit = (line.unit ?? "unit").trim() || "unit";
+  return unit.charAt(0).toUpperCase() + unit.slice(1);
+}
+
+function word(n: number, w: string): string {
+  return `${n} ${w}${n === 1 ? "" : "s"}`;
+}
+
+/**
+ * What was bought and what each of them cost: "2 Pieces x GHS 12.00".
+ *
+ * A line can be two cartons and three singles at two different prices,
+ * and one "Price" column cannot say that - it would show the carton
+ * rate against a quantity that is mostly singles, which is precisely
+ * the argument at the next delivery this is meant to prevent. So each
+ * half is priced on its own line and the customer can see which is
+ * which.
+ *
+ * Returns one entry for a plain line, two for a mixed one.
+ */
+export function receiptUnitLines(
+  line: ReceiptLine,
+  money: (n: number) => string,
+): { what: string; each: string }[] {
+  const units = Number(line.quantity ?? 0);
+  const pieces = Number(line.pieces ?? 0);
+  const unitPrice = Number(line.unitPrice ?? 0);
+  const piecePrice = Number(line.piecePrice ?? 0);
+
+  if (pieces === 0) {
+    return [{ what: word(units, unitWord(line)), each: money(unitPrice) }];
+  }
+
+  const out: { what: string; each: string }[] = [];
+  if (units !== 0) out.push({ what: word(units, unitWord(line)), each: money(unitPrice) });
+  out.push({ what: word(pieces, "Piece"), each: money(piecePrice) });
+  return out;
 }
 
 export interface ReceiptPayment {

@@ -409,6 +409,20 @@ export async function recordVanSaleAction(input: {
         message: `Only ${looseAvailable} loose pieces of ${name} left on the van.`,
       };
     }
+
+    // A piece with no price of its own is not sold. Never derived from
+    // the carton price: a single is dearer per piece than the case it
+    // came out of, and a figure invented here would undercharge every
+    // one of them while looking like a real price. complete_van_sale
+    // refuses it too - that is the guard that governs - but a sentence
+    // naming the product is more use at the counter than a raised
+    // exception.
+    if (pieces > 0 && Number(line.piece_price ?? 0) <= 0) {
+      return {
+        ok: false,
+        message: `No price is set for a single ${name}. Ask the office to set the piece price.`,
+      };
+    }
   }
 
   const { data: sale, error } = await admin

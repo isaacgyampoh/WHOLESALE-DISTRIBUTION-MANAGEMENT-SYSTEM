@@ -139,8 +139,7 @@ export default async function ProductPage({
               <Row
                 label="Price per piece"
                 value={product.piecePrice === null
-                  ? `Not set - the till would charge ${formatMoney(
-                      product.listPrice / Math.max(product.unitsPerCase, 1))}`
+                  ? "Not set - pieces cannot be sold until it is"
                   : formatMoney(product.piecePrice)}
               />
             )}

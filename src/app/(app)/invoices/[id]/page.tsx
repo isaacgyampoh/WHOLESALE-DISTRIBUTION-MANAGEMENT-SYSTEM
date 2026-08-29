@@ -12,7 +12,7 @@ import { Forbidden } from "@/components/layout/forbidden";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ErrorState } from "@/components/ui/states";
-import { formatMoney, formatDate, formatQuantity } from "@/lib/utils/format";
+import { formatMoney, formatDate } from "@/lib/utils/format";
 import { formatHolding } from "@/lib/catalogue/quantity";
 import { METHOD_LABELS } from "@/features/commercial/payment-list";
 import { ShareButton } from "@/features/documents/share-button";
