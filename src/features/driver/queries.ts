@@ -266,7 +266,10 @@ export async function getSellingRound(): Promise<Result<OfflineSnapshotShape | n
         qty_on_hand: Number(s.qty_on_hand ?? 0),
         qty_pieces: Number(s.qty_pieces ?? 0),
         pieces_per_unit: Number(s.units_per_case ?? 1),
-        unit: (s.unit_of_measure as string) ?? "unit",
+        // Empty rather than "unit" when the column is not there: an
+        // empty unit holds no pieces, so a database behind the
+        // application shows the single stepper it always showed.
+        unit: (s.unit_of_measure as string) ?? "",
       })),
       prices: ((priceRes.data ?? []) as unknown as Record<string, unknown>[]).map((p) => {
         const product = p.products as {
