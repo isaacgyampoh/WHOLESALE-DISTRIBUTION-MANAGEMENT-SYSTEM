@@ -23,7 +23,16 @@
 -- New columns go on the end: CREATE OR REPLACE VIEW may add but not
 -- reorder, and dropping this would cascade into everything that reads
 -- it.
-create or replace view public.stock_summary as
+-- security_invoker restated deliberately.
+--
+-- CREATE OR REPLACE VIEW does not preserve reloptions: replacing a view
+-- without naming it again silently turns the setting off, the view
+-- starts running with its owner's privileges, and every row level
+-- security policy behind it stops applying. For a view over stock that
+-- means one organization reading another's shelves - and nothing fails,
+-- which is why the test suite is the only thing that catches it.
+create or replace view public.stock_summary
+with (security_invoker = on) as
   select
     p.id as product_id,
     p.sku,

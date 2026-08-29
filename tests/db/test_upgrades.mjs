@@ -60,10 +60,15 @@ const shim = fs.readFileSync("shim.sql", "utf8");
 for (const s of splitStatements(shim)) await c.query(s);
 
 // Everything up to but NOT including 0022.
+//
+// A cutoff rather than a list of everything to leave out. The list had
+// to be extended by hand for every migration ever added and stopped at
+// 0042, so 0043 onwards silently joined the "up to 0021" baseline -
+// which held until 0052 named product_cost, a function 0023 creates and
+// this baseline deliberately does not have.
+const BASELINE = "0021";
 const files = fs.readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort()
-  .filter((f) => !["0022", "0023", "0024", "0025", "0026", "0027", "0028", "0029", "0030",
-                   "0031", "0032", "0033", "0034", "0035",
-                   "0036", "0037", "0038", "0039", "0040", "0041", "0042"].some((n) => f.startsWith(n)));
+  .filter((f) => f.slice(0, 4) <= BASELINE);
 for (const f of files) {
   const sql = fs.readFileSync(path.join(MIGRATIONS, f), "utf8");
   for (const s of splitStatements(sql)) {
@@ -488,6 +493,29 @@ await c.query(`drop type if exists public.sync_status_probe`);
 ok("the probe type is cleaned up",
    (await c.query(`select count(*)::int n from pg_type where typname like 'sync_%_probe'`))
      .rows[0].n === 0);
+
+// Everything after the last UPGRADE script, applied as migrations.
+//
+// The UPGRADE_*.sql files stop at 0042. From 0043 onwards the schema is
+// carried by the migrations themselves, applied directly - which is
+// what scripts/db/apply.mjs does against the hosted database. Running
+// them here is what makes this a full upgrade path rather than one that
+// stops halfway, and it is why VERIFY_DATABASE.sql below can be held to
+// the current schema rather than a historical one.
+const LAST_UPGRADE_SCRIPT = "0042";
+const remaining = fs.readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort()
+  .filter((f) => f.slice(0, 4) > LAST_UPGRADE_SCRIPT);
+for (const f of remaining) {
+  const sql = fs.readFileSync(path.join(MIGRATIONS, f), "utf8");
+  for (const st of splitStatements(sql)) {
+    try { await c.query(st); }
+    catch (e) {
+      ok(`${f} applies on an upgraded database`, false, e.message.split("\n")[0].slice(0, 90));
+    }
+  }
+}
+ok("the migrations after the last upgrade script apply cleanly",
+   true, `${remaining.length} files`);
 
 // The schema this suite leaves behind must satisfy the shipped
 // verification script, which is what the owner runs after upgrading.

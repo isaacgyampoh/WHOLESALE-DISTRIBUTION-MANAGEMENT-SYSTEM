@@ -149,14 +149,14 @@ end $enum$;
 do $enum$
 declare
   found text[];
-  wanted text[] := array['receipt', 'issue', 'adjustment_in', 'adjustment_out', 'transfer_in', 'transfer_out', 'customer_return', 'supplier_return', 'damage', 'shortage'];
+  wanted text[] := array['receipt', 'issue', 'adjustment_in', 'adjustment_out', 'transfer_in', 'transfer_out', 'customer_return', 'supplier_return', 'damage', 'shortage', 'opening_stock', 'stocktake_in', 'stocktake_out', 'conversion_in', 'conversion_out'];
 begin
   if not exists (
     select 1 from pg_type t
       join pg_namespace n on n.oid = t.typnamespace
      where n.nspname = 'public' and t.typname = 'movement_type'
   ) then
-    create type public.movement_type as enum ('receipt', 'issue', 'adjustment_in', 'adjustment_out', 'transfer_in', 'transfer_out', 'customer_return', 'supplier_return', 'damage', 'shortage');
+    create type public.movement_type as enum ('receipt', 'issue', 'adjustment_in', 'adjustment_out', 'transfer_in', 'transfer_out', 'customer_return', 'supplier_return', 'damage', 'shortage', 'opening_stock', 'stocktake_in', 'stocktake_out', 'conversion_in', 'conversion_out');
   else
     select array_agg(e.enumlabel order by e.enumsortorder) into found
       from pg_enum e
@@ -11729,37 +11729,12 @@ comment on function public.complete_van_sale(uuid, numeric) is
 -- ====================================================================
 -- 0043_name_the_movements_that_exist.sql
 -- ====================================================================
--- ===================================================================
--- 0043  Name the movements that already exist
--- ===================================================================
---
--- The production database carries three movement types that this
--- repository never declared: opening_stock, stocktake_in and
--- stocktake_out. They arrived with a migration from another line of
--- work whose remaining half was never applied, so the labels exist and
--- nothing knows what they mean.
---
--- movement_direction returns null for all three. The trigger that keeps
--- inventory in step multiplies that null by the quantity, and writes the
--- result:
---
---   delta := movement_direction(new.type) * new.quantity;   -- null
---   qty_on_hand := qty_on_hand + delta;                     -- null
---
--- So a movement using any of them does not merely fail to count - it
--- takes the running balance with it. Nothing writes one today, which is
--- the only reason no stock has been lost, but the labels are selectable
--- from the enum and the next caller to reach for the obvious name finds
--- the trap.
---
--- This migration declares them here so a fresh install matches the
--- database that exists. 0044 gives them their direction - separately,
--- because PostgreSQL will not let a value be used in the same
--- transaction that added it, the same reason 0032 shipped alone.
-
-alter type public.movement_type add value if not exists 'opening_stock';
-alter type public.movement_type add value if not exists 'stocktake_in';
-alter type public.movement_type add value if not exists 'stocktake_out';
+-- Migration 0043 adds opening_stock, stocktake_in and stocktake_out to
+-- movement_type - three labels the production database already carried
+-- and this repository had never declared.
+-- In this consolidated installer all three are part of the enum
+-- declaration in section 0001, because PostgreSQL cannot use a new enum
+-- value in the transaction that added it. Nothing to do here.
 
 
 -- ====================================================================
@@ -12238,3 +12213,2729 @@ grant execute on function public.transfer_van_stock(uuid, uuid, jsonb, text)
 create index if not exists stock_movements_van_transfer
   on public.stock_movements (reference_id)
   where reference_type = 'van_transfer';
+
+
+-- ====================================================================
+-- 0048_stock_counts_units_and_pieces.sql
+-- ====================================================================
+-- ===================================================================
+-- 0048  Stock counts full units and loose pieces
+-- ===================================================================
+--
+-- This business does not hold one number per product. It holds ten
+-- cartons and seven loose pieces, and those are two different things:
+-- ten cartons is not seventy, and seven pieces is not a fraction of a
+-- carton. Until now the ledger had a single integer and could say only
+-- one of them.
+--
+-- WHAT THE EXISTING NUMBERS MEAN
+--
+-- Every quantity already in this database is a count of the product's
+-- own unit_of_measure. A carton product holding 137 holds 137 cartons.
+-- All 68 products carry units_per_case = 1, which is to say no
+-- pieces-per-unit has ever been configured.
+--
+-- So the migration is a rename in meaning and nothing else:
+--
+--   qty_on_hand  ->  full units, exactly as recorded    (untouched)
+--   qty_pieces   ->  loose pieces, of which there are none yet (0)
+--
+-- Not one quantity moves. The audit that matters:
+--
+--   warehouse   1,509 units
+--   vans           80 units
+--   movements      94
+--
+-- all still read the same after this, because every new column defaults
+-- and every existing write omits it.
+--
+-- WHY THIS IS SAFE TO DEPLOY BEFORE THE SCREENS EXIST
+--
+-- pieces defaults to 0 on a movement, so the eleven functions that
+-- write the ledger keep working untouched and keep meaning what they
+-- meant. The trigger applies a zero to the piece balance, which is a
+-- no-op. The system behaves exactly as it does today until something
+-- deliberately passes a piece count.
+--
+-- That is the point of doing it in this order: the hard half is the
+-- ledger, and it can be laid down without changing a single figure.
+--
+-- CONVERSION IS NOT ASSUMED
+--
+-- pieces_per_unit says how many pieces come out of one full unit, and it
+-- only means something when somebody has configured it. Left at 1, a
+-- piece and a unit are the same thing, which is true of the four
+-- products sold by the piece and harmless for the rest. Nothing here
+-- converts between the two columns: opening a carton is a deliberate act
+-- that has to be recorded, not arithmetic the database does quietly.
+
+-- ------------------------------------------------------------------
+-- What one full unit contains
+-- ------------------------------------------------------------------
+--
+-- units_per_case already carries exactly this meaning and is 1 for every
+-- product, so it is kept rather than replaced. The comment is the
+-- change: it had no stated meaning before and now has one that the rest
+-- of the system relies on.
+comment on column public.products.units_per_case is
+  'How many loose pieces come out of one full unit_of_measure - one '
+  'carton, box or bag. 1 means a piece and a unit are the same thing, '
+  'which is the case until somebody configures otherwise. Never used to '
+  'convert between qty_on_hand and qty_pieces on its own: opening a '
+  'carton is a recorded movement, not silent arithmetic.';
+
+-- ------------------------------------------------------------------
+-- The second quantity, everywhere stock is held or moved
+-- ------------------------------------------------------------------
+
+alter table public.stock_movements
+  add column if not exists pieces integer not null default 0;
+
+comment on column public.stock_movements.pieces is
+  'Loose pieces moved, alongside quantity, which counts full units. A '
+  'movement may carry either, or both: five cartons and three pieces is '
+  'one movement, not two.';
+
+alter table public.inventory
+  add column if not exists qty_pieces integer not null default 0;
+
+comment on column public.inventory.qty_pieces is
+  'Loose pieces on hand. qty_on_hand counts full units and the two are '
+  'independent: ten cartons and five pieces is not seventy-five of '
+  'anything.';
+
+alter table public.van_inventory
+  add column if not exists qty_pieces integer not null default 0;
+
+comment on column public.van_inventory.qty_pieces is
+  'Loose pieces on the van, beside qty_on_hand in full units.';
+
+-- No non-negative check on the balances, deliberately, and the same way
+-- qty_on_hand has never had one.
+--
+-- The trigger keeps balances with INSERT ... ON CONFLICT DO UPDATE, and
+-- PostgreSQL validates the proposed row before it resolves the
+-- conflict. The proposed row carries the delta - minus three pieces for
+-- a sale of three - so a check of qty_pieces >= 0 refuses every
+-- outbound movement against an existing balance rather than only the
+-- ones that would overdraw. That is why inventory.qty_on_hand has no
+-- such constraint either, and only qty_reserved does.
+--
+-- Running out of stock is prevented where it can be judged: complete_van_sale,
+-- dispatch_van_load and transfer_van_stock each check what is actually
+-- there and refuse by name before writing anything.
+
+-- A movement's own quantities are always positive - direction comes from
+-- the type, not the sign - and that can be constrained safely.
+alter table public.stock_movements
+  drop constraint if exists stock_movements_pieces_not_negative;
+alter table public.stock_movements
+  add constraint stock_movements_pieces_not_negative check (pieces >= 0);
+
+-- A movement that moves nothing at all is a mistake, not a record.
+--
+-- The original rule was quantity > 0, which said the same thing back
+-- when quantity was the only column. It now forbids the very case this
+-- migration exists for: selling three loose pieces and no full units is
+-- a movement of quantity 0 and pieces 3, and that check refused it.
+--
+-- So the rule moves up a level rather than being weakened. Each column
+-- may be zero; the movement as a whole may not.
+alter table public.stock_movements
+  drop constraint if exists stock_movements_quantity_check;
+alter table public.stock_movements
+  add constraint stock_movements_quantity_not_negative check (quantity >= 0);
+
+alter table public.stock_movements
+  drop constraint if exists stock_movements_moves_something;
+alter table public.stock_movements
+  add constraint stock_movements_moves_something
+  check (quantity > 0 or pieces > 0);
+
+-- ------------------------------------------------------------------
+-- The trigger applies both halves
+-- ------------------------------------------------------------------
+--
+-- One direction governs the whole movement: five cartons and three
+-- pieces out is both leaving, never one of each way. Otherwise this is
+-- the 0011 body, and with pieces defaulting to 0 it behaves identically
+-- for every write that exists today.
+create or replace function public.apply_stock_movement()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $function$
+declare
+  direction integer;
+  delta        integer;
+  delta_pieces integer;
+begin
+  direction    := public.movement_direction(new.type);
+  delta        := direction * new.quantity;
+  delta_pieces := direction * new.pieces;
+
+  if new.warehouse_id is not null then
+    insert into public.inventory (org_id, product_id, warehouse_id, qty_on_hand, qty_pieces)
+    values (new.org_id, new.product_id, new.warehouse_id, delta, delta_pieces)
+    on conflict (product_id, warehouse_id) do update
+      set qty_on_hand = public.inventory.qty_on_hand + delta,
+          qty_pieces  = public.inventory.qty_pieces  + delta_pieces,
+          updated_at  = now();
+  else
+    insert into public.van_inventory (org_id, van_id, product_id, qty_on_hand, qty_pieces)
+    values (new.org_id, new.van_id, new.product_id, delta, delta_pieces)
+    on conflict (van_id, product_id) do update
+      set qty_on_hand = public.van_inventory.qty_on_hand + delta,
+          qty_pieces  = public.van_inventory.qty_pieces  + delta_pieces,
+          updated_at  = now();
+  end if;
+
+  return new;
+end;
+$function$;
+
+comment on function public.apply_stock_movement() is
+  'Applies a movement to the balance it names - a warehouse or a van - '
+  'in both full units and loose pieces. One direction governs both: a '
+  'movement out takes from each, never one from each side.';
+
+
+-- ====================================================================
+-- 0049_name_the_two_halves_of_opening_a_carton.sql
+-- ====================================================================
+-- Migration 0049 adds conversion_in and conversion_out to movement_type,
+-- the two halves of opening a carton into loose pieces.
+-- In this consolidated installer both are part of the enum declaration
+-- in section 0001, for the same reason as 0043. Nothing to do here.
+
+
+-- ====================================================================
+-- 0050_opening_a_carton_is_something_somebody_does.sql
+-- ====================================================================
+-- ===================================================================
+-- 0050  Opening a carton is something somebody does
+-- ===================================================================
+--
+-- The pack size says a carton holds twelve. That is a fact about the
+-- carton, not a licence to treat one carton as twelve pieces whenever
+-- the arithmetic is convenient. Until somebody cuts the tape there are
+-- no loose pieces, and a system that conjured them would be inventing
+-- stock: the shelf would disagree with the screen, and the shelf is
+-- right.
+--
+-- So the conversion is an operation with a person behind it and a line
+-- in the ledger, exactly like a receipt or a count. It runs both ways -
+-- opening a carton into pieces, and packing loose pieces back into one -
+-- because a warehouse does both and only recording one of them leaves
+-- the other to be faked with an adjustment.
+
+-- ------------------------------------------------------------------
+-- The direction of the two new types
+-- ------------------------------------------------------------------
+--
+-- Rewritten whole rather than patched, the same as 0044, so the mapping
+-- can be read and checked in one piece. A type missing from here does
+-- not miscount the balance - it replaces it with null.
+create or replace function public.movement_direction(t public.movement_type)
+returns integer
+language sql
+immutable
+as $$
+  select case t
+    when 'receipt'          then  1
+    when 'transfer_in'      then  1
+    when 'customer_return'  then  1
+    when 'adjustment_in'    then  1
+    when 'opening_stock'    then  1
+    when 'stocktake_in'     then  1
+    when 'conversion_in'    then  1
+    when 'issue'            then -1
+    when 'transfer_out'     then -1
+    when 'supplier_return'  then -1
+    when 'adjustment_out'   then -1
+    when 'damage'           then -1
+    when 'shortage'         then -1
+    when 'stocktake_out'    then -1
+    when 'conversion_out'   then -1
+  end
+$$;
+
+comment on function public.movement_direction(public.movement_type) is
+  'Which way a movement moves stock. Every member of movement_type must '
+  'appear here: a null direction does not miscount the balance, it '
+  'replaces it with null.';
+
+-- ------------------------------------------------------------------
+-- Opening a carton, and packing one back up
+-- ------------------------------------------------------------------
+create or replace function public.convert_stock_units(
+  p_product   uuid,
+  p_warehouse uuid,
+  p_van       uuid,
+  p_action    text,     -- 'open' or 'pack'
+  p_units     integer,  -- full units to open, or to make up
+  p_reason    text
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  reference   uuid := gen_random_uuid();
+  product_org uuid;
+  product_name text;
+  unit_name   text;
+  pack        integer;
+  held_units  integer;
+  held_pieces integer;
+  piece_count integer;
+  note        text;
+begin
+  -- Changing the form stock is held in is a warehouse job. A
+  -- salesperson turning cartons into pieces on their own authority is
+  -- how a van comes back short and balanced.
+  perform public.require_role('admin', 'senior_manager', 'manager', 'warehouse');
+
+  if p_action is null or p_action not in ('open', 'pack') then
+    raise exception 'Say whether the stock is being opened or packed';
+  end if;
+
+  if p_units is null or p_units <= 0 then
+    raise exception 'Enter a whole number above zero';
+  end if;
+
+  if coalesce(trim(p_reason), '') = '' then
+    raise exception 'Say why the stock is changing';
+  end if;
+
+  -- Stock is held in one place or the other, never both and never
+  -- neither. Left ambiguous, the trigger would silently pick the
+  -- warehouse branch and the van would never be touched.
+  if (p_warehouse is null) = (p_van is null) then
+    raise exception 'Name either a warehouse or a van, not both';
+  end if;
+
+  select org_id, name, unit_of_measure, units_per_case
+    into product_org, product_name, unit_name, pack
+    from public.products
+   where id = p_product;
+
+  if product_org is null then
+    raise exception 'Product not found';
+  end if;
+
+  -- Definer rights would otherwise reach across tenants.
+  if auth.uid() is not null and product_org is distinct from public.auth_org_id() then
+    raise exception 'Product not found' using errcode = '42501';
+  end if;
+
+  -- The whole operation rests on the pack size. Unset, it is 1, and
+  -- opening a carton into one piece is not a conversion - it is a
+  -- rounding error waiting to be discovered at stocktake.
+  if coalesce(pack, 1) <= 1 then
+    raise exception
+      'No pack size is set for %. Record how many pieces come out of one % before opening one.',
+      product_name, lower(coalesce(unit_name, 'unit'));
+  end if;
+
+  piece_count := p_units * pack;
+
+  -- What is actually there, in whichever place holds it.
+  if p_warehouse is not null then
+    select coalesce(qty_on_hand, 0), coalesce(qty_pieces, 0)
+      into held_units, held_pieces
+      from public.inventory
+     where warehouse_id = p_warehouse and product_id = p_product;
+  else
+    select coalesce(qty_on_hand, 0), coalesce(qty_pieces, 0)
+      into held_units, held_pieces
+      from public.van_inventory
+     where van_id = p_van and product_id = p_product;
+  end if;
+
+  held_units  := coalesce(held_units, 0);
+  held_pieces := coalesce(held_pieces, 0);
+
+  -- Refused here, by name, rather than left to a balance going
+  -- negative somewhere nobody is looking.
+  if p_action = 'open' and held_units < p_units then
+    raise exception 'Only % % there, % asked to be opened',
+      held_units, lower(coalesce(unit_name, 'unit')) || 's', p_units;
+  end if;
+
+  if p_action = 'pack' and held_pieces < piece_count then
+    raise exception 'Only % loose pieces there, % needed to make up % %',
+      held_pieces, piece_count, p_units, lower(coalesce(unit_name, 'unit')) || 's';
+  end if;
+
+  note := trim(p_reason);
+
+  if p_action = 'open' then
+    -- The sealed units leave.
+    insert into public.stock_movements
+      (org_id, product_id, warehouse_id, van_id, type, quantity, pieces,
+       reference_type, reference_id, reason, created_by)
+    values
+      (product_org, p_product, p_warehouse, p_van, 'conversion_out', p_units, 0,
+       'unit_opened', reference, note, auth.uid());
+
+    -- The loose pieces appear.
+    insert into public.stock_movements
+      (org_id, product_id, warehouse_id, van_id, type, quantity, pieces,
+       reference_type, reference_id, reason, created_by)
+    values
+      (product_org, p_product, p_warehouse, p_van, 'conversion_in', 0, piece_count,
+       'unit_opened', reference, note, auth.uid());
+  else
+    -- The loose pieces go back in the box.
+    insert into public.stock_movements
+      (org_id, product_id, warehouse_id, van_id, type, quantity, pieces,
+       reference_type, reference_id, reason, created_by)
+    values
+      (product_org, p_product, p_warehouse, p_van, 'conversion_out', 0, piece_count,
+       'unit_packed', reference, note, auth.uid());
+
+    insert into public.stock_movements
+      (org_id, product_id, warehouse_id, van_id, type, quantity, pieces,
+       reference_type, reference_id, reason, created_by)
+    values
+      (product_org, p_product, p_warehouse, p_van, 'conversion_in', p_units, 0,
+       'unit_packed', reference, note, auth.uid());
+  end if;
+
+  return reference;
+end;
+$$;
+
+comment on function public.convert_stock_units(uuid, uuid, uuid, text, integer, text) is
+  'Open full units into loose pieces, or pack loose pieces back into '
+  'full units, as a pair of ledger movements sharing one reference. '
+  'Requires a pack size on the product: nothing here converts on '
+  'arithmetic alone, because until somebody opens the carton the pieces '
+  'do not exist.';
+
+revoke all on function public.convert_stock_units(uuid, uuid, uuid, text, integer, text)
+  from public, anon;
+grant execute on function public.convert_stock_units(uuid, uuid, uuid, text, integer, text)
+  to authenticated, service_role;
+
+-- Both halves are read back together by their reference.
+create index if not exists stock_movements_conversion
+  on public.stock_movements (reference_id)
+  where reference_type in ('unit_opened', 'unit_packed');
+
+
+-- ====================================================================
+-- 0051_the_van_carries_pieces_too.sql
+-- ====================================================================
+-- ===================================================================
+-- 0051  The van carries pieces too
+-- ===================================================================
+--
+-- 0048 gave the warehouse two quantities and 0050 gave it a way to move
+-- between them. The van still had one. A salesperson could be sent out
+-- with ten cartons and no way to record the five loose pieces that went
+-- with them, which is exactly the stock that goes missing.
+--
+-- This carries the second quantity through the field-sales loop it was
+-- always going to have to reach: loaded onto the van, sold off it,
+-- brought back at the end of the round.
+--
+-- PRICING A PIECE
+--
+-- A piece is not a twelfth of a carton in money terms. Wholesale exists
+-- because buying the carton is cheaper per piece than buying singles,
+-- so dividing the carton price by the pack size would undercharge every
+-- single sale, quietly, forever.
+--
+-- piece_price is therefore its own column. It is nullable and the
+-- interface falls back to list_price / pack size when it is unset -
+-- which is the wrong number but a visible one, shown on the screen
+-- before anything is sold, rather than a blocked sale on day one. Set
+-- it and the real price is used.
+--
+-- BATCHES
+--
+-- Loose pieces do not consume batches, and full units go on doing so
+-- exactly as before. That follows the rule consume_batches already
+-- states in its own body: batches are a record of what arrived, not the
+-- authority on how much there is - inventory is. A piece is not an
+-- arrival, and once a carton is open there is no honest way to say
+-- which batch a single came from.
+
+-- ------------------------------------------------------------------
+-- What a piece sells for
+-- ------------------------------------------------------------------
+
+alter table public.products
+  add column if not exists piece_price numeric(14,2);
+
+comment on column public.products.piece_price is
+  'What one loose piece sells for. Null means nobody has set one, and '
+  'the interface falls back to list_price divided by units_per_case - '
+  'visibly, and only as a starting point. A piece is not a twelfth of a '
+  'carton in money: that is what the carton is for.';
+
+-- The masked view has to carry the new column or no screen can read it.
+-- Rebuilt from its current definition with piece_price added; cost stays
+-- masked exactly as it was.
+do $$
+begin
+  if exists (select 1 from pg_views where schemaname = 'public' and viewname = 'products_priced') then
+    execute 'grant select (piece_price) on public.products to authenticated';
+  end if;
+end $$;
+
+-- ------------------------------------------------------------------
+-- Pieces on the load, the sale and the return
+-- ------------------------------------------------------------------
+
+alter table public.van_load_items
+  add column if not exists qty_loaded_pieces integer not null default 0;
+
+comment on column public.van_load_items.qty_loaded_pieces is
+  'Loose pieces loaded, beside qty_loaded in full units.';
+
+alter table public.van_sale_items
+  add column if not exists pieces integer not null default 0;
+
+comment on column public.van_sale_items.pieces is
+  'Loose pieces sold on this line, beside quantity in full units. A '
+  'line may carry either or both: two cartons and three singles is one '
+  'line of one product, not two.';
+
+-- What the pieces on this line were charged at, kept on the line the
+-- same way unit_price already is. A price that moves after the sale
+-- must not change what the customer was billed.
+alter table public.van_sale_items
+  add column if not exists piece_price numeric(14,2) not null default 0;
+
+-- ------------------------------------------------------------------
+-- The line total has to count the pieces
+-- ------------------------------------------------------------------
+--
+-- line_subtotal and line_total are generated columns, and both read
+--
+--   quantity * unit_price
+--
+-- and nothing else. Left alone, every loose piece on every sale would
+-- be charged at nothing at all: the sale would complete, the stock
+-- would leave the van, and the money would never be asked for. That is
+-- the worst possible shape for this bug, because nothing fails.
+--
+-- PostgreSQL 17 can replace a generation expression in place. Every row
+-- already recorded carries pieces = 0 and piece_price = 0, so each total
+-- recomputes to exactly what it holds now.
+alter table public.van_sale_items
+  alter column line_subtotal set expression as (
+    round((quantity::numeric * unit_price + pieces::numeric * piece_price)
+          * (1::numeric - discount_pct / 100::numeric), 2)
+  );
+
+alter table public.van_sale_items
+  alter column line_total set expression as (
+    round((quantity::numeric * unit_price + pieces::numeric * piece_price)
+          * (1::numeric - discount_pct / 100::numeric)
+          * (1::numeric + tax_rate / 100::numeric), 2)
+  );
+
+alter table public.van_return_items
+  add column if not exists qty_expected_pieces integer not null default 0,
+  add column if not exists qty_returned_good_pieces integer not null default 0,
+  add column if not exists qty_damaged_pieces integer not null default 0;
+
+-- Missing is not entered, it is what is left over - mirroring qty_missing,
+-- which has always been generated exactly this way. A piece nobody
+-- returned and nobody reported damaged is a piece unaccounted for, and
+-- the warehouse should not have to do that subtraction by hand.
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public' and table_name = 'van_return_items'
+       and column_name = 'qty_missing_pieces'
+  ) then
+    alter table public.van_return_items
+      add column qty_missing_pieces integer
+      generated always as (qty_expected_pieces - qty_returned_good_pieces - qty_damaged_pieces) stored;
+  end if;
+end $$;
+
+-- ------------------------------------------------------------------
+-- A line may be pieces only
+-- ------------------------------------------------------------------
+--
+-- The same trap 0048 found in the ledger, in the two tables that feed
+-- it. qty_loaded > 0 and quantity > 0 said all there was to say when a
+-- line had one quantity; they now forbid the case this exists for -
+-- three loose singles and no cartons is quantity 0, pieces 3.
+--
+-- The rule moves up a level rather than being weakened, exactly as it
+-- did for stock_movements. Each column may be zero. The line as a whole
+-- may not: a sale line for nothing at all is a mistake, not a record.
+alter table public.van_load_items
+  drop constraint if exists van_load_items_qty_loaded_check;
+alter table public.van_load_items
+  add constraint van_load_items_qty_loaded_not_negative check (qty_loaded >= 0);
+alter table public.van_load_items
+  drop constraint if exists van_load_items_pieces_not_negative;
+alter table public.van_load_items
+  add constraint van_load_items_pieces_not_negative check (qty_loaded_pieces >= 0);
+alter table public.van_load_items
+  drop constraint if exists van_load_items_loads_something;
+alter table public.van_load_items
+  add constraint van_load_items_loads_something
+  check (qty_loaded > 0 or qty_loaded_pieces > 0);
+
+alter table public.van_sale_items
+  drop constraint if exists van_sale_items_quantity_check;
+alter table public.van_sale_items
+  add constraint van_sale_items_quantity_not_negative check (quantity >= 0);
+alter table public.van_sale_items
+  drop constraint if exists van_sale_items_pieces_not_negative;
+alter table public.van_sale_items
+  add constraint van_sale_items_pieces_not_negative check (pieces >= 0);
+alter table public.van_sale_items
+  drop constraint if exists van_sale_items_sells_something;
+alter table public.van_sale_items
+  add constraint van_sale_items_sells_something
+  check (quantity > 0 or pieces > 0);
+
+alter table public.van_sale_items
+  drop constraint if exists van_sale_items_piece_price_check;
+alter table public.van_sale_items
+  add constraint van_sale_items_piece_price_check check (piece_price >= 0);
+
+alter table public.van_return_items
+  drop constraint if exists van_return_items_expected_pieces_check;
+alter table public.van_return_items
+  add constraint van_return_items_expected_pieces_check check (qty_expected_pieces >= 0);
+alter table public.van_return_items
+  drop constraint if exists van_return_items_good_pieces_check;
+alter table public.van_return_items
+  add constraint van_return_items_good_pieces_check check (qty_returned_good_pieces >= 0);
+alter table public.van_return_items
+  drop constraint if exists van_return_items_damaged_pieces_check;
+alter table public.van_return_items
+  add constraint van_return_items_damaged_pieces_check check (qty_damaged_pieces >= 0);
+
+-- ------------------------------------------------------------------
+-- Dispatching a load
+-- ------------------------------------------------------------------
+--
+-- The 0045 body, with the piece half added to the availability check
+-- and to both movements. Everything else is untouched, including the
+-- expiry gate and the salesperson requirement.
+create or replace function public.dispatch_van_load(p_load_id uuid)
+returns public.van_loads
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+declare
+  load public.van_loads;
+  item record;
+  available integer;
+  available_pieces integer;
+  expired_line record;
+  sellers integer;
+begin
+  perform public.require_role('admin', 'senior_manager', 'manager', 'warehouse');
+
+  select * into load from public.van_loads where id = p_load_id for update;
+  if not found then
+    raise exception 'Van load % not found', p_load_id;
+  end if;
+
+  if load.status <> 'loaded' then
+    raise exception 'Load % must be in status loaded to dispatch (currently %)',
+      load.load_number, load.status;
+  end if;
+
+  -- The driver's signature is recorded when it happens and no longer
+  -- required before the goods can leave. See 0045: the business this
+  -- serves dispatches on the warehouse's authority, and waiting on a
+  -- second approval stopped every round.
+
+  if not exists (select 1 from public.van_load_items where load_id = p_load_id) then
+    raise exception 'Load % has no items', load.load_number;
+  end if;
+
+  -- A van with nobody to sell from it is a delivery, not a round. Goods
+  -- would leave the warehouse with no way to record what happened to
+  -- them, which is how stock goes missing without anybody being wrong.
+  select count(*) into sellers
+    from public.van_assignments
+   where van_id = load.van_id and unassigned_at is null and crew_role = 'salesperson';
+
+  if sellers = 0 then
+    raise exception
+      'No salesperson is crewed on this van. Assign one before dispatching %.',
+      load.load_number;
+  end if;
+
+  -- Nothing out of date leaves the yard. Checked before any movement is
+  -- written, so a refused load moves no stock at all.
+  select p.name, b.batch_number, b.expires_on
+    into expired_line
+    from public.van_load_items i
+    join public.products p on p.id = i.product_id
+    join public.product_batches b
+      on b.product_id = i.product_id
+     and b.warehouse_id = load.warehouse_id
+     and b.qty_remaining > 0
+   where i.load_id = p_load_id
+     and p.track_expiry
+     and b.expires_on is not null
+     and b.expires_on < current_date
+   order by b.expires_on
+   limit 1;
+
+  if found then
+    raise exception
+      'Cannot dispatch %: batch % of % expired on %. Remove it from the warehouse before loading.',
+      load.load_number, expired_line.batch_number, expired_line.name, expired_line.expires_on;
+  end if;
+
+  for item in select * from public.van_load_items where load_id = p_load_id loop
+    select coalesce(qty_available, 0), coalesce(qty_pieces, 0)
+      into available, available_pieces
+    from public.inventory
+    where product_id = item.product_id and warehouse_id = load.warehouse_id;
+
+    if coalesce(available, 0) < item.qty_loaded then
+      raise exception 'Insufficient stock for product %: % available, % requested',
+        item.product_id, coalesce(available, 0), item.qty_loaded;
+    end if;
+
+    -- Judged on its own. Sealed cartons in the warehouse do not cover a
+    -- request for loose pieces: until one is opened the pieces are not
+    -- there, and opening one is a recorded act somebody has to perform.
+    if coalesce(available_pieces, 0) < coalesce(item.qty_loaded_pieces, 0) then
+      raise exception
+        'Not enough loose pieces of product %: % available, % requested. Open a full one first.',
+        item.product_id, coalesce(available_pieces, 0), item.qty_loaded_pieces;
+    end if;
+
+    insert into public.stock_movements
+      (org_id, product_id, warehouse_id, type, quantity, pieces, unit_cost,
+       reference_type, reference_id, created_by)
+    values
+      (load.org_id, item.product_id, load.warehouse_id, 'transfer_out',
+       item.qty_loaded, coalesce(item.qty_loaded_pieces, 0), item.unit_cost,
+       'van_load', load.id, auth.uid());
+
+    insert into public.stock_movements
+      (org_id, product_id, van_id, type, quantity, pieces, unit_cost,
+       reference_type, reference_id, created_by)
+    values
+      (load.org_id, item.product_id, load.van_id, 'transfer_in',
+       item.qty_loaded, coalesce(item.qty_loaded_pieces, 0), item.unit_cost,
+       'van_load', load.id, auth.uid());
+
+    -- Full units only. See the header: a piece is not an arrival.
+    perform public.consume_batches(item.product_id, load.warehouse_id, item.qty_loaded);
+  end loop;
+
+  update public.van_loads
+     set status = 'dispatched', dispatched_at = now(), updated_at = now()
+   where id = p_load_id
+  returning * into load;
+
+  return load;
+end;
+$function$;
+
+-- ------------------------------------------------------------------
+-- Completing a sale
+-- ------------------------------------------------------------------
+--
+-- The 0042 body with the piece half added to the stock check and the
+-- movement. Every authority check is verbatim - who may complete a sale,
+-- and whether they are crewed on the van it draws from.
+create or replace function public.complete_van_sale(
+  p_sale_id uuid,
+  p_amount_paid numeric default null::numeric
+)
+returns public.van_sales
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+declare
+  sale public.van_sales;
+  item record;
+  on_van integer;
+  on_van_pieces integer;
+  limit_amount numeric(14,2);
+  terms integer;
+  owing numeric(14,2);
+begin
+  select * into sale from public.van_sales where id = p_sale_id for update;
+  if not found then
+    raise exception 'Sale % not found', p_sale_id;
+  end if;
+
+  -- The person who made the sale, or the office. Note this is the
+  -- salesperson now, not the driver: the driver has no business
+  -- completing somebody else's sale.
+  if sale.salesperson_id <> auth.uid()
+     and auth.uid() is not null
+     and not public.has_role('admin', 'senior_manager', 'manager') then
+    raise exception 'Only the salesperson who made this sale or a manager may complete it'
+      using errcode = '42501';
+  end if;
+
+  -- And the van has to be theirs. Being the author of the sale is not
+  -- the same as being entitled to the stock. See 0042.
+  if auth.uid() is not null
+     and not public.has_role('admin', 'senior_manager', 'manager')
+     and not public.is_van_crew(sale.van_id) then
+    raise exception 'You are not crewed on the van this sale draws from'
+      using errcode = '42501';
+  end if;
+
+  if sale.status <> 'draft' then
+    raise exception 'Sale % is already %', sale.sale_number, sale.status;
+  end if;
+
+  if not exists (select 1 from public.van_sale_items where sale_id = p_sale_id) then
+    raise exception 'Sale % has no items', sale.sale_number;
+  end if;
+
+  for item in select * from public.van_sale_items where sale_id = p_sale_id loop
+    select coalesce(qty_on_hand, 0), coalesce(qty_pieces, 0)
+      into on_van, on_van_pieces
+    from public.van_inventory
+    where van_id = sale.van_id and product_id = item.product_id;
+
+    if coalesce(on_van, 0) < item.quantity then
+      raise exception 'Van does not carry enough of product %: % on board, % sold',
+        item.product_id, coalesce(on_van, 0), item.quantity;
+    end if;
+
+    if coalesce(on_van_pieces, 0) < coalesce(item.pieces, 0) then
+      raise exception
+        'Van does not carry enough loose pieces of product %: % on board, % sold',
+        item.product_id, coalesce(on_van_pieces, 0), item.pieces;
+    end if;
+  end loop;
+
+  if sale.sale_type = 'cash' then
+    if coalesce(p_amount_paid, sale.total) < sale.total then
+      raise exception 'Cash sale % requires full payment of %, received %',
+        sale.sale_number, sale.total, coalesce(p_amount_paid, 0);
+    end if;
+    update public.van_sales
+    set amount_paid = sale.total, status = 'completed', updated_at = now()
+    where id = p_sale_id;
+  else
+    select credit_limit, payment_terms_days into limit_amount, terms
+    from public.customers where id = sale.customer_id;
+
+    select coalesce(sum(amount), 0) into owing
+    from public.credit_transactions where customer_id = sale.customer_id;
+
+    if owing + sale.total > limit_amount then
+      raise exception
+        'Credit limit exceeded for customer: outstanding %, sale %, limit %',
+        owing, sale.total, limit_amount;
+    end if;
+
+    update public.van_sales
+    set amount_paid = coalesce(p_amount_paid, 0),
+        status = 'completed',
+        due_date = coalesce(sale.due_date, current_date + coalesce(terms, 30)),
+        updated_at = now()
+    where id = p_sale_id;
+
+    insert into public.credit_transactions
+      (org_id, customer_id, type, amount, reference_type, reference_id,
+       due_date, created_by, notes)
+    values
+      (sale.org_id, sale.customer_id, 'charge',
+       sale.total - coalesce(p_amount_paid, 0), 'van_sale', sale.id,
+       current_date + coalesce(terms, 30), auth.uid(),
+       'Credit sale ' || sale.sale_number);
+  end if;
+
+  for item in select * from public.van_sale_items where sale_id = p_sale_id loop
+    insert into public.stock_movements
+      (org_id, product_id, van_id, type, quantity, pieces,
+       reference_type, reference_id, created_by)
+    values
+      (sale.org_id, item.product_id, sale.van_id, 'issue',
+       item.quantity, coalesce(item.pieces, 0),
+       'van_sale', sale.id, auth.uid());
+  end loop;
+
+  select * into sale from public.van_sales where id = p_sale_id;
+  return sale;
+end;
+$function$;
+
+-- ------------------------------------------------------------------
+-- Approving what came back
+-- ------------------------------------------------------------------
+--
+-- Verbatim, with the piece half on each of the three outcomes. A
+-- movement is written when either half is non-zero, so a return of
+-- three loose pieces and no cartons is recorded rather than skipped by
+-- a check that only ever looked at full units.
+create or replace function public.approve_van_return(p_return_id uuid)
+returns public.van_returns
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+declare
+  ret public.van_returns;
+  item record;
+begin
+  perform public.require_role('admin', 'senior_manager', 'manager', 'warehouse');
+
+  select * into ret from public.van_returns where id = p_return_id for update;
+  if not found then
+    raise exception 'Van return % not found', p_return_id;
+  end if;
+
+  if ret.status <> 'submitted' then
+    raise exception 'Return % must be submitted before approval (currently %)',
+      ret.return_number, ret.status;
+  end if;
+
+  for item in select * from public.van_return_items where return_id = p_return_id loop
+    if item.qty_missing < 0 or coalesce(item.qty_missing_pieces, 0) < 0 then
+      raise exception 'Returned quantity for product % exceeds what was expected',
+        item.product_id;
+    end if;
+
+    if item.qty_returned_good > 0 or coalesce(item.qty_returned_good_pieces, 0) > 0 then
+      insert into public.stock_movements
+        (org_id, product_id, van_id, type, quantity, pieces,
+         reference_type, reference_id, created_by)
+      values (ret.org_id, item.product_id, ret.van_id, 'transfer_out',
+              item.qty_returned_good, coalesce(item.qty_returned_good_pieces, 0),
+              'van_return', ret.id, auth.uid());
+
+      insert into public.stock_movements
+        (org_id, product_id, warehouse_id, type, quantity, pieces,
+         reference_type, reference_id, created_by)
+      values (ret.org_id, item.product_id, ret.warehouse_id, 'transfer_in',
+              item.qty_returned_good, coalesce(item.qty_returned_good_pieces, 0),
+              'van_return', ret.id, auth.uid());
+    end if;
+
+    if item.qty_damaged > 0 or coalesce(item.qty_damaged_pieces, 0) > 0 then
+      insert into public.stock_movements
+        (org_id, product_id, van_id, type, quantity, pieces, reason,
+         reference_type, reference_id, created_by)
+      values (ret.org_id, item.product_id, ret.van_id, 'damage',
+              item.qty_damaged, coalesce(item.qty_damaged_pieces, 0),
+              coalesce(item.damage_reason, 'Damaged in transit'),
+              'van_return', ret.id, auth.uid());
+    end if;
+
+    if item.qty_missing > 0 or coalesce(item.qty_missing_pieces, 0) > 0 then
+      insert into public.stock_movements
+        (org_id, product_id, van_id, type, quantity, pieces, reason,
+         reference_type, reference_id, created_by)
+      values (ret.org_id, item.product_id, ret.van_id, 'shortage',
+              item.qty_missing, coalesce(item.qty_missing_pieces, 0),
+              'Unaccounted for at van return', 'van_return', ret.id, auth.uid());
+    end if;
+  end loop;
+
+  update public.van_returns
+  set status = 'approved', approved_by = auth.uid(), approved_at = now(), updated_at = now()
+  where id = p_return_id
+  returning * into ret;
+
+  update public.van_loads set status = 'returned', updated_at = now()
+  where id = ret.load_id;
+
+  return ret;
+end;
+$function$;
+
+-- ------------------------------------------------------------------
+-- What a load is worth, with its pieces
+-- ------------------------------------------------------------------
+--
+-- Still definer-rights and still role-masked exactly as 0046 left it.
+-- Only the sum changes: a piece is worth its share of the unit cost,
+-- which for cost purposes genuinely is a twelfth of a carton - the
+-- reason piece_price exists separately is margin, and cost has no
+-- margin in it.
+create or replace function public.van_load_value(p_load uuid)
+returns numeric
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+begin
+  if not public.has_role('admin', 'senior_manager', 'manager', 'accountant', 'warehouse') then
+    return null;
+  end if;
+
+  return (
+    select coalesce(sum(
+      i.qty_loaded::numeric * i.unit_cost
+      + case
+          when coalesce(p.units_per_case, 1) > 1
+          then coalesce(i.qty_loaded_pieces, 0)::numeric * i.unit_cost / p.units_per_case
+          else 0
+        end
+    ), 0)
+      from public.van_load_items i
+      join public.van_loads l on l.id = i.load_id
+      join public.products p on p.id = i.product_id
+     where i.load_id = p_load
+       and l.org_id = public.auth_org_id()
+  );
+end;
+$$;
+
+
+-- ====================================================================
+-- 0052_the_till_can_see_the_loose_pieces.sql
+-- ====================================================================
+-- ===================================================================
+-- 0052  The till can see the loose pieces
+-- ===================================================================
+--
+-- van_stock_summary is what the salesperson's till reads, and it is
+-- cached on the phone so a round can be sold with no signal at all. It
+-- reports qty_on_hand and nothing else, so loose pieces loaded onto the
+-- van in 0051 are invisible at the point of sale: the stock is on board,
+-- the ledger knows it, and the only screen that could sell it cannot see
+-- it.
+--
+-- units_per_case comes along because the till has to know whether a
+-- product can be split before it offers a second figure - and it has to
+-- know it offline, where there is nothing to ask.
+--
+-- stock_value counts the pieces at their share of cost, the same way
+-- van_load_value does. Cost has no margin in it, so a piece really is a
+-- twelfth of a carton here; piece_price exists separately because
+-- selling is a different question.
+-- The new columns go on the end, deliberately. CREATE OR REPLACE VIEW
+-- may add columns but may not reorder or rename them, and dropping this
+-- view to get a tidier column order would cascade into everything that
+-- reads it - for a column order nobody sees.
+create or replace view public.van_stock_summary
+with (security_invoker = on) as
+  select
+    vi.org_id,
+    vi.van_id,
+    v.code as van_code,
+    v.registration_no,
+    vi.product_id,
+    p.sku,
+    p.name as product_name,
+    vi.qty_on_hand,
+    -- Null for anybody not allowed to know it. product_cost is definer
+    -- rights and role-masked; this view runs as its caller and may not
+    -- name cost_price directly. Same rule as 0038 and 0046.
+    public.product_cost(p.id)::numeric(14,2) as cost_price,
+    public.product_cost(p.id) * vi.qty_on_hand::numeric
+      + case
+          when coalesce(p.units_per_case, 1) > 1
+          then public.product_cost(p.id) * vi.qty_pieces::numeric / p.units_per_case
+          else 0
+        end as stock_value,
+    vi.qty_pieces,
+    p.units_per_case,
+    p.unit_of_measure
+  from public.van_inventory vi
+    join public.vans v on v.id = vi.van_id
+    join public.products p on p.id = vi.product_id;
+
+comment on view public.van_stock_summary is
+  'What a van is carrying, in full units and loose pieces. The two are '
+  'never added together: ten cartons and five pieces is not seventy-five '
+  'of anything. Read by the salesperson till, which caches it for '
+  'selling with no signal.';
+
+grant select on public.van_stock_summary to authenticated;
+
+
+-- ====================================================================
+-- 0053_a_sale_made_with_no_signal_keeps_its_pieces.sql
+-- ====================================================================
+-- ===================================================================
+-- 0053  A sale made with no signal keeps its loose pieces
+-- ===================================================================
+--
+-- sync_submit is the other way a sale reaches this database. The till
+-- queues it on the phone when there is no signal and replays it here
+-- later, and it writes van_sale_items and van_return_items directly
+-- rather than going back through the server action.
+--
+-- So it needed the same change 0051 made everywhere else, and until it
+-- has it, an offline sale is the worst kind of wrong:
+--
+--   the singles are handed to the customer
+--   the line is written with pieces defaulting to 0
+--   line_total counts only the cartons, so the money is never asked for
+--   complete_van_sale takes no pieces off the van
+--
+-- and nothing fails. The van comes back short at reconciliation with no
+-- record of where the stock went, which is precisely the hole this
+-- whole piece of work exists to close.
+--
+-- The body below is the deployed function with three changes and
+-- nothing else: somewhere to hold the loose half of what is on board,
+-- the sale line, and the return line. Every other branch - collections,
+-- reconciliations, the replay guard that makes this idempotent - is
+-- untouched.
+--
+-- coalesce throughout, so a payload from a phone that has not been
+-- reloaded since before this deploy still applies exactly as it did.
+
+CREATE OR REPLACE FUNCTION public.sync_submit(p_id uuid, p_device_id text, p_operation sync_operation, p_payload jsonb, p_occurred_at timestamp with time zone)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  existing   public.sync_operations;
+  actor      uuid := auth.uid();
+  org        uuid;
+  outcome    jsonb;
+  line       jsonb;
+  v_avail_pieces integer;
+  sale       public.van_sales;
+  ret        public.van_returns;
+  recon      public.van_reconciliations;
+  load_row   public.van_loads;
+  v_customer uuid;
+  v_van      uuid;
+  v_avail    integer;
+begin
+  -- Authorization is re-derived here, from the session doing the
+  -- syncing. Anything the payload says about who the driver is or what
+  -- they may do is ignored.
+  perform public.require_role(
+    'admin', 'senior_manager', 'manager', 'accountant', 'sales_rep', 'salesperson', 'driver');
+
+  if actor is null then
+    raise exception 'Authentication required' using errcode = '42501';
+  end if;
+
+  select org_id into org from public.profiles where id = actor;
+  if org is null then
+    raise exception 'No profile for the calling user' using errcode = '42501';
+  end if;
+
+  -- Already seen? Hand back exactly what happened the first time. This
+  -- is the whole point: a retry is free and cannot double-apply.
+  select * into existing from public.sync_operations where id = p_id;
+  if found then
+    -- A key belonging to somebody else is not a replay, it is a
+    -- collision or an attack. Say nothing about the original.
+    if existing.profile_id <> actor then
+      raise exception 'Operation % is not yours', p_id using errcode = '42501';
+    end if;
+    return jsonb_build_object(
+      'id', existing.id,
+      'status', existing.status,
+      'result', existing.result,
+      'error', existing.error,
+      'replayed', true
+    );
+  end if;
+
+  begin
+    case p_operation
+
+      -- ---------------------------------------------------------- sale
+      when 'van_sale' then
+        v_customer := (p_payload ->> 'customer_id')::uuid;
+        select * into load_row from public.van_loads
+         where id = (p_payload ->> 'load_id')::uuid;
+
+        if load_row.id is null then
+          raise exception 'That load no longer exists';
+        end if;
+        if load_row.org_id <> org then
+          raise exception 'That load belongs to another organization';
+        end if;
+        if load_row.status not in ('dispatched', 'loaded') then
+          raise exception 'Load % is % and cannot take further sales',
+            load_row.load_number, load_row.status;
+        end if;
+        if not exists (select 1 from public.customers
+                        where id = v_customer and org_id = org and is_active) then
+          raise exception 'That customer is no longer active';
+        end if;
+
+        v_van := load_row.van_id;
+
+        insert into public.van_sales (
+          org_id, load_id, van_id, driver_id, customer_id,
+          sale_type, status, sold_at, due_date, notes,
+          latitude, longitude
+        ) values (
+          org, load_row.id, v_van, load_row.driver_id, v_customer,
+          (p_payload ->> 'sale_type')::public.van_sale_type, 'draft',
+          p_occurred_at,
+          nullif(p_payload ->> 'due_date', '')::date,
+          nullif(p_payload ->> 'notes', ''),
+          nullif(p_payload ->> 'latitude', '')::numeric,
+          nullif(p_payload ->> 'longitude', '')::numeric
+        ) returning * into sale;
+
+        for line in select * from jsonb_array_elements(p_payload -> 'lines') loop
+          -- The van must actually be carrying it. A sale made offline
+          -- against stock that was never on board is a conflict, not a
+          -- sale, and it is caught here rather than going through.
+          select qty_on_hand, coalesce(qty_pieces, 0)
+            into v_avail, v_avail_pieces
+            from public.van_inventory
+           where van_id = v_van and product_id = (line ->> 'product_id')::uuid;
+
+          if coalesce(v_avail, 0) < coalesce((line ->> 'quantity')::integer, 0) then
+            raise exception 'Only % of that product on the van, % were sold',
+              coalesce(v_avail, 0), (line ->> 'quantity')::integer;
+          end if;
+
+          -- The loose half, judged on its own. A sealed carton on the
+          -- van does not cover singles sold off it: opening one is a
+          -- recorded act and it happens at the depot, not here.
+          if coalesce(v_avail_pieces, 0) < coalesce((line ->> 'pieces')::integer, 0) then
+            raise exception
+              'Only % loose pieces of that product on the van, % were sold',
+              coalesce(v_avail_pieces, 0), (line ->> 'pieces')::integer;
+          end if;
+
+          insert into public.van_sale_items (
+            org_id, sale_id, product_id, quantity, pieces,
+            unit_price, piece_price, discount_pct, tax_rate
+          ) values (
+            org, sale.id, (line ->> 'product_id')::uuid,
+            coalesce((line ->> 'quantity')::integer, 0),
+            coalesce((line ->> 'pieces')::integer, 0),
+            (line ->> 'unit_price')::numeric,
+            coalesce((line ->> 'piece_price')::numeric, 0),
+            coalesce((line ->> 'discount_pct')::numeric, 0),
+            coalesce((line ->> 'tax_rate')::numeric, 0)
+          );
+        end loop;
+
+        -- The existing business function moves the stock and puts a
+        -- credit sale on the customer ledger. None of that is
+        -- reimplemented here.
+        sale := public.complete_van_sale(
+          sale.id, nullif(p_payload ->> 'amount_paid', '')::numeric);
+
+        outcome := jsonb_build_object(
+          'sale_id', sale.id, 'sale_number', sale.sale_number,
+          'total', sale.total, 'balance', sale.balance);
+
+      -- ---------------------------------------------------- collection
+      when 'collection' then
+        v_customer := (p_payload ->> 'customer_id')::uuid;
+        if not exists (select 1 from public.customers where id = v_customer and org_id = org) then
+          raise exception 'That customer no longer exists';
+        end if;
+
+        perform public.record_credit_payment(
+          v_customer,
+          (p_payload ->> 'amount')::numeric,
+          coalesce((p_payload ->> 'method')::public.payment_method, 'cash'),
+          nullif(p_payload ->> 'notes', ''));
+
+        outcome := jsonb_build_object(
+          'customer_id', v_customer, 'amount', (p_payload ->> 'amount')::numeric);
+
+      -- -------------------------------------------------------- return
+      when 'van_return' then
+        select * into load_row from public.van_loads
+         where id = (p_payload ->> 'load_id')::uuid;
+        if load_row.id is null or load_row.org_id <> org then
+          raise exception 'That load no longer exists';
+        end if;
+
+        insert into public.van_returns (
+          org_id, load_id, van_id, driver_id, warehouse_id,
+          status, returned_at, notes
+        ) values (
+          org, load_row.id, load_row.van_id, load_row.driver_id,
+          load_row.warehouse_id, 'draft', p_occurred_at,
+          nullif(p_payload ->> 'notes', '')
+        ) returning * into ret;
+
+        for line in select * from jsonb_array_elements(p_payload -> 'lines') loop
+          insert into public.van_return_items (
+            org_id, return_id, product_id,
+            qty_expected, qty_returned_good, qty_damaged,
+            qty_expected_pieces, qty_returned_good_pieces, qty_damaged_pieces,
+            damage_reason
+          ) values (
+            org, ret.id, (line ->> 'product_id')::uuid,
+            (line ->> 'qty_expected')::integer,
+            (line ->> 'qty_returned_good')::integer,
+            coalesce((line ->> 'qty_damaged')::integer, 0),
+            coalesce((line ->> 'qty_expected_pieces')::integer, 0),
+            coalesce((line ->> 'qty_returned_good_pieces')::integer, 0),
+            coalesce((line ->> 'qty_damaged_pieces')::integer, 0),
+            nullif(line ->> 'damage_reason', '')
+          );
+        end loop;
+
+        update public.van_returns set status = 'submitted' where id = ret.id;
+
+        outcome := jsonb_build_object(
+          'return_id', ret.id, 'return_number', ret.return_number);
+
+      -- ------------------------------------------------ reconciliation
+      when 'reconciliation' then
+        select * into recon from public.van_reconciliations
+         where id = (p_payload ->> 'reconciliation_id')::uuid;
+
+        if recon.id is null then
+          recon := public.build_reconciliation((p_payload ->> 'load_id')::uuid);
+        end if;
+        if recon.org_id <> org then
+          raise exception 'That reconciliation belongs to another organization';
+        end if;
+        if recon.status <> 'draft' then
+          raise exception 'Reconciliation % has already been submitted', recon.recon_number;
+        end if;
+
+        update public.van_reconciliations set
+          status        = 'submitted',
+          actual_cash   = (p_payload ->> 'actual_cash')::numeric,
+          explanation   = nullif(p_payload ->> 'explanation', ''),
+          submitted_by  = actor,
+          submitted_at  = p_occurred_at
+        where id = recon.id
+        returning * into recon;
+
+        outcome := jsonb_build_object(
+          'reconciliation_id', recon.id, 'recon_number', recon.recon_number,
+          'cash_variance', recon.cash_variance);
+    end case;
+
+    insert into public.sync_operations (
+      id, org_id, profile_id, device_id, operation, payload,
+      status, result, occurred_at
+    ) values (
+      p_id, org, actor, p_device_id, p_operation, p_payload,
+      'applied', outcome, p_occurred_at
+    );
+
+    return jsonb_build_object(
+      'id', p_id, 'status', 'applied', 'result', outcome, 'replayed', false);
+
+  exception when others then
+    -- The work is rolled back to the savepoint this block opened, but
+    -- the verdict is kept: the driver is told what went wrong, and the
+    -- same key is never retried into the same failure. A message about
+    -- stock or a retired product is a conflict the driver has to see;
+    -- anything else is a plain failure.
+    insert into public.sync_operations (
+      id, org_id, profile_id, device_id, operation, payload,
+      status, error, occurred_at
+    ) values (
+      p_id, org, actor, p_device_id, p_operation, p_payload,
+      case
+        when sqlerrm ilike '%on the van%'
+          or sqlerrm ilike '%no longer%'
+          or sqlerrm ilike '%already been%'
+          or sqlerrm ilike '%cannot take further%'
+        then 'conflict'::public.sync_status
+        else 'failed'::public.sync_status
+      end,
+      sqlerrm, p_occurred_at
+    );
+
+    return jsonb_build_object(
+      'id', p_id,
+      'status', case
+        when sqlerrm ilike '%on the van%'
+          or sqlerrm ilike '%no longer%'
+          or sqlerrm ilike '%already been%'
+          or sqlerrm ilike '%cannot take further%'
+        then 'conflict' else 'failed' end,
+      'error', sqlerrm,
+      'replayed', false);
+  end;
+end;
+$function$
+;
+
+
+-- ====================================================================
+-- 0054_the_receipt_says_what_was_actually_bought.sql
+-- ====================================================================
+-- ===================================================================
+-- 0054  The receipt says what the customer actually bought
+-- ===================================================================
+--
+-- A sale can now be two cartons and three singles, and the receipt for
+-- it said "2". The line total was right - 0051 saw to that - so the
+-- customer was being charged thirteen cedis against a quantity of two,
+-- with nothing on the paper to explain the difference. That is an
+-- argument at the next delivery, and the salesperson has nothing to
+-- point at.
+--
+-- The unit comes along so the receipt can name it: "2 Cartons + 3
+-- Pieces" rather than two of something and three of something else.
+--
+-- Nothing else about this function changes, and in particular nothing
+-- new is exposed. Still no cost, no margin, no supplier, no internal
+-- id - the receipt shape is deliberately the smallest thing that
+-- answers a customer's question, and pieces are part of that question.
+
+CREATE OR REPLACE FUNCTION public.resolve_receipt_token(p_token_hash text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  tok      public.receipt_tokens;
+  doc      jsonb;
+  org_name text;
+begin
+  select * into tok
+    from public.receipt_tokens
+   where token_hash = p_token_hash
+     and revoked_at is null
+     and expires_at > now();
+
+  -- Null for unknown, expired and revoked alike. Telling the holder of
+  -- a bad link which it was tells them how to make a better guess.
+  if tok.id is null then
+    return null;
+  end if;
+
+  update public.receipt_tokens
+     set view_count = view_count + 1, last_viewed_at = now()
+   where id = tok.id;
+
+  select name into org_name from public.organizations where id = tok.org_id;
+
+  if tok.subject_type = 'sale' then
+    select jsonb_build_object(
+      'kind',           'sale',
+      'receiptNumber',  tok.receipt_number,
+      'reference',      s.sale_number,
+      'issuedAt',       s.sold_at,
+      'organization',   org_name,
+      'customerName',   c.name,
+      'customerPhone',  tok.customer_phone,
+      'servedBy',       coalesce(sp.full_name, dr.full_name),
+      'saleType',       s.sale_type,
+      'status',         s.status,
+      'subtotal',       s.subtotal,
+      'taxTotal',       s.tax_total,
+      'total',          s.total,
+      'amountPaid',     s.amount_paid,
+      'balance',        s.balance,
+      'dueDate',        s.due_date,
+      'items',          coalesce((
+        select jsonb_agg(jsonb_build_object(
+                 'name',       p.name,
+                 'sku',        p.sku,
+                 'quantity',   i.quantity,
+                 -- The loose half, and what one of them cost. A customer
+                 -- who bought two cartons and three singles is owed a
+                 -- receipt that says so: "2" against a line they paid
+                 -- thirteen cedis for is the kind of thing that gets
+                 -- argued about at the next delivery.
+                 'pieces',     coalesce(i.pieces, 0),
+                 'piecePrice', coalesce(i.piece_price, 0),
+                 'unit',       p.unit_of_measure,
+                 'unitPrice',  i.unit_price,
+                 'lineTotal',  i.line_total)
+               order by p.name)
+          from public.van_sale_items i
+          join public.products p on p.id = i.product_id
+         where i.sale_id = s.id), '[]'::jsonb),
+      'payments',       coalesce((
+        select jsonb_agg(jsonb_build_object(
+                 'method',    pay.method,
+                 'amount',    pay.amount,
+                 'provider',  pay.provider,
+                 'reference', pay.reference)
+               order by pay.created_at)
+          from public.van_sale_payments pay
+         where pay.sale_id = s.id), '[]'::jsonb)
+    )
+    into doc
+    from public.van_sales s
+    join public.customers c on c.id = s.customer_id
+    left join public.profiles sp on sp.id = s.salesperson_id
+    left join public.profiles dr on dr.id = s.driver_id
+   where s.id = tok.subject_id;
+
+  else
+    -- A credit payment. The two figures the customer wants are what
+    -- they owed and what they owe now, so both are computed here rather
+    -- than left to the caller to get right.
+    select jsonb_build_object(
+      'kind',            'credit_payment',
+      'receiptNumber',   tok.receipt_number,
+      'reference',       null,
+      'issuedAt',        t.occurred_at,
+      'organization',    org_name,
+      'customerName',    c.name,
+      'customerPhone',   tok.customer_phone,
+      'servedBy',        col.full_name,
+      'method',          t.reference_type,
+      'amount',          abs(t.amount),
+      'notes',           t.notes,
+      -- The ledger is signed: charges positive, payments negative. The
+      -- balance after this payment is everything up to and including it.
+      'balanceAfter',    coalesce((
+        select sum(x.amount) from public.credit_transactions x
+         where x.customer_id = t.customer_id
+           and (x.occurred_at < t.occurred_at
+                or (x.occurred_at = t.occurred_at and x.id <= t.id))), 0),
+      'balanceBefore',   coalesce((
+        select sum(x.amount) from public.credit_transactions x
+         where x.customer_id = t.customer_id
+           and (x.occurred_at < t.occurred_at
+                or (x.occurred_at = t.occurred_at and x.id < t.id))), 0)
+    )
+    into doc
+    from public.credit_transactions t
+    join public.customers c on c.id = t.customer_id
+    left join public.profiles col on col.id = t.created_by
+   where t.id = tok.subject_id;
+  end if;
+
+  return doc;
+end;
+$function$
+;
+
+
+-- ====================================================================
+-- 0055_stock_reports_count_the_loose_pieces.sql
+-- ====================================================================
+-- ===================================================================
+-- 0055  Stock reports count the loose pieces
+-- ===================================================================
+--
+-- stock_summary is what the inventory screens, the category totals and
+-- the reorder flags all read. It sums qty_on_hand and stops there, so
+-- every loose piece in the business is worth nothing and is on no
+-- report: the value of the stock is understated by exactly the singles
+-- on the shelf, and a product whose cartons have all been opened reads
+-- as out of stock while a hundred pieces sit in front of it.
+--
+-- The two quantities stay apart, as everywhere else. qty_pieces is its
+-- own column and is never added to qty_on_hand. Only stock_value adds
+-- them, because money is the one place they genuinely combine - a piece
+-- is worth its share of what the carton cost, and cost carries no
+-- margin to distort.
+--
+-- needs_reorder now asks whether anything is available in either form.
+-- A shelf with no full cartons and ninety loose pieces is not out of
+-- stock, and ordering more because it looked that way is how a
+-- warehouse ends up double-stocked.
+--
+-- New columns go on the end: CREATE OR REPLACE VIEW may add but not
+-- reorder, and dropping this would cascade into everything that reads
+-- it.
+-- security_invoker restated deliberately.
+--
+-- CREATE OR REPLACE VIEW does not preserve reloptions: replacing a view
+-- without naming it again silently turns the setting off, the view
+-- starts running with its owner's privileges, and every row level
+-- security policy behind it stops applying. For a view over stock that
+-- means one organization reading another's shelves - and nothing fails,
+-- which is why the test suite is the only thing that catches it.
+create or replace view public.stock_summary
+with (security_invoker = on) as
+  select
+    p.id as product_id,
+    p.sku,
+    p.name,
+    p.reorder_point,
+    p.reorder_qty,
+    public.product_cost(p.id)::numeric(14,2) as cost_price,
+    p.list_price,
+    coalesce(sum(i.qty_on_hand), 0::bigint) as qty_on_hand,
+    coalesce(sum(i.qty_reserved), 0::bigint) as qty_reserved,
+    coalesce(sum(i.qty_on_hand), 0::bigint) - coalesce(sum(i.qty_reserved), 0::bigint)
+      as qty_available,
+    public.product_cost(p.id) * coalesce(sum(i.qty_on_hand), 0::bigint)::numeric
+      + case
+          when coalesce(p.units_per_case, 1) > 1
+          then public.product_cost(p.id)
+               * coalesce(sum(i.qty_pieces), 0::bigint)::numeric
+               / p.units_per_case
+          else 0
+        end as stock_value,
+    -- Out of stock means nothing left in either form.
+    (coalesce(sum(i.qty_on_hand), 0::bigint) - coalesce(sum(i.qty_reserved), 0::bigint))
+      <= p.reorder_point
+      and coalesce(sum(i.qty_pieces), 0::bigint) = 0
+      as needs_reorder,
+    p.org_id,
+    p.category_id,
+    p.unit_of_measure,
+    p.is_active,
+    coalesce(sum(i.qty_pieces), 0::bigint) as qty_pieces,
+    p.units_per_case
+  from public.products p
+    left join public.inventory i on i.product_id = p.id
+  group by p.id, p.sku, p.name, p.reorder_point, p.reorder_qty, p.list_price,
+           p.org_id, p.category_id, p.unit_of_measure, p.is_active, p.units_per_case;
+
+comment on view public.stock_summary is
+  'One row per product: what is on hand in full units and loose pieces, '
+  'what it is worth, and whether it needs reordering. The two quantities '
+  'are never added together - only their value is, because a piece is '
+  'worth its share of what the carton cost.';
+
+
+-- ====================================================================
+-- 0056_a_broken_van_hands_over_its_singles_too.sql
+-- ====================================================================
+-- ===================================================================
+-- 0056  A broken-down van hands over its singles too
+-- ===================================================================
+--
+-- 0047 gave a stranded van a way to pass its stock to another. It moves
+-- full units only, so the loose pieces stay on the hard shoulder: the
+-- transfer completes, the paperwork looks right, and the singles are
+-- still recorded against a vehicle nobody is driving.
+--
+-- Same shape as before - a pair of movements sharing one reference, one
+-- transaction, all or nothing. Each half of each line is checked against
+-- its own half of what is on board, and a line may now carry either.
+create or replace function public.transfer_van_stock(
+  p_from_van uuid,
+  p_to_van   uuid,
+  p_lines    jsonb,
+  p_reason   text
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  from_org        uuid;
+  to_org          uuid;
+  reference       uuid := gen_random_uuid();
+  line            record;
+  on_board        integer;
+  on_board_pieces integer;
+  product         text;
+  moved           integer := 0;
+begin
+  -- Moving goods between vehicles is the office's job. A salesperson
+  -- emptying somebody else's van is how stock goes missing tidily.
+  perform public.require_role('admin', 'senior_manager', 'manager', 'warehouse');
+
+  if p_from_van = p_to_van then
+    raise exception 'A van cannot transfer stock to itself';
+  end if;
+
+  if coalesce(trim(p_reason), '') = '' then
+    raise exception 'Say why the stock is moving';
+  end if;
+
+  select org_id into from_org from public.vans where id = p_from_van;
+  select org_id into to_org   from public.vans where id = p_to_van;
+
+  if from_org is null then raise exception 'Van % not found', p_from_van; end if;
+  if to_org   is null then raise exception 'Van % not found', p_to_van;   end if;
+
+  -- Definer rights would otherwise reach across tenants, and a transfer
+  -- between two organizations is never a real one.
+  if from_org <> to_org then
+    raise exception 'Those vans belong to different organizations'
+      using errcode = '42501';
+  end if;
+
+  if auth.uid() is not null and from_org is distinct from public.auth_org_id() then
+    raise exception 'Van % not found', p_from_van using errcode = '42501';
+  end if;
+
+  if p_lines is null or jsonb_array_length(p_lines) = 0 then
+    raise exception 'Nothing was selected to move';
+  end if;
+
+  for line in
+    select (l ->> 'product_id')::uuid            as product_id,
+           coalesce((l ->> 'quantity')::integer, 0) as quantity,
+           coalesce((l ->> 'pieces')::integer, 0)   as pieces
+      from jsonb_array_elements(p_lines) as l
+  loop
+    if line.quantity < 0 or line.pieces < 0 then
+      raise exception 'Quantities must be whole numbers above zero';
+    end if;
+
+    -- Either half may be zero. A line that moves nothing at all is a
+    -- mistake, the same rule the ledger itself holds.
+    if line.quantity = 0 and line.pieces = 0 then
+      raise exception 'Quantities must be whole numbers above zero';
+    end if;
+
+    -- What is actually on board, checked here so the message names the
+    -- product rather than leaving a constraint to fail anonymously.
+    select coalesce(qty_on_hand, 0), coalesce(qty_pieces, 0)
+      into on_board, on_board_pieces
+      from public.van_inventory
+     where van_id = p_from_van and product_id = line.product_id;
+
+    if coalesce(on_board, 0) < line.quantity then
+      select name into product from public.products where id = line.product_id;
+      raise exception 'Only % of % on that van, % requested',
+        coalesce(on_board, 0), coalesce(product, line.product_id::text), line.quantity;
+    end if;
+
+    -- Judged on its own: a sealed carton on the stranded van is not
+    -- twelve singles until somebody opens it.
+    if coalesce(on_board_pieces, 0) < line.pieces then
+      select name into product from public.products where id = line.product_id;
+      raise exception 'Only % loose pieces of % on that van, % requested',
+        coalesce(on_board_pieces, 0), coalesce(product, line.product_id::text), line.pieces;
+    end if;
+
+    insert into public.stock_movements
+      (org_id, product_id, van_id, type, quantity, pieces, reference_type, reference_id,
+       reason, created_by)
+    values
+      (from_org, line.product_id, p_from_van, 'transfer_out', line.quantity, line.pieces,
+       'van_transfer', reference, trim(p_reason), auth.uid());
+
+    insert into public.stock_movements
+      (org_id, product_id, van_id, type, quantity, pieces, reference_type, reference_id,
+       reason, created_by)
+    values
+      (to_org, line.product_id, p_to_van, 'transfer_in', line.quantity, line.pieces,
+       'van_transfer', reference, trim(p_reason), auth.uid());
+
+    moved := moved + 1;
+  end loop;
+
+  return reference;
+end;
+$$;
+
+comment on function public.transfer_van_stock(uuid, uuid, jsonb, text) is
+  'Move stock from one van to another as a pair of ledger movements '
+  'sharing one reference, in full units and loose pieces. For a van that '
+  'has broken down mid-round. Atomic: either the goods leave one van and '
+  'arrive on the other, or neither happens.';
+
+
+-- ====================================================================
+-- 0057_the_rest_of_the_ways_stock_moves.sql
+-- ====================================================================
+-- ===================================================================
+-- 0057  The rest of the ways stock moves
+-- ===================================================================
+--
+-- Five paths were still counting full units only: warehouse to
+-- warehouse in both directions, a wholesale order shipping, a purchase
+-- being received, and a return. Each is a real way stock enters or
+-- leaves this business, and a piece that travels one of them silently
+-- fails to move.
+--
+-- The pattern is the one every other function now follows. Either half
+-- may be zero; the movement as a whole may not. coalesce throughout, so
+-- a caller that has not been updated behaves exactly as it did.
+--
+-- MONEY, AGAIN
+--
+-- sales_order_items has the same generated-column fault van_sale_items
+-- had: line_subtotal reads quantity * unit_price and nothing else, so
+-- pieces on a wholesale order would be delivered and never invoiced.
+-- purchase_order_items has the mirror of it on the buying side, where
+-- the consequence is a supplier bill that does not match what arrived.
+-- Both expressions now count the loose half at its own rate.
+--
+-- A piece costs a fraction of the case it came out of, so piece_cost
+-- defaults to zero and is set when a supplier actually prices singles.
+-- A piece SELLS for its own price, never a twelfth of the carton - the
+-- reasoning is in 0051 and it has not changed.
+
+-- ------------------------------------------------------------------
+-- The columns
+-- ------------------------------------------------------------------
+
+alter table public.stock_transfer_items
+  add column if not exists pieces integer not null default 0,
+  add column if not exists qty_received_pieces integer not null default 0;
+
+alter table public.stock_return_items
+  add column if not exists pieces integer not null default 0;
+
+alter table public.purchase_order_items
+  add column if not exists pieces integer not null default 0,
+  add column if not exists qty_received_pieces integer not null default 0,
+  add column if not exists piece_cost numeric(14,2) not null default 0;
+
+alter table public.sales_order_items
+  add column if not exists pieces integer not null default 0,
+  add column if not exists qty_shipped_pieces integer not null default 0,
+  add column if not exists piece_price numeric(14,2) not null default 0;
+
+-- ------------------------------------------------------------------
+-- A line may be pieces only
+-- ------------------------------------------------------------------
+--
+-- The quantity > 0 trap, in the last three tables that still hold it.
+
+alter table public.stock_transfer_items
+  drop constraint if exists stock_transfer_items_quantity_check;
+alter table public.stock_transfer_items
+  add constraint stock_transfer_items_quantity_not_negative check (quantity >= 0);
+alter table public.stock_transfer_items
+  drop constraint if exists stock_transfer_items_moves_something;
+alter table public.stock_transfer_items
+  add constraint stock_transfer_items_moves_something
+  check (quantity > 0 or pieces > 0);
+
+alter table public.stock_return_items
+  drop constraint if exists stock_return_items_quantity_check;
+alter table public.stock_return_items
+  add constraint stock_return_items_quantity_not_negative check (quantity >= 0);
+alter table public.stock_return_items
+  drop constraint if exists stock_return_items_returns_something;
+alter table public.stock_return_items
+  add constraint stock_return_items_returns_something
+  check (quantity > 0 or pieces > 0);
+
+alter table public.purchase_order_items
+  drop constraint if exists purchase_order_items_quantity_check;
+alter table public.purchase_order_items
+  add constraint purchase_order_items_quantity_not_negative check (quantity >= 0);
+alter table public.purchase_order_items
+  drop constraint if exists purchase_order_items_orders_something;
+alter table public.purchase_order_items
+  add constraint purchase_order_items_orders_something
+  check (quantity > 0 or pieces > 0);
+
+alter table public.sales_order_items
+  drop constraint if exists sales_order_items_quantity_check;
+alter table public.sales_order_items
+  add constraint sales_order_items_quantity_not_negative check (quantity >= 0);
+alter table public.sales_order_items
+  drop constraint if exists sales_order_items_orders_something;
+alter table public.sales_order_items
+  add constraint sales_order_items_orders_something
+  check (quantity > 0 or pieces > 0);
+
+-- ------------------------------------------------------------------
+-- The money the pieces are worth
+-- ------------------------------------------------------------------
+
+alter table public.sales_order_items
+  alter column line_subtotal set expression as (
+    round((quantity::numeric * unit_price + pieces::numeric * piece_price)
+          * (1::numeric - discount_pct / 100::numeric), 2)
+  );
+
+alter table public.sales_order_items
+  alter column line_total set expression as (
+    round((quantity::numeric * unit_price + pieces::numeric * piece_price)
+          * (1::numeric - discount_pct / 100::numeric)
+          * (1::numeric + tax_rate / 100::numeric), 2)
+  );
+
+alter table public.purchase_order_items
+  alter column line_subtotal set expression as (
+    round(quantity::numeric * unit_cost + pieces::numeric * piece_cost, 2)
+  );
+
+alter table public.purchase_order_items
+  alter column line_total set expression as (
+    round((quantity::numeric * unit_cost + pieces::numeric * piece_cost)
+          * (1::numeric + tax_rate / 100::numeric), 2)
+  );
+
+-- ------------------------------------------------------------------
+-- The old two-argument receive_purchase_line has to go
+-- ------------------------------------------------------------------
+--
+-- receive_purchase_line gains p_pieces with a default, which does not
+-- replace the old function - it creates a second one beside it. A
+-- two-argument call then resolves to the exact match, which is the old
+-- body that knows nothing about pieces, and every existing caller
+-- silently keeps the old behaviour while appearing to have been
+-- updated.
+--
+-- Dropped explicitly, so the three-argument version is the only one
+-- there and its default answers a two-argument call.
+drop function if exists public.receive_purchase_line(uuid, integer);
+
+-- ------------------------------------------------------------------
+-- The functions
+-- ------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.dispatch_stock_transfer(p_transfer_id uuid)
+ RETURNS stock_transfers
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  transfer  public.stock_transfers;
+  item      record;
+  available integer;
+  expired   record;
+  sent      jsonb;
+begin
+  perform public.require_role('admin', 'senior_manager', 'manager', 'warehouse');
+
+  select * into transfer from public.stock_transfers where id = p_transfer_id for update;
+  if not found then
+    raise exception 'Transfer % not found', p_transfer_id;
+  end if;
+
+  if auth.uid() is not null and transfer.org_id is distinct from public.auth_org_id() then
+    raise exception 'Transfer % not found', p_transfer_id using errcode = '42501';
+  end if;
+
+  if transfer.status <> 'approved' then
+    raise exception
+      'Transfer % must be approved before the goods leave (currently %)',
+      transfer.transfer_number, transfer.status;
+  end if;
+
+  -- Nothing out of date is moved to another depot. Shipping expired
+  -- stock across the country only relocates the write-off, and the far
+  -- warehouse has no way of knowing. Checked before any movement is
+  -- written, so a refused transfer moves nothing at all.
+  select p.name, b.batch_number, b.expires_on
+    into expired
+    from public.stock_transfer_items i
+    join public.products p on p.id = i.product_id
+    join public.product_batches b
+      on b.product_id = i.product_id
+     and b.warehouse_id = transfer.from_warehouse_id
+     and b.qty_remaining > 0
+   where i.transfer_id = p_transfer_id
+     and p.track_expiry
+     and b.expires_on is not null
+     and b.expires_on < current_date
+   order by b.expires_on
+   limit 1;
+
+  if found then
+    raise exception
+      'Cannot dispatch %: batch % of % expired on %. Write it off before transferring.',
+      transfer.transfer_number, expired.batch_number, expired.name, expired.expires_on;
+  end if;
+
+  -- Every line is checked for stock before the first one moves, so a
+  -- transfer that cannot be filled does not half-empty the warehouse.
+  for item in select * from public.stock_transfer_items where transfer_id = p_transfer_id loop
+    select coalesce(qty_available, 0) into available
+      from public.inventory
+     where product_id = item.product_id and warehouse_id = transfer.from_warehouse_id;
+
+    if coalesce(available, 0) < item.quantity then
+      raise exception
+        'Not enough stock to transfer: % available at the source, % requested',
+        coalesce(available, 0), item.quantity;
+    end if;
+  end loop;
+
+  for item in select * from public.stock_transfer_items where transfer_id = p_transfer_id loop
+    -- Out of the source warehouse. The matching transfer_in is written
+    -- at receipt, not here: between the two the goods are in transit
+    -- and belong to neither depot, which is the honest position and the
+    -- reason a transfer is not two adjustments.
+    insert into public.stock_movements
+      (org_id, product_id, warehouse_id, type, quantity, pieces,
+       reference_type, reference_id, created_by)
+    values
+      (transfer.org_id, item.product_id, transfer.from_warehouse_id, 'transfer_out',
+       item.quantity, coalesce(item.pieces, 0),
+       'stock_transfer', transfer.id, auth.uid());
+
+    sent := public.take_batches(item.product_id, transfer.from_warehouse_id, item.quantity);
+
+    update public.stock_transfer_items
+       set batches_sent = sent
+     where id = item.id;
+  end loop;
+
+  update public.stock_transfers
+     set status = 'in_transit', dispatched_by = auth.uid(),
+         dispatched_at = now(), updated_at = now()
+   where id = p_transfer_id
+  returning * into transfer;
+
+  return transfer;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.receive_stock_transfer(p_transfer_id uuid, p_counts jsonb DEFAULT '[]'::jsonb)
+ RETURNS stock_transfers
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  transfer public.stock_transfers;
+  item     record;
+  counted  integer;
+  counted_pieces integer;
+  batch    jsonb;
+  place    integer;
+  left_to_place integer;
+begin
+  perform public.require_role('admin', 'senior_manager', 'manager', 'warehouse');
+
+  select * into transfer from public.stock_transfers where id = p_transfer_id for update;
+  if not found then
+    raise exception 'Transfer % not found', p_transfer_id;
+  end if;
+
+  if auth.uid() is not null and transfer.org_id is distinct from public.auth_org_id() then
+    raise exception 'Transfer % not found', p_transfer_id using errcode = '42501';
+  end if;
+
+  if transfer.status <> 'in_transit' then
+    raise exception 'Transfer % is % and is not out for delivery',
+      transfer.transfer_number, transfer.status;
+  end if;
+
+  if jsonb_typeof(p_counts) <> 'array' then
+    raise exception 'Counts must be a list';
+  end if;
+
+  for item in select * from public.stock_transfer_items where transfer_id = p_transfer_id loop
+    select (c ->> 'quantity')::integer, (c ->> 'pieces')::integer
+      into counted, counted_pieces
+      from jsonb_array_elements(p_counts) as c
+     where (c ->> 'item_id')::uuid = item.id
+     limit 1;
+
+    counted := coalesce(counted, item.quantity);
+    -- Nothing counted for the loose half means all of it arrived, the
+    -- same assumption the full units already make.
+    counted_pieces := coalesce(counted_pieces, coalesce(item.pieces, 0));
+
+    if counted_pieces < 0 then
+      raise exception 'A received quantity cannot be negative';
+    end if;
+
+    if counted_pieces > coalesce(item.pieces, 0) then
+      raise exception
+        'Received % loose pieces but only % were sent. Record the excess separately.',
+        counted_pieces, coalesce(item.pieces, 0);
+    end if;
+
+    if counted < 0 then
+      raise exception 'A received quantity cannot be negative';
+    end if;
+
+    -- More cannot arrive than left. If the far warehouse counts more,
+    -- something else got mixed into the delivery and belongs on its own
+    -- receipt rather than against this transfer.
+    if counted > item.quantity then
+      raise exception
+        'More arrived than was sent: % received against % dispatched. '
+        'Record the excess separately.', counted, item.quantity;
+    end if;
+
+    update public.stock_transfer_items
+       set qty_received = counted, qty_received_pieces = counted_pieces
+     where id = item.id;
+
+    if counted > 0 or counted_pieces > 0 then
+      insert into public.stock_movements
+        (org_id, product_id, warehouse_id, type, quantity, pieces,
+         reference_type, reference_id, created_by)
+      values
+        (transfer.org_id, item.product_id, transfer.to_warehouse_id, 'transfer_in',
+         counted, coalesce(counted_pieces, 0),
+         'stock_transfer', transfer.id, auth.uid());
+
+      -- The batches land at the far warehouse still carrying their own
+      -- expiry dates. Filled oldest first, so a short delivery is short
+      -- of the newest stock rather than of whatever the loop reached
+      -- last.
+      left_to_place := counted;
+      for batch in
+        select value from jsonb_array_elements(coalesce(item.batches_sent, '[]'::jsonb))
+      loop
+        exit when left_to_place <= 0;
+        place := least((batch ->> 'quantity')::integer, left_to_place);
+
+        insert into public.product_batches (
+          org_id, product_id, warehouse_id, batch_number,
+          manufactured_on, expires_on, qty_received, qty_remaining, received_by
+        ) values (
+          transfer.org_id, item.product_id, transfer.to_warehouse_id,
+          batch ->> 'batch_number',
+          (batch ->> 'manufactured_on')::date,
+          (batch ->> 'expires_on')::date,
+          place, place, auth.uid()
+        )
+        on conflict (org_id, product_id, warehouse_id, batch_number) do update
+          set qty_received  = public.product_batches.qty_received  + excluded.qty_received,
+              qty_remaining = public.product_batches.qty_remaining + excluded.qty_remaining,
+              updated_at    = now();
+
+        left_to_place := left_to_place - place;
+      end loop;
+    end if;
+  end loop;
+
+  update public.stock_transfers
+     set status = 'received', received_by = auth.uid(),
+         received_at = now(), updated_at = now()
+   where id = p_transfer_id
+  returning * into transfer;
+
+  return transfer;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.record_stock_return(p_warehouse_id uuid, p_reason return_reason, p_lines jsonb, p_customer_id uuid DEFAULT NULL::uuid, p_supplier_id uuid DEFAULT NULL::uuid, p_notes text DEFAULT NULL::text)
+ RETURNS stock_returns
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  org       uuid;
+  entry     public.stock_returns;
+  line      jsonb;
+  quantity  integer;
+  pieces    integer;
+  product   uuid;
+  available integer;
+begin
+  perform public.require_role('admin', 'senior_manager', 'manager', 'warehouse');
+
+  if (p_customer_id is null) = (p_supplier_id is null) then
+    raise exception 'A return is either from a customer or to a supplier, not both';
+  end if;
+
+  select org_id into org from public.warehouses where id = p_warehouse_id;
+  if org is null then
+    raise exception 'Warehouse % not found', p_warehouse_id;
+  end if;
+
+  if auth.uid() is not null and org is distinct from public.auth_org_id() then
+    raise exception 'Warehouse % not found', p_warehouse_id using errcode = '42501';
+  end if;
+
+  if jsonb_typeof(p_lines) <> 'array' or jsonb_array_length(p_lines) = 0 then
+    raise exception 'A return needs at least one line';
+  end if;
+
+  insert into public.stock_returns
+    (org_id, customer_id, supplier_id, warehouse_id, reason, notes, created_by)
+  values
+    (org, p_customer_id, p_supplier_id, p_warehouse_id, p_reason,
+     nullif(trim(coalesce(p_notes, '')), ''), auth.uid())
+  returning * into entry;
+
+  for line in select * from jsonb_array_elements(p_lines) loop
+    product  := (line ->> 'product_id')::uuid;
+    quantity := coalesce((line ->> 'quantity')::integer, 0);
+    pieces   := coalesce((line ->> 'pieces')::integer, 0);
+
+    -- Either half may be zero; a line that returns nothing may not be.
+    -- A customer bringing back three singles is a return.
+    if product is null or quantity < 0 or pieces < 0
+       or (quantity = 0 and pieces = 0) then
+      raise exception 'Every line needs a product and a quantity above zero';
+    end if;
+
+    insert into public.stock_return_items
+      (org_id, return_id, product_id, quantity, pieces, notes)
+    values (org, entry.id, product, quantity, pieces, nullif(trim(line ->> 'notes'), ''));
+
+    if p_customer_id is not null then
+      -- Goods coming back in. Damaged or expired stock is booked in and
+      -- then written off separately, so the return and the write-off are
+      -- two facts rather than one entry that hides the first.
+      insert into public.stock_movements
+        (org_id, product_id, warehouse_id, type, quantity, pieces,
+         reference_type, reference_id, reason, created_by)
+      values
+        (org, product, p_warehouse_id, 'customer_return', quantity, pieces,
+         'stock_return', entry.id, p_reason::text, auth.uid());
+    else
+      -- Going back to the supplier, so it has to be there to send.
+      select coalesce(qty_available, 0) into available
+        from public.inventory
+       where product_id = product and warehouse_id = p_warehouse_id;
+
+      if coalesce(available, 0) < quantity then
+        raise exception
+          'Cannot return % of that line to the supplier: only % on hand',
+          quantity, coalesce(available, 0);
+      end if;
+
+      insert into public.stock_movements
+        (org_id, product_id, warehouse_id, type, quantity, pieces,
+         reference_type, reference_id, reason, created_by)
+      values
+        (org, product, p_warehouse_id, 'supplier_return', quantity, pieces,
+         'stock_return', entry.id, p_reason::text, auth.uid());
+    end if;
+  end loop;
+
+  return entry;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.handle_order_status_change()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  item record;
+begin
+  if new.status = old.status then
+    return new;
+  end if;
+
+  -- draft -> confirmed: reserve
+  if old.status = 'draft' and new.status = 'confirmed' then
+    for item in select * from public.sales_order_items where order_id = new.id loop
+      update public.inventory
+      set qty_reserved = qty_reserved + item.quantity, updated_at = now()
+      where product_id = item.product_id and warehouse_id = new.warehouse_id;
+
+      if not found then
+        raise exception 'No stock record for product % in warehouse %',
+          item.product_id, new.warehouse_id;
+      end if;
+    end loop;
+  end if;
+
+  -- anything -> shipped: release reservation and issue the stock
+  if new.status = 'shipped' and old.status <> 'shipped' then
+    for item in select * from public.sales_order_items where order_id = new.id loop
+      update public.inventory
+      set qty_reserved = greatest(qty_reserved - item.quantity, 0), updated_at = now()
+      where product_id = item.product_id and warehouse_id = new.warehouse_id;
+
+      insert into public.stock_movements
+        (product_id, warehouse_id, type, quantity, pieces,
+         reference_type, reference_id, created_by)
+      values
+        (item.product_id, new.warehouse_id, 'issue',
+         item.quantity, coalesce(item.pieces, 0),
+         'sales_order', new.id, auth.uid());
+    end loop;
+
+    new.shipped_date := coalesce(new.shipped_date, current_date);
+  end if;
+
+  -- cancelled before shipping: release the reservation
+  if new.status = 'cancelled' and old.status in ('confirmed', 'picking', 'packed') then
+    for item in select * from public.sales_order_items where order_id = new.id loop
+      update public.inventory
+      set qty_reserved = greatest(qty_reserved - item.quantity, 0), updated_at = now()
+      where product_id = item.product_id and warehouse_id = new.warehouse_id;
+    end loop;
+  end if;
+
+  return new;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.receive_purchase_line(p_item_id uuid, p_quantity integer, p_pieces integer DEFAULT 0)
+ RETURNS purchase_order_items
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  item public.purchase_order_items;
+  po   public.purchase_orders;
+  outstanding integer;
+begin
+  -- Either half may be zero; a receipt of nothing may not be. A
+  -- delivery of six loose singles is a receipt.
+  if p_quantity < 0 or coalesce(p_pieces, 0) < 0
+     or (p_quantity = 0 and coalesce(p_pieces, 0) = 0) then
+    raise exception 'Received quantity must be positive';
+  end if;
+
+  select * into item from public.purchase_order_items where id = p_item_id for update;
+  if not found then
+    raise exception 'Purchase order line % not found', p_item_id;
+  end if;
+
+  select * into po from public.purchase_orders where id = item.po_id for update;
+
+  if po.status in ('cancelled', 'received') then
+    raise exception 'Purchase order % is %', po.po_number, po.status;
+  end if;
+
+  if item.qty_received + p_quantity > item.quantity then
+    raise exception 'Cannot receive % units: only % outstanding on this line',
+      p_quantity, item.quantity - item.qty_received;
+  end if;
+
+  if coalesce(item.qty_received_pieces, 0) + coalesce(p_pieces, 0)
+     > coalesce(item.pieces, 0) then
+    raise exception 'Cannot receive % loose pieces: only % outstanding on this line',
+      p_pieces, coalesce(item.pieces, 0) - coalesce(item.qty_received_pieces, 0);
+  end if;
+
+  insert into public.stock_movements
+    (product_id, warehouse_id, type, quantity, pieces, unit_cost,
+     reference_type, reference_id, created_by)
+  values
+    (item.product_id, po.warehouse_id, 'receipt',
+     p_quantity, coalesce(p_pieces, 0), item.unit_cost,
+     'purchase_order', po.id, auth.uid());
+
+  update public.purchase_order_items
+  set qty_received = qty_received + p_quantity,
+      qty_received_pieces = coalesce(qty_received_pieces, 0) + coalesce(p_pieces, 0)
+  where id = p_item_id
+  returning * into item;
+
+  -- Latest landed cost becomes the product's standard cost.
+  update public.products
+  set cost_price = item.unit_cost, updated_at = now()
+  where id = item.product_id;
+
+  select sum(quantity - qty_received) into outstanding
+  from public.purchase_order_items where po_id = po.id;
+
+  update public.purchase_orders
+  set status = case when outstanding = 0 then 'received'::public.po_status
+                    else 'partially_received'::public.po_status end,
+      updated_at = now()
+  where id = po.id;
+
+  return item;
+end;
+$function$
+;
+
+
+-- ====================================================================
+-- 0058_the_end_of_round_reckoning_counts_singles.sql
+-- ====================================================================
+-- ===================================================================
+-- 0058  The end-of-round reckoning counts the singles
+-- ===================================================================
+--
+-- build_reconciliation is where a round is settled: what went out, what
+-- was sold, what came back, and whether the cash and the stock agree.
+-- Every figure in it values full units only.
+--
+-- So a van that went out with loose pieces reconciles wrong in a
+-- particular direction: the singles are counted in what was loaded -
+-- no, they are not counted anywhere at all. Sold pieces are not
+-- subtracted, damaged and missing pieces are worth nothing, and the
+-- expected stock value comes out overstating what should be on board.
+-- The salesperson is then short against a figure that was never right,
+-- which is the worst way to be accused of something.
+--
+-- Each sum now carries the loose half at its share of the unit cost -
+-- the same rule van_load_value and stock_summary already use, and the
+-- one place the two quantities legitimately combine. A piece really is
+-- a twelfth of a carton in cost terms; it is only in selling that the
+-- two differ, which is what piece_price is for.
+--
+-- The joins to products are new and are what makes the pack size
+-- reachable. Everything else is the deployed body unchanged.
+
+CREATE OR REPLACE FUNCTION public.build_reconciliation(p_load_id uuid)
+ RETURNS van_reconciliations
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  load public.van_loads;
+  rec  public.van_reconciliations;
+  cash_sales numeric(14,2);
+  credit numeric(14,2);
+  collected numeric(14,2);
+  cash_taken numeric(14,2);
+  momo_taken numeric(14,2);
+  loaded_value numeric(14,2);
+  sold_value numeric(14,2);
+  damaged numeric(14,2);
+  missing numeric(14,2);
+  remaining numeric(14,2);
+begin
+  select * into load from public.van_loads where id = p_load_id;
+  if not found then
+    raise exception 'Van load % not found', p_load_id;
+  end if;
+
+  select
+    coalesce(sum(total) filter (where sale_type = 'cash'), 0),
+    coalesce(sum(total) filter (where sale_type = 'credit'), 0),
+    coalesce(sum(amount_paid) filter (where sale_type = 'credit'), 0)
+  into cash_sales, credit, collected
+  from public.van_sales
+  where load_id = p_load_id and status = 'completed';
+
+  -- What was actually taken, by method. A sale recorded before this
+  -- migration has no breakdown, so it falls back to being treated as
+  -- cash - which is what it was assumed to be at the time.
+  select
+    coalesce(t.cash_taken, 0),
+    coalesce(t.momo_taken, 0)
+  into cash_taken, momo_taken
+  from public.load_takings t
+  where t.load_id = p_load_id;
+
+  if cash_taken = 0 and momo_taken = 0 then
+    cash_taken := cash_sales + collected;
+  end if;
+
+  -- Each figure carries the loose half at its share of the unit cost.
+  -- A piece is genuinely a twelfth of a carton in cost terms - cost has
+  -- no margin in it to distort - which is the same rule van_load_value
+  -- and stock_summary use.
+  select coalesce(sum(
+           i.qty_loaded * i.unit_cost
+           + case when coalesce(p.units_per_case, 1) > 1
+                  then coalesce(i.qty_loaded_pieces, 0) * i.unit_cost / p.units_per_case
+                  else 0 end), 0)
+    into loaded_value
+  from public.van_load_items i
+  join public.products p on p.id = i.product_id
+  where i.load_id = p_load_id;
+
+  select coalesce(sum(
+           vsi.quantity * vli.unit_cost
+           + case when coalesce(p.units_per_case, 1) > 1
+                  then coalesce(vsi.pieces, 0) * vli.unit_cost / p.units_per_case
+                  else 0 end), 0)
+    into sold_value
+  from public.van_sale_items vsi
+  join public.van_sales vs on vs.id = vsi.sale_id
+  join public.van_load_items vli
+    on vli.load_id = vs.load_id and vli.product_id = vsi.product_id
+  join public.products p on p.id = vsi.product_id
+  where vs.load_id = p_load_id and vs.status = 'completed';
+
+  select
+    coalesce(sum(
+      vri.qty_damaged * vli.unit_cost
+      + case when coalesce(p.units_per_case, 1) > 1
+             then coalesce(vri.qty_damaged_pieces, 0) * vli.unit_cost / p.units_per_case
+             else 0 end), 0),
+    coalesce(sum(
+      vri.qty_missing * vli.unit_cost
+      + case when coalesce(p.units_per_case, 1) > 1
+             then coalesce(vri.qty_missing_pieces, 0) * vli.unit_cost / p.units_per_case
+             else 0 end), 0)
+  into damaged, missing
+  from public.van_return_items vri
+  join public.van_returns vr on vr.id = vri.return_id
+  join public.van_load_items vli
+    on vli.load_id = vr.load_id and vli.product_id = vri.product_id
+  join public.products p on p.id = vri.product_id
+  where vr.load_id = p_load_id;
+
+  remaining := loaded_value - sold_value;
+
+  insert into public.van_reconciliations (
+    org_id, load_id, van_id, driver_id,
+    opening_float, cash_sales_total, momo_sales_total, credit_sales_total,
+    collections_total, expected_cash, expected_momo,
+    expected_stock_value, actual_stock_value,
+    damaged_value, missing_value, submitted_by
+  )
+  values (
+    load.org_id, load.id, load.van_id, load.driver_id,
+    load.opening_float, cash_sales, momo_taken, credit,
+    collected,
+    -- The float goes out with the driver and comes back with them.
+    -- Mobile money never touches the tin, so it is not expected here.
+    load.opening_float + cash_taken,
+    momo_taken,
+    remaining, remaining - damaged - missing,
+    damaged, missing, auth.uid()
+  )
+  on conflict (load_id) do update
+  set cash_sales_total   = excluded.cash_sales_total,
+      momo_sales_total   = excluded.momo_sales_total,
+      credit_sales_total = excluded.credit_sales_total,
+      collections_total  = excluded.collections_total,
+      expected_cash      = excluded.expected_cash,
+      expected_momo      = excluded.expected_momo,
+      expected_stock_value = excluded.expected_stock_value,
+      actual_stock_value   = excluded.actual_stock_value,
+      damaged_value        = excluded.damaged_value,
+      missing_value        = excluded.missing_value,
+      updated_at           = now()
+  returning * into rec;
+
+  return rec;
+end;
+$function$
+;
+
+
+-- ====================================================================
+-- 0059_the_paperwork_says_cartons_and_singles.sql
+-- ====================================================================
+-- ===================================================================
+-- 0059  The paperwork says cartons and singles
+-- ===================================================================
+--
+-- A waybill is the evidence that a quantity of goods left a warehouse
+-- and arrived somewhere. It is copied from the load, and it copied
+-- qty_loaded alone - so the loose pieces on a load travelled with no
+-- paperwork at all. A driver stopped with singles on board has nothing
+-- to show for them, and the depot receiving a delivery has nothing to
+-- check them against.
+--
+-- The receiving columns get the same treatment. qty_received,
+-- qty_damaged and qty_short are how a delivery is signed for, and a
+-- shortage of three singles has to be recordable or it becomes a
+-- shortage of nothing.
+
+alter table public.waybill_items
+  add column if not exists pieces integer not null default 0,
+  add column if not exists qty_received_pieces integer,
+  add column if not exists qty_damaged_pieces integer,
+  add column if not exists qty_short_pieces integer;
+
+comment on column public.waybill_items.pieces is
+  'Loose pieces on this delivery line, beside quantity in full units. '
+  'Never added to it: ten cartons and five pieces is not fifteen of '
+  'anything.';
+
+-- A line may be pieces only, the same rule the ledger holds.
+alter table public.waybill_items
+  drop constraint if exists waybill_items_quantity_check;
+alter table public.waybill_items
+  add constraint waybill_items_quantity_not_negative check (quantity >= 0);
+alter table public.waybill_items
+  drop constraint if exists waybill_items_carries_something;
+alter table public.waybill_items
+  add constraint waybill_items_carries_something
+  check (quantity > 0 or pieces > 0);
+
+-- ------------------------------------------------------------------
+-- The waybill copies both halves of the load
+-- ------------------------------------------------------------------
+--
+-- The 0026 body with one line changed: the select that copies the load
+-- lines now carries qty_loaded_pieces across as well.
+create or replace function public.issue_waybill_for_load(p_load_id uuid)
+returns public.waybills
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  load public.van_loads;
+  wb   public.waybills;
+begin
+  perform public.require_role('admin', 'senior_manager', 'manager', 'warehouse');
+
+  select * into load from public.van_loads where id = p_load_id;
+  if not found then
+    raise exception 'Van load % not found', p_load_id;
+  end if;
+
+  -- Security definer runs past row level security, so the tenant check
+  -- the policies would have made has to be made here instead. Reported
+  -- as 'not found': whether another organization's sale exists is not
+  -- this caller's business either.
+  if auth.uid() is not null and load.org_id is distinct from public.auth_org_id() then
+    raise exception 'Van load % not found', p_load_id using errcode = '42501';
+  end if;
+
+  select * into wb from public.waybills
+   where reference_type = 'van_load' and reference_id = p_load_id;
+  if found then
+    return wb;
+  end if;
+
+  insert into public.waybills (
+    org_id, status, from_warehouse_id, van_id, driver_id,
+    reference_type, reference_id, issued_on, created_by
+  ) values (
+    load.org_id, 'issued', load.warehouse_id, load.van_id, load.driver_id,
+    'van_load', load.id, load.load_date, auth.uid()
+  )
+  returning * into wb;
+
+  insert into public.waybill_items (org_id, waybill_id, product_id, quantity, pieces)
+  select load.org_id, wb.id, i.product_id, i.qty_loaded,
+         coalesce(i.qty_loaded_pieces, 0)
+    from public.van_load_items i
+   where i.load_id = p_load_id;
+
+  return wb;
+end;
+$$;
+
+
+-- ====================================================================
+-- 0060_transfers_in_flight_show_their_singles.sql
+-- ====================================================================
+-- ===================================================================
+-- 0060  Transfers in flight show their singles
+-- ===================================================================
+--
+-- The two views over warehouse transfers. stock_transfer_items carries
+-- pieces from 0057 and both of these still report full units, so a
+-- transfer of loose singles between depots is in the ledger and on no
+-- screen: the transfers list shows nothing sent, and the in-transit
+-- report cannot see the stock it exists to chase.
+--
+-- New columns on the end, as always: CREATE OR REPLACE VIEW may add but
+-- not reorder, and dropping either would cascade into what reads it.
+
+-- security_invoker restated deliberately.
+--
+-- CREATE OR REPLACE VIEW does not preserve reloptions: replacing a view
+-- without naming it again silently turns the setting off, the view
+-- starts running with its owner's privileges, and every row level
+-- security policy behind it stops applying. For a view over stock that
+-- means one organization reading another's shelves - and nothing fails,
+-- which is why the test suite is the only thing that catches it.
+create or replace view public.stock_in_transit
+with (security_invoker = on) as
+  select
+    t.org_id,
+    t.id as transfer_id,
+    t.transfer_number,
+    t.dispatched_at,
+    src.name as from_warehouse,
+    dst.name as to_warehouse,
+    i.product_id,
+    p.sku,
+    p.name as product_name,
+    i.quantity,
+    current_date - t.dispatched_at::date as days_in_transit,
+    coalesce(i.pieces, 0) as pieces,
+    p.unit_of_measure
+  from public.stock_transfers t
+    join public.stock_transfer_items i on i.transfer_id = t.id
+    join public.products p on p.id = i.product_id
+    join public.warehouses src on src.id = t.from_warehouse_id
+    join public.warehouses dst on dst.id = t.to_warehouse_id
+  where t.status = 'in_transit'::text;
+
+comment on view public.stock_in_transit is
+  'What has left one warehouse and not yet arrived at another, in full '
+  'units and loose pieces. The two are never added together.';
+
+create or replace view public.stock_transfer_summary
+with (security_invoker = on) as
+  select
+    t.id,
+    t.org_id,
+    t.transfer_number,
+    t.status,
+    t.transfer_date,
+    t.from_warehouse_id,
+    src.name as from_warehouse,
+    t.to_warehouse_id,
+    dst.name as to_warehouse,
+    t.notes,
+    t.approved_at,
+    t.dispatched_at,
+    t.received_at,
+    approver.full_name as approved_by_name,
+    receiver.full_name as received_by_name,
+    count(i.id) as line_count,
+    coalesce(sum(i.quantity), 0::bigint) as qty_sent,
+    coalesce(sum(i.qty_received), 0::bigint) as qty_received,
+    coalesce(sum(i.quantity), 0::bigint)
+      - coalesce(sum(coalesce(i.qty_received, i.quantity)), 0::bigint) as qty_short,
+    -- The same three figures for the loose half, kept apart from them.
+    -- A transfer short of three singles and no cartons has to read as
+    -- short of something.
+    coalesce(sum(i.pieces), 0::bigint) as pieces_sent,
+    coalesce(sum(i.qty_received_pieces), 0::bigint) as pieces_received,
+    coalesce(sum(i.pieces), 0::bigint)
+      - coalesce(sum(coalesce(i.qty_received_pieces, i.pieces)), 0::bigint) as pieces_short
+  from public.stock_transfers t
+    join public.warehouses src on src.id = t.from_warehouse_id
+    join public.warehouses dst on dst.id = t.to_warehouse_id
+    left join public.stock_transfer_items i on i.transfer_id = t.id
+    left join public.profiles approver on approver.id = t.approved_by
+    left join public.profiles receiver on receiver.id = t.received_by
+  group by t.id, t.org_id, t.transfer_number, t.status, t.transfer_date,
+           t.from_warehouse_id, src.name, t.to_warehouse_id, dst.name, t.notes,
+           t.approved_at, t.dispatched_at, t.received_at,
+           approver.full_name, receiver.full_name;
+
+
+-- ====================================================================
+-- 0061_a_price_for_one_piece.sql
+-- ====================================================================
+-- ===================================================================
+-- 0061  A price for one piece
+-- ===================================================================
+--
+-- piece_price has existed since 0051 and there has been no way to see or
+-- set it. The till falls back to list_price over the pack size when it
+-- is null, which was always meant to be a starting point somebody
+-- corrects - and a starting point nobody can reach is just a wrong
+-- price with extra steps.
+--
+-- Wholesale is the business of the carton being cheaper per piece than
+-- the singles. Left derived, every single sold is sold at the carton
+-- rate, and the margin on loose sales - which is the reason a
+-- distributor breaks cartons at all - is given away on every one.
+--
+-- Added to the end of products_priced, which is the masked view every
+-- screen reads products through. Nothing about the masking changes:
+-- cost still comes from product_cost() and is still null for anyone not
+-- entitled to it. A selling price is not cost and was never masked.
+-- security_invoker restated deliberately.
+--
+-- CREATE OR REPLACE VIEW does not preserve reloptions: replacing a view
+-- without naming it again silently turns the setting off, the view
+-- starts running with its owner's privileges, and every row level
+-- security policy behind it stops applying. For a view over stock that
+-- means one organization reading another's shelves - and nothing fails,
+-- which is why the test suite is the only thing that catches it.
+create or replace view public.products_priced
+with (security_invoker = on) as
+  select
+    id,
+    org_id,
+    sku,
+    barcode,
+    name,
+    description,
+    category_id,
+    supplier_id,
+    unit_of_measure,
+    units_per_case,
+    list_price,
+    tax_rate,
+    reorder_point,
+    reorder_qty,
+    is_active,
+    created_at,
+    updated_at,
+    public.product_cost(id) as cost_price,
+    track_batches,
+    track_expiry,
+    shelf_life_days,
+    image_path,
+    piece_price
+  from public.products p;

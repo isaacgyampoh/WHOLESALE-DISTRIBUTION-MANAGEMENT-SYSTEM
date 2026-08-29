@@ -17,7 +17,16 @@
 -- screen reads products through. Nothing about the masking changes:
 -- cost still comes from product_cost() and is still null for anyone not
 -- entitled to it. A selling price is not cost and was never masked.
-create or replace view public.products_priced as
+-- security_invoker restated deliberately.
+--
+-- CREATE OR REPLACE VIEW does not preserve reloptions: replacing a view
+-- without naming it again silently turns the setting off, the view
+-- starts running with its owner's privileges, and every row level
+-- security policy behind it stops applying. For a view over stock that
+-- means one organization reading another's shelves - and nothing fails,
+-- which is why the test suite is the only thing that catches it.
+create or replace view public.products_priced
+with (security_invoker = on) as
   select
     id,
     org_id,

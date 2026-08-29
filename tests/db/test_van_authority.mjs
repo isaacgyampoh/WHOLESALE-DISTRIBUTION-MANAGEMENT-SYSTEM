@@ -758,10 +758,15 @@ head("stock counts full units and loose pieces, independently");
   ok("the van is emptied of both halves", after.units === 0 && after.pieces === 0,
      `(${after.units} cartons + ${after.pieces} pieces)`);
 
+  // Scoped to this return by its own reference. The suite shares one
+  // database across files, so an unscoped read here picks up whatever
+  // an earlier test returned and passes or fails for reasons that have
+  // nothing to do with pieces.
   const backAtDepot = (await c.query(
     `select quantity, pieces from stock_movements
-      where reference_type='van_return' and warehouse_id=$1 and type='transfer_in'`,
-    [warehouse])).rows[0];
+      where reference_type='van_return' and reference_id=$1
+        and warehouse_id=$2 and type='transfer_in'`,
+    [ret, warehouse])).rows[0];
   ok("the good stock reaches the warehouse in both halves",
      Number(backAtDepot?.quantity) === board.units - 2 &&
      Number(backAtDepot?.pieces) === board.pieces - 2,
@@ -769,13 +774,15 @@ head("stock counts full units and loose pieces, independently");
 
   const damaged = (await c.query(
     `select quantity, pieces from stock_movements
-      where reference_type='van_return' and type='damage'`)).rows[0];
+      where reference_type='van_return' and reference_id=$1 and type='damage'`,
+    [ret])).rows[0];
   ok("damage is recorded in both halves",
      Number(damaged?.quantity) === 1 && Number(damaged?.pieces) === 1);
 
   const missing = (await c.query(
     `select quantity, pieces from stock_movements
-      where reference_type='van_return' and type='shortage'`)).rows[0];
+      where reference_type='van_return' and reference_id=$1 and type='shortage'`,
+    [ret])).rows[0];
   ok("and so is what nobody can account for",
      Number(missing?.quantity) === 1 && Number(missing?.pieces) === 1);
 }

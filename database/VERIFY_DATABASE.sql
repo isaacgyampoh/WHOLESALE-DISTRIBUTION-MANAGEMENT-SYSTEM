@@ -121,7 +121,7 @@ expected_enums (typname, members) as (
   values
     ('credit_txn_type',       'charge,payment,adjustment,write_off'),
     ('invoice_status',        'draft,issued,partially_paid,paid,overdue,void'),
-    ('movement_type',         'receipt,issue,adjustment_in,adjustment_out,transfer_in,transfer_out,customer_return,supplier_return,damage,shortage,opening_stock,stocktake_in,stocktake_out'),
+    ('movement_type',         'receipt,issue,adjustment_in,adjustment_out,transfer_in,transfer_out,customer_return,supplier_return,damage,shortage,opening_stock,stocktake_in,stocktake_out,conversion_in,conversion_out'),
     ('order_status',          'draft,confirmed,picking,packed,shipped,delivered,cancelled'),
     ('payment_method',        'cash,bank_transfer,cheque,card,mobile_money'),
     ('po_status',             'draft,submitted,partially_received,received,cancelled'),
@@ -223,8 +223,8 @@ report as (
           case when e.n = 20 then 'OK' else 'FAIL' end,
           (select names from enum_bad)
   from enum_match e
-  union all select  7, 'Functions', '84', c.functions::text,
-          case when c.functions = 84 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  7, 'Functions', '85', c.functions::text,
+          case when c.functions = 85 then 'OK' else 'CHECK' end, '' from counts c
   union all select  8, 'Triggers', '83', c.triggers::text,
           case when c.triggers = 83 then 'OK' else 'CHECK' end, '' from counts c
   union all select  9, 'RLS policies', '89', c.policies::text,
@@ -232,12 +232,12 @@ report as (
   union all select 10, 'RLS enabled on every table',
           c.all_tables::text, c.rls_tables::text,
           case when c.rls_tables = c.all_tables then 'OK' else 'FAIL' end, '' from counts c
-  union all select 11, 'Generated columns', '13', c.generated_cols::text,
-          case when c.generated_cols = 13 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 12, 'Indexes', '176', c.indexes::text,
-          case when c.indexes = 176 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 13, 'Constraints', '306', c.constraints::text,
-          case when c.constraints = 306 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 11, 'Generated columns', '14', c.generated_cols::text,
+          case when c.generated_cols = 14 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 12, 'Indexes', '177', c.indexes::text,
+          case when c.indexes = 177 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 13, 'Constraints', '322', c.constraints::text,
+          case when c.constraints = 322 then 'OK' else 'CHECK' end, '' from counts c
   union all select 14, 'Security functions present', '8', s.n::text,
           case when s.n = 8 then 'OK' else 'FAIL' end, '' from security_fns s
   union all select 15, 'Business functions present', '7', b.n::text,
@@ -913,15 +913,26 @@ report as (
           'Sign-in is by PIN alone, so a shared PIN would make the account ambiguous'
   -- ---- every movement type moves stock somewhere (0043, 0044) -------
   union all select 81, 'Stock: every movement type has a direction', 'all',
-          coalesce((select string_agg(e.enumlabel, ', ')
-             from pg_enum e join pg_type t on t.oid = e.enumtypid
-            where t.typname = 'movement_type'
-              and public.movement_direction(e.enumlabel::public.movement_type) is null),
+          -- offset 0 is an optimisation fence, and it is load-bearing.
+          -- Without it PostgreSQL is free to evaluate the cast before
+          -- the typname filter, so a label from any other enum reaches
+          -- movement_type and the whole script dies with "invalid input
+          -- value for enum movement_type: admin". The fence makes the
+          -- filter happen first.
+          coalesce((select string_agg(m.label, ', ')
+             from (select e.enumlabel::text as label
+                     from pg_enum e join pg_type t on t.oid = e.enumtypid
+                    where t.typname = 'movement_type'
+                    offset 0) m
+            where public.movement_direction(m.label::public.movement_type) is null),
             'all'),
           case when not exists (
-            select 1 from pg_enum e join pg_type t on t.oid = e.enumtypid
-             where t.typname = 'movement_type'
-               and public.movement_direction(e.enumlabel::public.movement_type) is null)
+            select 1
+              from (select e.enumlabel::text as label
+                      from pg_enum e join pg_type t on t.oid = e.enumtypid
+                     where t.typname = 'movement_type'
+                     offset 0) m
+             where public.movement_direction(m.label::public.movement_type) is null)
                then 'OK' else 'FAIL' end,
           'A null direction does not miscount the balance, it replaces it with null'
 )

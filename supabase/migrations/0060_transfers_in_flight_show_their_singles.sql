@@ -11,7 +11,16 @@
 -- New columns on the end, as always: CREATE OR REPLACE VIEW may add but
 -- not reorder, and dropping either would cascade into what reads it.
 
-create or replace view public.stock_in_transit as
+-- security_invoker restated deliberately.
+--
+-- CREATE OR REPLACE VIEW does not preserve reloptions: replacing a view
+-- without naming it again silently turns the setting off, the view
+-- starts running with its owner's privileges, and every row level
+-- security policy behind it stops applying. For a view over stock that
+-- means one organization reading another's shelves - and nothing fails,
+-- which is why the test suite is the only thing that catches it.
+create or replace view public.stock_in_transit
+with (security_invoker = on) as
   select
     t.org_id,
     t.id as transfer_id,
@@ -37,7 +46,8 @@ comment on view public.stock_in_transit is
   'What has left one warehouse and not yet arrived at another, in full '
   'units and loose pieces. The two are never added together.';
 
-create or replace view public.stock_transfer_summary as
+create or replace view public.stock_transfer_summary
+with (security_invoker = on) as
   select
     t.id,
     t.org_id,

@@ -1464,7 +1464,12 @@ const ENUM_REWRITES = [
   'receipt', 'issue', 'adjustment_in', 'adjustment_out',
   'transfer_in', 'transfer_out', 'customer_return', 'supplier_return',
   -- Appended by migration 0010, as above.
-  'damage', 'shortage'
+  'damage', 'shortage',
+  -- Appended by migration 0043: three labels the production database
+  -- already carried, declared so a fresh install matches it.
+  'opening_stock', 'stocktake_in', 'stocktake_out',
+  -- Appended by migration 0049, the two halves of opening a carton.
+  'conversion_in', 'conversion_out'
 );`,
   },
 ];
@@ -1499,6 +1504,20 @@ const ENUM_ONLY = {
 -- In this consolidated installer that label is already part of the enum
 -- declaration in section 0001, because PostgreSQL cannot use a new enum
 -- value in the transaction that added it. Nothing to do here.`,
+
+  "0043_name_the_movements_that_exist.sql":
+`-- Migration 0043 adds opening_stock, stocktake_in and stocktake_out to
+-- movement_type - three labels the production database already carried
+-- and this repository had never declared.
+-- In this consolidated installer all three are part of the enum
+-- declaration in section 0001, because PostgreSQL cannot use a new enum
+-- value in the transaction that added it. Nothing to do here.`,
+
+  "0049_name_the_two_halves_of_opening_a_carton.sql":
+`-- Migration 0049 adds conversion_in and conversion_out to movement_type,
+-- the two halves of opening a carton into loose pieces.
+-- In this consolidated installer both are part of the enum declaration
+-- in section 0001, for the same reason as 0043. Nothing to do here.`,
 };
 
 const banner = (title) =>
