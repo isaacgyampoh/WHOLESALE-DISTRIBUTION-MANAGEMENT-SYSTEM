@@ -382,6 +382,39 @@ head("a piece with no price is refused, not guessed at");
   ok("at the box price", whole.total === 100, `(${whole.total})`);
 }
 
+// ===================================================================
+// Pack size is for opening a box, not for having singles
+// ===================================================================
+head("loose pieces need a parent unit, not a pack size");
+{
+  // A box product nobody has told the system the contents of. This is
+  // the ordinary case: the business knows a box costs 100 and a single
+  // costs 12, and has never counted how many are in a box.
+  const p = await product("ECO-NOPACK", "Ecowash No Pack", "box", 1, 100, 12);
+  ok("its pack size is unset", Number(
+    (await c.query(`select units_per_case u from products where id=$1`, [p])).rows[0].u) === 1);
+
+  await stock(p, 3, 4);
+  const held = await shelf(p);
+  ok("it still holds three boxes and four pieces",
+     held.units === 3 && held.pieces === 4, say(held, "Box"));
+
+  const round = await loadVan(p, 3, 4);
+  const r = await sell(round, p, 0, 2, 100, 12);
+  ok("and two of those pieces sell", r.ok, r.error ?? "");
+  ok("leaving three boxes and two pieces",
+     r.after?.units === 3 && r.after?.pieces === 2, say(r.after ?? {}, "Box"));
+  ok("at 24 - the piece price, not the box price", r.total === 24, `(${r.total})`);
+
+  // What the pack size actually governs.
+  const opening = await asUserSteps(boss, [
+    [`select public.convert_stock_units($1,$2,null,'open',1,'no pack size')`, [p, warehouse]],
+  ]);
+  ok("but a box of it cannot be opened", !opening.ok);
+  ok("because that is the one thing pack size is for",
+     /No pack size is set/.test(opening.error ?? ""), (opening.error ?? "").slice(0, 55));
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 await c.end();
 process.exit(fail ? 1 : 0);

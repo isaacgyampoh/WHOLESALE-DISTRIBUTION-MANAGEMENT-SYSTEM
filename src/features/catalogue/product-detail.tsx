@@ -10,7 +10,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { Input, Select, Field } from "@/components/ui/field";
 import { Alert } from "@/components/ui/states";
 import type { ProductRow, CategoryRow, WarehouseOption } from "./queries";
-import { formatHolding, formatPackSize, packSize } from "@/lib/catalogue/quantity";
+import { formatHolding, formatPackSize, packSize, holdsPieces } from "@/lib/catalogue/quantity";
 import { Pencil, Scale, PackageOpen } from "lucide-react";
 
 /**
@@ -37,7 +37,10 @@ export function ProductActions({
   // Offered only where it means something. A product nobody has given a
   // pack size to has no pieces to open a unit into, and a button that
   // can only ever refuse is worse than no button.
-  const splittable = packSize(product.unitsPerCase) !== null;
+  // Whether it can hold loose pieces, which is a question about having
+  // a parent unit - not about pack size, which only matters for opening
+  // one. See holdsPieces.
+  const splittable = holdsPieces(product.unit);
 
   return (
     <>
@@ -230,6 +233,7 @@ function AdjustDialog({
   const err = state.fieldErrors ?? {};
   const preferred = warehouses.find((w) => w.isDefault) ?? warehouses[0];
   const pack = packSize(product.unitsPerCase);
+  const loose = holdsPieces(product.unit);
   const held = { units: product.onHand, pieces: product.onHandPieces };
 
   if (state.status === "done") {
@@ -309,9 +313,9 @@ function AdjustDialog({
               for a bag of rice sold whole there are no pieces to count
               and an empty box would just be a question with no answer.
             */}
-            <div className={pack !== null ? "grid gap-4 sm:grid-cols-2" : undefined}>
+            <div className={loose ? "grid gap-4 sm:grid-cols-2" : undefined}>
               <Field
-                label={pack !== null ? `Whole ${product.unit}s` : "Quantity"}
+                label={loose ? `Whole ${product.unit}s` : "Quantity"}
                 htmlFor="quantity" error={err.quantity}
               >
                 <Input
@@ -321,7 +325,7 @@ function AdjustDialog({
                   placeholder="20"
                 />
               </Field>
-              {pack !== null && (
+              {loose && (
                 <Field label="Loose pieces" htmlFor="pieces" error={err.pieces}>
                   <Input
                     id="pieces" name="pieces" inputMode="numeric"

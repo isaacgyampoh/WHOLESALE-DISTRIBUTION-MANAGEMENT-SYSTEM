@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Select, Textarea, Field } from "@/components/ui/field";
 import { Alert } from "@/components/ui/states";
 import { UNITS, unitLabel } from "@/lib/catalogue/units";
+import { holdsPieces } from "@/lib/catalogue/quantity";
 import type { ProductRow, CategoryRow } from "./queries";
 
 /**
@@ -51,9 +52,9 @@ export function ProductForm({
     state.values?.unit ?? product?.unit ?? "piece",
   );
   const unitName = unit.charAt(0).toUpperCase() + unit.slice(1);
-  // A product sold by the piece has no second unit to split into, so
-  // the pack size and piece price have nothing to describe.
-  const splittable = unit !== "piece";
+  // A product sold by the piece has no second unit to be loose from.
+  // Everything else can hold singles, pack size or no pack size.
+  const splittable = holdsPieces(unit);
 
   useEffect(() => {
     if (state.status !== "done") return;
@@ -141,9 +142,7 @@ export function ProductForm({
         <Field
           label={`Pieces per ${unit}`}
           htmlFor="piecesPerUnit" error={err.piecesPerUnit}
-          hint={splittable
-            ? `How many single pieces come out of one ${unit}. Leave at 1 if it is never split.`
-            : "This product is sold by the piece, so there is nothing to split."}
+          hint={`Optional. Only needed to open a ${unit} into singles - it never sets the piece price.`}
         >
           <Input
             id="piecesPerUnit" name="piecesPerUnit" inputMode="numeric"

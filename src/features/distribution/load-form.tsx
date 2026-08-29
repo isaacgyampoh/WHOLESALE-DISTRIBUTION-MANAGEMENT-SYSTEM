@@ -9,16 +9,20 @@ import { Button } from "@/components/ui/button";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { Alert } from "@/components/ui/states";
 import { formatQuantity, formatMoney } from "@/lib/utils/format";
+import { holdsPieces } from "@/lib/catalogue/quantity";
 import { Plus, Trash2, Truck, Send } from "lucide-react";
 
 export interface LoadOption { id: string; label: string }
 export interface LoadProduct {
   id: string; name: string; sku: string; listPrice: number;
+  /** Its own unit - a box, a carton, a piece. Decides whether it can
+   *  hold loose pieces at all. */
+  unit: string;
   /** How many sit in each warehouse, keyed by warehouse id. */
   availableBy: Record<string, number>;
   /** Loose pieces in each warehouse, kept apart from the full units. */
   piecesBy: Record<string, number>;
-  /** 1 means this product is never split, and has no loose half. */
+  /** Pieces per whole unit. Only needed to open one, never to price it. */
   piecesPerUnit: number;
 }
 
@@ -225,7 +229,7 @@ export function CreateLoadButton({
                             request for singles, and the picker should
                             say so before the load is refused.
                           */}
-                          {warehouseId && product.piecesPerUnit > 1
+                          {warehouseId && holdsPieces(product.unit)
                             ? ` · ${formatQuantity(product.piecesBy[warehouseId] ?? 0)} loose`
                             : ""}
                         </p>
@@ -251,8 +255,8 @@ export function CreateLoadButton({
                       name="qtyLoadedPieces"
                       aria-label={`Loose pieces for product ${index + 1}`}
                       inputMode="numeric"
-                      placeholder={product && product.piecesPerUnit > 1 ? "Pieces" : "—"}
-                      disabled={!product || product.piecesPerUnit <= 1}
+                      placeholder={product && holdsPieces(product.unit) ? "Pieces" : "—"}
+                      disabled={!product || !holdsPieces(product.unit)}
                       value={line.pieces}
                       onChange={(e) => setLine(line.key, { pieces: e.target.value.replace(/\D/g, "") })}
                       className="numeric w-24 shrink-0 disabled:opacity-40"

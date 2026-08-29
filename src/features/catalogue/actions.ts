@@ -8,7 +8,7 @@ import { describeImageRefusal } from "@/lib/catalogue/image";
 import { getCapabilities } from "@/lib/db/capabilities";
 import { UNITS } from "@/lib/catalogue/units";
 import {
-  readQuantity, packSize, covers, isEmpty, formatHolding, NOTHING,
+  readQuantity, packSize, covers, isEmpty, formatHolding, holdsPieces, NOTHING,
 } from "@/lib/catalogue/quantity";
 import type { AuthenticatedUser } from "@/types/domain";
 import { can } from "@/types/permissions";
@@ -418,21 +418,22 @@ export async function updateProductAction(
   const piecePrice = readPiecePrice(v.piecePrice, errors);
   const capabilitiesForWrite = await getCapabilities();
 
-  if (piecePrice !== null && packSize <= 1) {
+  if (piecePrice !== null && !holdsPieces(v.unit)) {
     errors.piecePrice =
-      "Say how many pieces come out of one unit before pricing a single one.";
+      "This product is sold by the piece, so its selling price is already the piece price.";
   }
 
-  // Taking the pack size back to 1 says this product is never split.
-  // If loose pieces are already on a shelf somewhere, that would strand
-  // them: they stay in the ledger, and no screen has a way left to
-  // describe them. Pack them up or sell them first.
-  if (packSize <= 1 && Number(existing.units_per_case ?? 1) > 1) {
+  // Changing a product to be sold by the piece is what would strand
+  // loose stock: the two quantities collapse into one and there is
+  // nowhere left to describe the singles. Clearing the pack size does
+  // not - that only means boxes can no longer be opened, which is a
+  // separate thing from holding singles that are already open.
+  if (!holdsPieces(v.unit) && holdsPieces(existing.unit_of_measure as string)) {
     const loose = await loosePiecesHeld(id);
     if (loose > 0) {
-      errors.piecesPerUnit =
-        `There are ${loose} loose pieces of this product. Pack them up or sell them ` +
-        `before saying it is never split.`;
+      errors.unit =
+        `There are ${loose} loose pieces of this product. Sell them or pack them up ` +
+        `before making it a piece-only product.`;
     }
   }
 
@@ -597,10 +598,10 @@ export async function adjustStockAction(
   if (read.ok && isEmpty(moving)) {
     errors.quantity = "Enter a quantity above zero.";
   }
-  // A piece figure means nothing until somebody has said what a piece
-  // is - and the product page will not have offered the field either.
-  if (moving.pieces > 0 && pack === null) {
-    errors.pieces = `No pack size is set for this product. Say how many pieces come out of one ${unit} first.`;
+  // A piece needs a parent unit to be loose from. Pack size is not the
+  // question: it governs opening a box, not holding singles.
+  if (moving.pieces > 0 && !holdsPieces(unit)) {
+    errors.pieces = "This product is sold by the piece, so it has no separate loose half.";
   }
   // A movement without a reason is an unexplained change, which is the
   // one thing an audited ledger must not contain.

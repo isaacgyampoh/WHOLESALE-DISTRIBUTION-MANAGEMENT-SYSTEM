@@ -50,6 +50,25 @@ export function subtractQuantity(a: Quantity, b: Quantity): Quantity {
  * defaults to 1 for every product, so treating it as a real pack size
  * would claim every carton holds exactly one piece.
  */
+/**
+ * Whether this product can hold loose pieces at all.
+ *
+ * It can when it has a parent unit to be loose *from* - a box, a
+ * carton, a bag. A product sold by the piece has no second quantity:
+ * every one of them is already a piece.
+ *
+ * Deliberately not a question about pack size. Pack size says how many
+ * pieces come out of one box, and it is needed only to open one - the
+ * conversion. A business can perfectly well hold three boxes and four
+ * loose pieces, and sell either, without ever having told the system
+ * how many pieces a box contains. Gating loose pieces on pack size
+ * refuses exactly that, which is the common case.
+ */
+export function holdsPieces(unit: string | null | undefined): boolean {
+  const name = (unit ?? "").trim().toLowerCase();
+  return name !== "" && name !== "piece";
+}
+
 export function packSize(piecesPerUnit: number | null | undefined): number | null {
   const size = Number(piecesPerUnit ?? 1);
   return Number.isFinite(size) && size > 1 ? Math.floor(size) : null;

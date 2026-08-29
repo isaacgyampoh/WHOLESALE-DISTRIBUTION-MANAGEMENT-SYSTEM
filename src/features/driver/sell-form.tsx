@@ -16,6 +16,7 @@ import { Card, CardBody } from "@/components/ui/card";
 import { Alert, EmptyState } from "@/components/ui/states";
 import { Badge } from "@/components/ui/badge";
 import { formatMoney, formatQuantity } from "@/lib/utils/format";
+import { holdsPieces } from "@/lib/catalogue/quantity";
 import { productImageUrl } from "@/lib/catalogue/image";
 import type { OfflineSnapshot } from "@/lib/offline/queue";
 import type { RoundBlocker } from "@/features/driver/queries";
@@ -546,10 +547,10 @@ export function SellForm({
               const price = priceBy.get(s.product_id)?.unit_price ?? 0;
               const piecePrice = priceBy.get(s.product_id)?.piece_price ?? 0;
               const soldOut = s.qty_on_hand <= 0;
-              // Only where the depot has actually opened one. A product
-              // with a pack size but nothing loose on board offers no
-              // second row: the singles are not there to sell.
-              const splittable = s.pieces_per_unit > 1;
+              // A product with a parent unit can hold singles, whether or
+              // not anyone has recorded how many come out of a box. Pack
+              // size governs opening one, which happens at the depot.
+              const splittable = holdsPieces(s.unit);
               const noLoose = s.qty_pieces <= 0;
               // Nobody has priced a single of this product, so there is
               // no honest figure to charge for one. The row says so

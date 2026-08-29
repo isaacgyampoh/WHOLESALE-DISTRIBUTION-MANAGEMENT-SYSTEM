@@ -9,7 +9,7 @@ import { Input, Select, Field } from "@/components/ui/field";
 import { Alert } from "@/components/ui/states";
 import { Badge } from "@/components/ui/badge";
 import { Search, ClipboardCheck, Check } from "lucide-react";
-import { formatHolding } from "@/lib/catalogue/quantity";
+import { formatHolding, holdsPieces } from "@/lib/catalogue/quantity";
 
 export interface CountableProduct {
   id: string;
@@ -65,7 +65,7 @@ function readLine(
   const pieces = entry.pieces.trim();
   if (units === "" && pieces === "") return null;
 
-  const splittable = product.piecesPerUnit > 1;
+  const splittable = holdsPieces(product.unit);
   const counted = units === "" ? 0 : Number(units);
   if (!Number.isInteger(counted) || counted < 0) return null;
 
@@ -244,7 +244,7 @@ export function CountSheet({
             <ul className="divide-y divide-[var(--border-subtle)]">
               {visible.map((product) => {
                 const entry = counts[product.id] ?? { units: "", pieces: "" };
-                const splittable = product.piecesPerUnit > 1;
+                const splittable = holdsPieces(product.unit);
                 const line = readLine(entry, product);
 
                 const unitDelta = line ? line.counted - product.onHand : 0;
