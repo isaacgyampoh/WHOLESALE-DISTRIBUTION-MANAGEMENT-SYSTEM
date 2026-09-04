@@ -3,16 +3,17 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth/session";
 import { can } from "@/types/permissions";
-import { getLoadDetail } from "@/features/distribution/queries";
+import { getLoadDetail, listLoadableProducts } from "@/features/distribution/queries";
+import { TopUpVanButton } from "@/features/distribution/top-up-form";
 import { PageHeader } from "@/components/layout/page-header";
 import { Forbidden } from "@/components/layout/forbidden";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ErrorState, EmptyState } from "@/components/ui/states";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/table";
-import { formatQuantity, formatDate } from "@/lib/utils/format";
+import { formatQuantity, formatDate, formatDateTime } from "@/lib/utils/format";
 import { formatHolding } from "@/lib/catalogue/quantity";
-import { PackageX, Users } from "lucide-react";
+import { PackageX, Users, PackagePlus } from "lucide-react";
 
 export const metadata: Metadata = { title: "Van load" };
 export const dynamic = "force-dynamic";
@@ -59,6 +60,19 @@ export default async function LoadDetailPage({
   const loosePieces = load.lines.reduce(
     (s, l) => s + l.loadedPieces + l.soldPieces + l.remainingPieces, 0);
 
+  /*
+   * The round is open while the load is dispatched.
+   *
+   * That is the whole cutoff: approve_van_return moves the load to
+   * 'returned', so a dispatched load is a week still running whether it
+   * is Monday or Friday afternoon. No clock, no day of the week.
+   */
+  const roundIsOpen = load.status === "dispatched";
+  const canTopUp = roundIsOpen && can(user.role, "loads.dispatch");
+
+  // Only fetched when there is a button to put it behind.
+  const pickable = canTopUp ? await listLoadableProducts() : null;
+
   return (
     <>
       <PageHeader
@@ -70,6 +84,17 @@ export default async function LoadDetailPage({
           { label: load.loadNumber },
         ]}
         actions={
+          <div className="flex flex-wrap items-center gap-2">
+          {canTopUp && pickable?.ok && (
+            <TopUpVanButton
+              loadId={load.id}
+              loadNumber={load.loadNumber}
+              vanCode={load.vanCode}
+              warehouseId={load.warehouseId}
+              warehouseName={load.warehouseName}
+              products={pickable.data}
+            />
+          )}
           <Link
             href={`/vans/${load.vanId}/crew`}
             className="inline-flex h-11 items-center justify-center gap-2 rounded-[var(--radius-panel)] border border-[var(--border-strong)] px-4 text-sm font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-sunken)] pointer-fine:h-9.5"
@@ -77,12 +102,24 @@ export default async function LoadDetailPage({
             <Users className="size-4" aria-hidden />
             {load.salespeople.length ? "Change crew" : "Assign salesperson"}
           </Link>
+          </div>
         }
       />
 
       <Card className="mt-6">
         <dl className="grid gap-4 px-5 py-4 sm:grid-cols-3 lg:grid-cols-5">
           <Pair label="Warehouse" value={load.warehouseName ?? "-"} />
+          {/*
+            Said here because it changes what Friday expects. A week with
+            three top-ups holds more than its opening load, and anyone
+            reading a variance needs to know that before they read it.
+          */}
+          {load.topUps.length > 0 && (
+            <Pair
+              label="Top-ups"
+              value={`${formatQuantity(load.topUps.length)} since dispatch`}
+            />
+          )}
           <Pair label="Date" value={formatDate(load.loadDate)} />
           <Pair label="Driver" value={load.driverName ?? "No driver"} />
           {/*
@@ -175,6 +212,75 @@ export default async function LoadDetailPage({
           </TableWrap>
         )}
       </Card>
+      {/*
+        Every mid-week delivery, oldest first.
+        
+        Read from the movements each one wrote rather than from a second
+        copy kept alongside - the ledger is the history, and a separate
+        table of it could only ever disagree.
+      */}
+      {load.topUps.length > 0 && (
+        <Card className="mt-6 p-0">
+          <CardHeader
+            title="Sent during the round"
+            description={
+              `${formatQuantity(load.topUps.length)} ` +
+              `${load.topUps.length === 1 ? "delivery" : "deliveries"} after this van went out. ` +
+              `All of it counts towards what is expected back.`
+            }
+          />
+          <TableWrap>
+            <Table>
+              <thead>
+                <Tr>
+                  <Th>When</Th>
+                  <Th>Sent by</Th>
+                  <Th numeric>Products</Th>
+                  <Th numeric>Units</Th>
+                  <Th numeric>Loose</Th>
+                  <Th>Note</Th>
+                </Tr>
+              </thead>
+              <tbody>
+                {load.topUps.map((t) => (
+                  <Tr key={t.id}>
+                    <Td>{formatDateTime(t.createdAt)}</Td>
+                    <Td>{t.byName ?? "-"}</Td>
+                    <Td numeric>{formatQuantity(t.lineCount)}</Td>
+                    <Td numeric>{formatQuantity(t.units)}</Td>
+                    <Td numeric>
+                      {t.pieces > 0
+                        ? formatQuantity(t.pieces)
+                        : <span className="text-[var(--text-muted)]">-</span>}
+                    </Td>
+                    <Td className="text-[var(--text-secondary)]">
+                      {t.note ?? <span className="text-[var(--text-muted)]">-</span>}
+                    </Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </Table>
+          </TableWrap>
+        </Card>
+      )}
+
+      {/*
+        A round with nothing sent to it yet, for somebody who came here
+        looking for the button. Said once, quietly, and only while the
+        van is actually out.
+      */}
+      {canTopUp && load.topUps.length === 0 && (
+        <Card className="mt-6">
+          <div className="flex items-start gap-3 px-5 py-4">
+            <PackagePlus className="mt-0.5 size-4 shrink-0 text-[var(--text-muted)]" aria-hidden />
+            <p className="text-sm text-[var(--text-secondary)]">
+              This van is out on its round. More stock can be sent to it at any
+              time until its return is approved - use <span className="font-medium
+              text-[var(--text-primary)]">Top up van</span> above.
+            </p>
+          </div>
+        </Card>
+      )}
     </>
   );
 }

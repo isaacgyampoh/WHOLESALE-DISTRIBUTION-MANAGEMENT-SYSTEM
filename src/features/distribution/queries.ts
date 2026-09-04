@@ -663,6 +663,25 @@ export interface LoadLine {
   remainingPieces: number;
 }
 
+/**
+ * One delivery of extra stock to a van already out on its round.
+ *
+ * The items come from the movements the top-up wrote, read by its own
+ * reference - so the history is the ledger rather than a second copy of
+ * it that could disagree.
+ */
+export interface LoadTopUp {
+  id: string;
+  createdAt: string;
+  /** Who sent it. Null only if the account has since been removed. */
+  byName: string | null;
+  note: string | null;
+  /** Distinct products on this delivery. */
+  lineCount: number;
+  units: number;
+  pieces: number;
+}
+
 export interface LoadDetail {
   id: string;
   loadNumber: string;
@@ -671,11 +690,18 @@ export interface LoadDetail {
   vanId: string;
   vanCode: string;
   registrationNo: string;
+  /** The depot this round draws from, and the one a top-up comes out of. */
+  warehouseId: string;
   warehouseName: string | null;
   driverName: string | null;
   /** Everybody crewed to sell from this van. Empty is a real answer. */
   salespeople: string[];
   lines: LoadLine[];
+  /**
+   * Every mid-week delivery to this van, oldest first. Empty is the
+   * ordinary case: most weeks a van goes out once.
+   */
+  topUps: LoadTopUp[];
 }
 
 /**
@@ -697,7 +723,7 @@ export async function getLoadDetail(loadId: string): Promise<Result<LoadDetail |
   const { data: loadRow, error } = await supabase
     .from("van_loads")
     .select(
-      "id, load_number, load_date, status, van_id, " +
+      "id, load_number, load_date, status, van_id, warehouse_id, " +
       "vans(code, registration_no), warehouses(name), " +
       // Named explicitly: van_loads carries its own driver, and a bare
       // profiles embed cannot be resolved once a table has two routes
@@ -718,7 +744,8 @@ export async function getLoadDetail(loadId: string): Promise<Result<LoadDetail |
   const van = load.vans as { code?: string; registration_no?: string } | null;
   const vanId = load.van_id as string;
 
-  const [{ data: items }, { data: onVan }, { data: crew }, { data: sales }] = await Promise.all([
+  const [{ data: items }, { data: onVan }, { data: crew }, { data: sales },
+         { data: topUpRows }] = await Promise.all([
     supabase
       .from("van_load_items")
       .select(loadCapabilities.loosePieces
@@ -746,6 +773,16 @@ export async function getLoadDetail(loadId: string): Promise<Result<LoadDetail |
         : "id, van_sale_items(product_id, quantity)")
       .eq("load_id", loadId)
       .eq("status", "completed"),
+
+    // Mid-week deliveries. Absent before 0064, where a load simply had
+    // none - so an older database shows the page rather than an error.
+    loadCapabilities.vanTopUps
+      ? supabase
+          .from("van_load_top_ups")
+          .select("id, created_at, note, profiles(full_name)")
+          .eq("load_id", loadId)
+          .order("created_at", { ascending: true })
+      : Promise.resolve({ data: [] as unknown[] }),
   ]);
 
   const onVanRows = (onVan ?? []) as unknown as {
@@ -785,6 +822,45 @@ export async function getLoadDetail(loadId: string): Promise<Result<LoadDetail |
     };
   }).sort((a, b) => a.productName.localeCompare(b.productName));
 
+  // What each delivery contained, read from the movements it wrote.
+  // One query for all of them rather than one per top-up, and only the
+  // half arriving on the van, so nothing is counted twice.
+  const topUpIds = ((topUpRows ?? []) as unknown as Record<string, unknown>[])
+    .map((t) => t.id as string);
+
+  const contents = new Map<string, { lines: Set<string>; units: number; pieces: number }>();
+  if (topUpIds.length) {
+    const { data: moves } = await supabase
+      .from("stock_movements")
+      .select("reference_id, product_id, quantity, pieces")
+      .eq("reference_type", "van_top_up")
+      .eq("type", "transfer_in")
+      .in("reference_id", topUpIds);
+
+    for (const row of (moves ?? []) as unknown as Record<string, unknown>[]) {
+      const key = row.reference_id as string;
+      const entry = contents.get(key) ?? { lines: new Set<string>(), units: 0, pieces: 0 };
+      entry.lines.add(row.product_id as string);
+      entry.units += Number(row.quantity ?? 0);
+      entry.pieces += Number(row.pieces ?? 0);
+      contents.set(key, entry);
+    }
+  }
+
+  const topUps: LoadTopUp[] = ((topUpRows ?? []) as unknown as Record<string, unknown>[])
+    .map((t) => {
+      const held = contents.get(t.id as string);
+      return {
+        id: t.id as string,
+        createdAt: t.created_at as string,
+        byName: (t.profiles as { full_name?: string } | null)?.full_name ?? null,
+        note: (t.note as string | null) ?? null,
+        lineCount: held?.lines.size ?? 0,
+        units: held?.units ?? 0,
+        pieces: held?.pieces ?? 0,
+      };
+    });
+
   return {
     ok: true,
     data: {
@@ -795,12 +871,14 @@ export async function getLoadDetail(loadId: string): Promise<Result<LoadDetail |
       vanId,
       vanCode: van?.code ?? "",
       registrationNo: van?.registration_no ?? "",
+      warehouseId: load.warehouse_id as string,
       warehouseName: (load.warehouses as { name?: string } | null)?.name ?? null,
       driverName: (load.driver as { full_name?: string } | null)?.full_name ?? null,
       salespeople: (crew ?? [])
         .map((r) => (r.profiles as { full_name?: string } | null)?.full_name)
         .filter((n): n is string => Boolean(n)),
       lines,
+      topUps,
     },
   };
 }

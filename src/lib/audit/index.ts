@@ -36,6 +36,8 @@ export type AuditAction =
   | "payment.recorded"
   | "load.created"
   | "load.dispatched"
+  // More stock sent to a van already out on its round, mid-week.
+  | "load.topped_up"
   | "load.cancelled"
   | "return.submitted"
   | "return.approved"

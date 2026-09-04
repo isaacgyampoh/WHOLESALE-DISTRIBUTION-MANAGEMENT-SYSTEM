@@ -1230,3 +1230,94 @@ export async function transferVanStockAction(input: {
 
   return { ok: true, moved: lines.length };
 }
+
+// ===================================================================
+// Sending more stock to a van that is already out
+// ===================================================================
+//
+// A van goes out on Monday and comes back on Friday, and in between it
+// runs out of things. This is how the depot sends more.
+//
+// It is not a second load: van_loads_one_open_per_van makes the open
+// load the week, and sales, returns and the reconciliation all hang off
+// its id. A top-up adds to that load, so every existing figure counts
+// it without being taught to.
+//
+// The database function holds the rules - who may send, whether the
+// round is still open, whether the warehouse has it, and the locking
+// that stops two people spending the same stock. This reads the form,
+// calls it, and turns a refusal into a sentence.
+
+export async function topUpVanAction(input: {
+  loadId: string;
+  note?: string;
+  lines: { productId: string; quantity?: number; pieces?: number }[];
+}): Promise<{ ok: boolean; message?: string; lines?: number }> {
+  // The same authority as dispatching a load. Sending goods to a van is
+  // the depot's decision, and a salesperson topping up the van they sell
+  // from is exactly the hole this would otherwise open.
+  const actor = await requirePermission("loads.dispatch");
+
+  if (!input.loadId) return { ok: false, message: "That load could not be found." };
+
+  // Either half may be zero; a line that sends nothing may not be.
+  const lines = (input.lines ?? []).filter(
+    (l) => l.productId && ((l.quantity ?? 0) > 0 || (l.pieces ?? 0) > 0));
+  if (lines.length === 0) return { ok: false, message: "Nothing was selected to send." };
+
+  for (const line of lines) {
+    const units = Number(line.quantity ?? 0);
+    const pieces = Number(line.pieces ?? 0);
+    if (!Number.isInteger(units) || units < 0 || !Number.isInteger(pieces) || pieces < 0) {
+      return { ok: false, message: "Quantities must be whole numbers, zero or more." };
+    }
+  }
+
+  const load = await owned(actor, "van_loads", input.loadId,
+    "id, load_number, org_id, van_id, status");
+  if (!load) return { ok: false, message: "That load could not be found." };
+
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase.rpc("top_up_van_load", {
+    p_load_id: input.loadId,
+    p_lines: lines.map((l) => ({
+      product_id: l.productId,
+      quantity: Number(l.quantity ?? 0),
+      pieces: Number(l.pieces ?? 0),
+    })),
+    p_note: input.note?.trim() || null,
+  });
+
+  if (error) {
+    console.error("[distribution] van top-up failed", error);
+    // The function names the product and the shortfall, and says when a
+    // round is over. That sentence is more use at the depot than
+    // anything this layer could invent.
+    return { ok: false, message: error.message.replace(/^.*?:\s*/, "") };
+  }
+
+  const { data: van } = await createSupabaseAdminClient()
+    .from("vans").select("code").eq("id", load.van_id as string).maybeSingle();
+
+  await recordAudit(actor, {
+    action: "load.topped_up",
+    targetType: "van_load",
+    targetId: input.loadId,
+    targetLabel: load.load_number as string,
+    after: {
+      van: (van?.code as string) ?? "",
+      lines: lines.length,
+      units: lines.reduce((s, l) => s + Number(l.quantity ?? 0), 0),
+      pieces: lines.reduce((s, l) => s + Number(l.pieces ?? 0), 0),
+      note: input.note?.trim() || null,
+    },
+  });
+
+  revalidatePath("/loads");
+  revalidatePath(`/loads/${input.loadId}`);
+  revalidatePath("/inventory");
+  revalidatePath("/vans");
+  revalidatePath("/driver");
+
+  return { ok: true, lines: lines.length };
+}
