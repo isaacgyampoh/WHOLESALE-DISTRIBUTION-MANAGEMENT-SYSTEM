@@ -116,6 +116,34 @@ export function AdminPanel({ view }: { view: AdminView }) {
         </div>
       )}
 
+      {/*
+        The same shape of fault as the one above: a setting that makes an
+        ordinary operation fail, with nothing to say so until somebody
+        tries it. Here the somebody is a salesperson standing at a
+        customer's counter, and what fails is a sale of loose pieces the
+        van is actually carrying.
+
+        Since 0062 an unpriced piece is refused rather than sold at a
+        guessed rate - which is right, and is precisely why this needs
+        saying out loud.
+      */}
+      {view.unsellablePieces > 0 && (
+        <div className="mb-5">
+          <Alert tone="warning" title="Stock that cannot be sold">
+            {formatQuantity(view.unsellablePieces)}{" "}
+            {view.unsellablePieces === 1 ? "product is holding loose" : "products are holding loose"}{" "}
+            pieces with no piece price, so nobody can sell them. The stock is
+            there; the price is not.
+            <Link
+              href="/products"
+              className="mt-1 inline-flex min-h-11 items-center font-medium underline underline-offset-2 pointer-fine:mt-0 pointer-fine:min-h-0"
+            >
+              Set the piece prices
+            </Link>
+          </Alert>
+        </div>
+      )}
+
       <Card>
         <CardHeader
           title="The system itself"

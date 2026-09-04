@@ -211,8 +211,8 @@ report as (
           case when m.names = '' then 'none missing' else 'MISSING' end,
           case when m.names = '' then 'OK' else 'FAIL' end, m.names
   from missing_tables m
-  union all select  3, 'Views', '22', c.views::text,
-          case when c.views = 22 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  3, 'Views', '23', c.views::text,
+          case when c.views = 23 then 'OK' else 'CHECK' end, '' from counts c
   union all select  4, 'Expected views all present', 'none missing',
           case when v.names = '' then 'none missing' else 'MISSING' end,
           case when v.names = '' then 'OK' else 'FAIL' end, v.names

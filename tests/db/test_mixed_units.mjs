@@ -415,6 +415,72 @@ head("loose pieces need a parent unit, not a pack size");
      /No pack size is set/.test(opening.error ?? ""), (opening.error ?? "").slice(0, 55));
 }
 
+// ===================================================================
+// Stock nobody can sell
+// ===================================================================
+head("the office is told about pieces that cannot be sold");
+{
+  // Holding singles with no price for them: real stock that cannot
+  // leave the building, and until this view nothing said so.
+  const stranded = await product("STRAND", "Stranded Powder", "box", 1, 100, null);
+  await c.query(`update products set piece_price = null where id = $1`, [stranded]);
+  await stock(stranded, 2, 6);
+
+  // Priced, so its singles can be sold. Must not appear.
+  const fine = await product("FINE", "Priced Powder", "box", 1, 100, 9);
+  await stock(fine, 2, 6);
+
+  // Unpriced but holding no singles. Nothing is stuck, so nothing to say.
+  const quiet = await product("QUIET", "Quiet Powder", "box", 1, 100, null);
+  await c.query(`update products set piece_price = null where id = $1`, [quiet]);
+  await stock(quiet, 5, 0);
+
+  // Sold by the piece: its selling price is already the piece price.
+  const single = await product("SINGLE", "Single Bar", "piece", 1, 10, null);
+  await c.query(`update products set piece_price = null where id = $1`, [single]);
+  await stock(single, 40, 0);
+
+  const listed = await asUserSteps(boss, [
+    [`select sku, loose_pieces from public.unsellable_pieces order by sku`, []],
+  ]);
+  ok("the view is readable by the office", listed.ok, listed.error ?? "");
+  const skus = listed.ok ? listed.rows.map((r) => r.sku) : [];
+
+  ok("the stranded product is listed", skus.includes("STRAND"), skus.join(", "));
+  ok("with the pieces that are stuck",
+     Number(listed.rows?.find((r) => r.sku === "STRAND")?.loose_pieces) === 6);
+  ok("a priced product is not listed", !skus.includes("FINE"));
+  ok("nor one holding no singles", !skus.includes("QUIET"));
+  ok("nor one sold by the piece", !skus.includes("SINGLE"));
+
+  // Tenancy: the view runs as its caller, so another organisation's
+  // stranded stock must not appear in this one's list.
+  const other = (await c.query(
+    `insert into organizations (name, slug) values ('Other Co','other-co-up') returning id`)).rows[0].id;
+  const otherWh = (await c.query(
+    `insert into warehouses (org_id, code, name) values ($1,'OW','Other') returning id`,
+    [other])).rows[0].id;
+  const otherCat = (await c.query(
+    `insert into categories (org_id, name) values ($1,'C') returning id`, [other])).rows[0].id;
+  const otherProduct = (await c.query(
+    `insert into products (org_id, sku, name, unit_of_measure, units_per_case,
+                           list_price, cost_price, category_id)
+     values ($1,'OTHER-STRAND','Their Powder','box',1,100,10,$2) returning id`,
+    [other, otherCat])).rows[0].id;
+  await c.query(
+    `insert into stock_movements (org_id, product_id, warehouse_id, type, quantity, pieces,
+                                  reference_type, created_by)
+     values ($1,$2,$3,'opening_stock',1,5,'test',null)`,
+    [other, otherProduct, otherWh]);
+
+  const mine = await asUserSteps(boss, [
+    [`select sku from public.unsellable_pieces order by sku`, []],
+  ]);
+  ok("another organisation's stranded stock stays theirs",
+     mine.ok && !mine.rows.map((r) => r.sku).includes("OTHER-STRAND"),
+     (mine.rows ?? []).map((r) => r.sku).join(", "));
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 await c.end();
 process.exit(fail ? 1 : 0);

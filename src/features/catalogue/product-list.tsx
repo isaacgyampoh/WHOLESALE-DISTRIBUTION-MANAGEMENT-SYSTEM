@@ -10,10 +10,22 @@ import { StockBadge } from "./stock-badge";
 import { ProductForm } from "./product-form";
 import { unitLabel } from "@/lib/catalogue/units";
 import { formatMoney, formatQuantity } from "@/lib/utils/format";
+import { holdsPieces } from "@/lib/catalogue/quantity";
 import type { ProductRow, CategoryRow } from "./queries";
 import { Plus, ChevronRight } from "lucide-react";
 
 /** A table where there is a pointer, cards where there is a finger. */
+/**
+ * Loose pieces that cannot be sold.
+ *
+ * Stock is on the shelf and no salesperson can move it, because nobody
+ * has said what one of them costs. The same condition the dashboard
+ * counts; here it marks the row that has to be fixed.
+ */
+function strandedPieces(p: ProductRow): boolean {
+  return p.onHandPieces > 0 && p.piecePrice === null && holdsPieces(p.unit);
+}
+
 export function ProductList({ products }: { products: ProductRow[] }) {
   return (
     <>
@@ -56,8 +68,16 @@ export function ProductList({ products }: { products: ProductRow[] }) {
                 <Td numeric>
                   {formatQuantity(p.available)}
                   {p.onHandPieces > 0 && (
-                    <span className="ml-1 font-normal text-[var(--text-muted)]">
+                    /*
+                      Loose pieces nobody has priced are stock that
+                      cannot be sold, so they are called out here rather
+                      than reading as ordinary stock. This is the row the
+                      dashboard alert sends somebody to find.
+                    */
+                    <span className={"ml-1 font-normal " + (
+                      strandedPieces(p) ? "text-caution" : "text-[var(--text-muted)]")}>
                       + {formatQuantity(p.onHandPieces)} loose
+                      {strandedPieces(p) ? " · no price" : ""}
                     </span>
                   )}
                   {p.reserved > 0 && (
@@ -95,8 +115,10 @@ export function ProductList({ products }: { products: ProductRow[] }) {
                   <span className="numeric text-xs text-[var(--text-secondary)]">
                     {formatQuantity(p.available)}
                   {p.onHandPieces > 0 && (
-                    <span className="ml-1 font-normal text-[var(--text-muted)]">
+                    <span className={"ml-1 font-normal " + (
+                      strandedPieces(p) ? "text-caution" : "text-[var(--text-muted)]")}>
                       + {formatQuantity(p.onHandPieces)} loose
+                      {strandedPieces(p) ? " · no price" : ""}
                     </span>
                   )} {unitLabel(p.unit).toLowerCase()}
                   </span>

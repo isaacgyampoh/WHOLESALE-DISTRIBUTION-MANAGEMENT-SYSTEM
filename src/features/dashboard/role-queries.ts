@@ -230,6 +230,12 @@ export interface AdminView {
   inactiveUsers: number;
   /** Active staff who have no PIN yet, so cannot actually sign in. */
   cannotSignIn: number;
+  /**
+   * Products holding loose pieces nobody has priced. The stock is real
+   * and no salesperson can sell it, which is the sort of thing that
+   * surfaces at a customer's counter unless somebody is told first.
+   */
+  unsellablePieces: number;
   auditEntriesToday: number;
   failedSignInsToday: number;
   /** Set when the database is behind the application. */
@@ -253,7 +259,8 @@ export async function getAdminView(periodDays = 30): Promise<AdminView> {
   const marginSince = daysAgo(periodDays);
 
   const [active, inactive, pending, audit, failures,
-         soldLines, recons, returns, transfers, supplierInvoices] = await Promise.all([
+         soldLines, recons, returns, transfers, supplierInvoices,
+         strandedPieces] = await Promise.all([
     supabase.from("profiles").select("id", { count: "exact", head: true }).eq("is_active", true),
     supabase.from("profiles").select("id", { count: "exact", head: true }).eq("is_active", false),
     // Not "pending": every profile has a role. Somebody who has been
@@ -291,6 +298,14 @@ export async function getAdminView(periodDays = 30): Promise<AdminView> {
       ? supabase.from("supplier_documents").select("id", { count: "exact", head: true })
           .in("status", ["received", "reviewing"])
       : Promise.resolve({ count: 0, error: null }),
+
+    // Stock that is real and unsellable: loose pieces on a product
+    // nobody has given a piece price. Gated on the capability, so a
+    // database without the view reads as nothing stuck rather than
+    // taking the dashboard down.
+    capabilities.loosePieces
+      ? supabase.from("unsellable_pieces").select("product_id", { count: "exact", head: true })
+      : Promise.resolve({ count: 0, error: null }),
   ]);
 
   let revenue = 0;
@@ -318,6 +333,10 @@ export async function getAdminView(periodDays = 30): Promise<AdminView> {
     activeUsers: active.count ?? 0,
     inactiveUsers: inactive.count ?? 0,
     cannotSignIn: pending.count ?? 0,
+    // Counted, not listed - the products screen is where they get
+    // fixed. Absent against a database without the view, which reads as
+    // nothing stuck rather than as an error on the dashboard.
+    unsellablePieces: strandedPieces.count ?? 0,
     auditEntriesToday: audit.count ?? 0,
     // Counted rather than listed: the detail is on the audit screen, and
     // what belongs on a dashboard is whether it is happening at all.
