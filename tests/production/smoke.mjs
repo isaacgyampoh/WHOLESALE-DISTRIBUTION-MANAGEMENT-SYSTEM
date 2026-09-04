@@ -92,14 +92,88 @@ try {
 
   // Four digits and nothing else: the PIN identifies the account.
   await page.getByLabel(/digit 1 of 4/i).first().waitFor({ state: "visible", timeout: 30000 });
-  await page.waitForTimeout(900);                    // let React hydrate
-  await page.getByLabel(/digit 1 of 4/i).first().click({ timeout: 20000 });
-  for (const d of PIN) await page.keyboard.type(d, { delay: 60 });
-  // The form submits itself on the fourth digit. Clicking submit as well
-  // sends it twice and the second attempt fails against a used nonce.
-  await page.waitForURL((u) => !u.pathname.includes("sign-in"), { timeout: 90000 }).catch(() => {});
+  /*
+   * Wait for hydration, not for a guess at it.
+   *
+   * The digit boxes are server-rendered, so they are visible and
+   * typeable before React has attached to them - and typing into them
+   * then fills the DOM without the component's state ever hearing about
+   * it. The digits sit in the boxes, `filled` stays false, the Sign in
+   * button stays disabled, and nothing is ever submitted.
+   *
+   * Typing one digit and waiting for the component to react to it is the
+   * signal that it is listening. Nine hundred milliseconds was a guess,
+   * and against a cold serverless start it was sometimes wrong.
+   */
+  const firstBox = page.getByLabel(/digit 1 of 4/i).first();
+  await firstBox.click({ timeout: 20000 });
+  for (let i = 0; i < 40 && !(await page.getByLabel(/digit 2 of 4/i).first()
+         .evaluate((el) => el === document.activeElement).catch(() => false)); i += 1) {
+    await firstBox.fill("");
+    await firstBox.type(PIN[0], { delay: 20 });
+    await page.waitForTimeout(250);
+  }
+  const submittedAt = new Date().toISOString();
+  for (const d of PIN.slice(1)) await page.keyboard.type(d, { delay: 60 });
+  /*
+   * The form submits itself on the fourth digit, so clicking submit as
+   * well would send it twice and the second attempt would fail against a
+   * used nonce. But the auto-submit rides a React effect, and typing
+   * that lands before hydration finishes leaves the digits in the boxes
+   * with nothing sent - intermittently, and more often against a cold
+   * serverless start.
+   *
+   * A person meets this too, and does the obvious thing: they tap Sign
+   * in, which is why the button is there. So does this, and only when
+   * nothing has happened on its own.
+   */
+  await page.waitForURL((u) => !u.pathname.includes("sign-in"), { timeout: 8000 }).catch(() => {});
+  if (page.url().includes("sign-in")) {
+    const button = page.getByRole("button", { name: /^sign in$/i }).first();
+    if (await button.count() && await button.isEnabled().catch(() => false)) {
+      await button.click().catch(() => {});
+    }
+  }
+  await page.waitForURL((u) => !u.pathname.includes("sign-in"), { timeout: 60000 }).catch(() => {});
   await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
   const signedIn = !page.url().includes("sign-in");
+
+  /*
+   * A failure here is usually not the application's.
+   *
+   * This test writes a pin_hash with the PIN_PEPPER from .env.local and
+   * then asks the deployed site to verify it. PIN_PEPPER is marked
+   * Sensitive on Vercel, so its real value cannot be read back and a
+   * local copy will not match what production hashes with - the digest
+   * is simply different, the site correctly rejects it, and the failure
+   * reads as though sign-in were broken.
+   *
+   * The two cases are distinguishable. If the server recorded a failed
+   * attempt, it saw the PIN and disagreed with the digest, which is the
+   * pepper. If it recorded nothing, the submission never arrived, and
+   * that is worth investigating.
+   */
+  if (!signedIn) {
+    const { data: recent } = await admin
+      .from("auth_pin_attempts")
+      .select("succeeded, attempted_at")
+      .gte("attempted_at", submittedAt)
+      .order("attempted_at", { ascending: false })
+      .limit(1);
+    const sawIt = (recent ?? []).length > 0 && recent[0].succeeded === false;
+    for (const line of sawIt ? [
+      "NOTE  the server received the PIN and rejected the digest, so the local",
+      "      PIN_PEPPER differs from production's. It is Sensitive on Vercel and",
+      "      cannot be read back, so this test cannot drive PIN sign-in against the",
+      "      deployed site. That is not evidence that sign-in is broken.",
+      "      Do not set a real user's PIN from local tooling: it would write a digest",
+      "      production cannot verify and lock that person out.",
+    ] : [
+      "NOTE  no sign-in attempt reached the server, so the form did not submit.",
+      "      That is worth investigating - it is not the PIN_PEPPER difference.",
+    ]) console.log("  " + line);
+  }
+
   ok("administrator can sign in", signedIn, page.url().replace(URL_BASE, ""));
 
   if (signedIn) {
