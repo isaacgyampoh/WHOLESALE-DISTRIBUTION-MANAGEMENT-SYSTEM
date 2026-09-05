@@ -35,6 +35,10 @@ export interface VanRow {
   stockUnits: number;
   stockValue: number;
   openLoad: string | null;
+  /** The round's id, so the list can link to where its actions live. */
+  openLoadId: string | null;
+  /** Dispatched rather than merely built: the van is actually out. */
+  isOnRound: boolean;
 }
 
 export async function listVans(): Promise<Result<VanRow[]>> {
@@ -54,7 +58,7 @@ export async function listVans(): Promise<Result<VanRow[]>> {
     supabase.from("van_stock_summary").select("van_id, qty_on_hand, stock_value"),
     supabase
       .from("van_loads")
-      .select("van_id, load_number, status")
+      .select("id, van_id, load_number, status")
       .in("status", ["loaded", "dispatched"]),
   ]);
 
@@ -84,8 +88,17 @@ export async function listVans(): Promise<Result<VanRow[]>> {
     stockBy.set(id, entry);
   }
 
-  const loadBy = new Map<string, string>();
-  for (const l of loads.data ?? []) loadBy.set(l.van_id as string, l.load_number as string);
+  // The round a van is on, and how to reach it. Everything done to a
+  // van mid-week - topping it up, taking stock back - happens on the
+  // round's own page, so the list has to be able to point there.
+  const loadBy = new Map<string, { id: string; number: string; status: string }>();
+  for (const l of loads.data ?? []) {
+    loadBy.set(l.van_id as string, {
+      id: l.id as string,
+      number: l.load_number as string,
+      status: (l.status as string) ?? "",
+    });
+  }
 
   return {
     ok: true,
@@ -108,7 +121,10 @@ export async function listVans(): Promise<Result<VanRow[]>> {
         stockLines: totals.lines,
         stockUnits: totals.units,
         stockValue: totals.value,
-        openLoad: loadBy.get(id) ?? null,
+        openLoad: loadBy.get(id)?.number ?? null,
+        openLoadId: loadBy.get(id)?.id ?? null,
+        /** Out on the road, as opposed to built but not yet dispatched. */
+        isOnRound: loadBy.get(id)?.status === "dispatched",
       };
     }),
   };

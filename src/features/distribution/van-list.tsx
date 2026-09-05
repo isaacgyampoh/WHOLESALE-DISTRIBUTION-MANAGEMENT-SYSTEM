@@ -74,7 +74,26 @@ export function VanList({
                     <Badge tone={v.isActive ? "positive" : "neutral"}>
                       {v.isActive ? "Active" : "Inactive"}
                     </Badge>
-                    {v.openLoad && <Badge tone="brand">On {v.openLoad}</Badge>}
+                    {/*
+                      A link, not a label.
+                      
+                      Everything done to a van mid-week - sending it more
+                      stock, taking some back - lives on its round's own
+                      page, and the person thinking "Kennedy needs more
+                      soap" starts here, at the van. Without this they
+                      have to know the round's number and find it in
+                      another list.
+                    */}
+                    {v.openLoad && v.openLoadId ? (
+                      <Link href={`/loads/${v.openLoadId}`}>
+                        <Badge tone="brand">
+                          On {v.openLoad}
+                          {v.isOnRound ? " · top up or take back" : ""}
+                        </Badge>
+                      </Link>
+                    ) : v.openLoad ? (
+                      <Badge tone="brand">On {v.openLoad}</Badge>
+                    ) : null}
                   </div>
                 </Td>
                 {canManage && (
@@ -106,7 +125,16 @@ export function VanList({
                 <Badge tone={v.isActive ? "positive" : "neutral"}>
                   {v.isActive ? "Active" : "Inactive"}
                 </Badge>
-                {v.openLoad && <Badge tone="brand">On {v.openLoad}</Badge>}
+                {v.openLoad && v.openLoadId ? (
+                  <Link href={`/loads/${v.openLoadId}`}>
+                    <Badge tone="brand">
+                      On {v.openLoad}
+                      {v.isOnRound ? " · top up" : ""}
+                    </Badge>
+                  </Link>
+                ) : v.openLoad ? (
+                  <Badge tone="brand">On {v.openLoad}</Badge>
+                ) : null}
               </div>
             </div>
             <p className="mt-1.5 text-xs text-[var(--text-secondary)]">
