@@ -112,6 +112,15 @@ export const NAV_SECTIONS: readonly NavSection[] = [
         label: "Sales", href: "/sales", permissions: ["sales.view"],
         icon: "Receipt", mobilePriority: 2,
       },
+      /*
+       * The shop counter, above the sales list on a phone because it is
+       * a thing you do rather than a thing you read. sales.create rather
+       * than sales.view: it is the till, not the ledger.
+       */
+      {
+        label: "Counter", href: "/sales/counter", permissions: ["sales.create"],
+        icon: "ShoppingCart", mobilePriority: 1,
+      },
       { label: "Invoices", href: "/invoices", permissions: ["documents.view"], icon: "FileText" },
       { label: "Credit", href: "/credit", permissions: ["credit.view"], icon: "CreditCard" },
       {

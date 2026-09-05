@@ -2,6 +2,7 @@ import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { parseAmount } from "@/lib/utils/format";
 import { type Result, failed } from "@/lib/query/result";
+import { getCapabilities } from "@/lib/db/capabilities";
 
 /**
  * Customers, sales, credit and collections.
@@ -470,5 +471,81 @@ export async function getCollectionsSummary(periodDays = 30): Promise<Result<Col
       cash: rows.filter((r) => r.method === "cash").reduce((s, r) => s + r.amount, 0),
       mobileMoney: rows.filter((r) => r.method === "mobile_money").reduce((s, r) => s + r.amount, 0),
     },
+  };
+}
+
+/**
+ * What the shop can sell over the counter, from one warehouse.
+ *
+ * The van till reads a cached snapshot of what a van is carrying,
+ * because a round happens where there is no signal. A counter sale
+ * happens at the counter, so this reads the shelf directly and does not
+ * pretend otherwise.
+ *
+ * Prices come from products_priced, which is the masked view: cost is
+ * null for anyone not entitled to it, and nobody serving a customer
+ * needs it.
+ */
+export interface CounterProduct {
+  id: string;
+  sku: string;
+  name: string;
+  unit: string;
+  unitsPerCase: number;
+  listPrice: number;
+  /** Null where nobody has set one. Pieces cannot be sold without it. */
+  piecePrice: number | null;
+  taxRate: number;
+  onHand: number;
+  onHandPieces: number;
+}
+
+export async function listCounterStock(warehouseId: string): Promise<Result<CounterProduct[]>> {
+  const supabase = await createSupabaseServerClient();
+  const capabilities = await getCapabilities();
+
+  const [{ data: products, error }, { data: levels }] = await Promise.all([
+    supabase
+      .from("products_priced")
+      .select(capabilities.loosePieces
+        ? "id, sku, name, unit_of_measure, units_per_case, list_price, piece_price, tax_rate"
+        : "id, sku, name, unit_of_measure, units_per_case, list_price, tax_rate")
+      .eq("is_active", true)
+      .order("name"),
+    supabase
+      .from("inventory")
+      .select(capabilities.loosePieces
+        ? "product_id, qty_available, qty_pieces"
+        : "product_id, qty_available")
+      .eq("warehouse_id", warehouseId),
+  ]);
+
+  if (error) return failed("commercial", error, "The shop stock could not be loaded.");
+
+  const rows = (levels ?? []) as unknown as {
+    product_id: string; qty_available: number | null; qty_pieces?: number | null;
+  }[];
+  const onHand = new Map(rows.map((r) => [r.product_id, Number(r.qty_available ?? 0)]));
+  const loose = new Map(rows.map((r) => [r.product_id, Number(r.qty_pieces ?? 0)]));
+
+  return {
+    ok: true,
+    // Only what is actually on the shelf. A counter list of everything
+    // the business has ever sold is a list nobody can serve from.
+    data: ((products ?? []) as unknown as Record<string, unknown>[])
+      .map((p) => ({
+        id: p.id as string,
+        sku: (p.sku as string) ?? "",
+        name: p.name as string,
+        unit: (p.unit_of_measure as string) ?? "unit",
+        unitsPerCase: Number(p.units_per_case ?? 1),
+        listPrice: parseAmount(p.list_price as string),
+        piecePrice: p.piece_price === null || p.piece_price === undefined
+          ? null : parseAmount(p.piece_price as string),
+        taxRate: parseAmount(p.tax_rate as string),
+        onHand: onHand.get(p.id as string) ?? 0,
+        onHandPieces: loose.get(p.id as string) ?? 0,
+      }))
+      .filter((p) => p.onHand > 0 || p.onHandPieces > 0),
   };
 }

@@ -5,7 +5,7 @@ const suites = [
 ];
 // Rebuilds its own database to simulate the hosted platform's grants, so
 // it runs last and is named separately.
-const hostedSims = ['test_identity.mjs', 'test_pin.mjs', 'test_admin_security.mjs', 'test_catalogue.mjs', 'test_sync.mjs', 'test_cost_security.mjs', 'test_expiry.mjs', 'test_payments.mjs', 'test_documents.mjs', 'test_transfers.mjs', 'test_notifications.mjs', 'test_supplier.mjs', 'test_submissions.mjs', 'test_crew.mjs', 'test_van_authority.mjs', 'test_mixed_units.mjs', 'test_van_top_ups.mjs', 'test_van_midweek_returns.mjs', 'test_receipts.mjs', 'test_field_workflow.mjs', 'test_production.mjs', 'test_grants.mjs', 'test_installer.mjs', 'test_upgrades.mjs'];
+const hostedSims = ['test_identity.mjs', 'test_pin.mjs', 'test_admin_security.mjs', 'test_catalogue.mjs', 'test_sync.mjs', 'test_cost_security.mjs', 'test_expiry.mjs', 'test_payments.mjs', 'test_documents.mjs', 'test_transfers.mjs', 'test_notifications.mjs', 'test_supplier.mjs', 'test_submissions.mjs', 'test_crew.mjs', 'test_van_authority.mjs', 'test_mixed_units.mjs', 'test_van_top_ups.mjs', 'test_van_midweek_returns.mjs', 'test_counter_sales.mjs', 'test_receipts.mjs', 'test_field_workflow.mjs', 'test_production.mjs', 'test_grants.mjs', 'test_installer.mjs', 'test_upgrades.mjs'];
 let failed = false;
 
 const run = f => {

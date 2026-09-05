@@ -238,10 +238,10 @@ report as (
           case when c.rls_tables = c.all_tables then 'OK' else 'FAIL' end, '' from counts c
   union all select 11, 'Generated columns', '14', c.generated_cols::text,
           case when c.generated_cols = 14 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 12, 'Indexes', '183', c.indexes::text,
-          case when c.indexes = 183 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 13, 'Constraints', '331', c.constraints::text,
-          case when c.constraints = 331 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 12, 'Indexes', '184', c.indexes::text,
+          case when c.indexes = 184 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 13, 'Constraints', '334', c.constraints::text,
+          case when c.constraints = 334 then 'OK' else 'CHECK' end, '' from counts c
   union all select 14, 'Security functions present', '8', s.n::text,
           case when s.n = 8 then 'OK' else 'FAIL' end, '' from security_fns s
   union all select 15, 'Business functions present', '7', b.n::text,

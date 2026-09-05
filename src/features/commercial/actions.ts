@@ -253,8 +253,15 @@ export async function setCustomerActiveAction(
  * offline path does when it drains.
  */
 export async function recordVanSaleAction(input: {
-  loadId: string;
-  customerId: string;
+  /** The round being sold from. Omitted for a sale over the counter. */
+  loadId?: string;
+  /**
+   * The warehouse a counter sale draws on. Exactly one of this and
+   * loadId is given: a sale comes off a round or off a shelf.
+   */
+  warehouseId?: string;
+  /** Null for a walk-in. Required for credit, which needs somebody to owe it. */
+  customerId?: string | null;
   saleType: "cash" | "credit";
   notes?: string | null;
   lines: {
@@ -299,8 +306,20 @@ export async function recordVanSaleAction(input: {
 }> {
   const actor = await requirePermission("sales.create");
 
-  if (!input.loadId) return { ok: false, message: "Choose the load being sold from." };
-  if (!input.customerId) return { ok: false, message: "Choose a customer." };
+  // A sale comes off a round or off a shelf, never both and never
+  // neither. The database says the same; this says it in a sentence.
+  const overTheCounter = !input.loadId;
+  if (input.loadId && input.warehouseId) {
+    return { ok: false, message: "A sale comes off a round or off a shelf, not both." };
+  }
+  if (overTheCounter && !input.warehouseId) {
+    return { ok: false, message: "Choose where the stock is coming from." };
+  }
+  // A walk-in has no name, and asking for one would stop the commonest
+  // sale in the shop. Credit is different: there is a limit to check.
+  if (input.saleType === "credit" && !input.customerId) {
+    return { ok: false, message: "A credit sale needs a customer." };
+  }
   if (!input.lines?.length) return { ok: false, message: "Add something to the sale." };
   if (input.saleType !== "cash" && input.saleType !== "credit") {
     return { ok: false, message: "Choose cash or credit." };
@@ -308,16 +327,30 @@ export async function recordVanSaleAction(input: {
 
   const admin = createSupabaseAdminClient();
 
-  const { data: load } = await admin
-    .from("van_loads")
-    .select("id, org_id, status, van_id, driver_id, load_number")
-    .eq("id", input.loadId)
-    .maybeSingle();
-  if (!load || load.org_id !== actor.organizationId) {
-    return { ok: false, message: "That load could not be found." };
-  }
-  if (load.status !== "dispatched" && load.status !== "loaded") {
-    return { ok: false, message: `${load.load_number} is ${load.status} and cannot take sales.` };
+  let load: Record<string, unknown> | null = null;
+  if (!overTheCounter) {
+    const { data } = await admin
+      .from("van_loads")
+      .select("id, org_id, status, van_id, driver_id, load_number")
+      .eq("id", input.loadId as string)
+      .maybeSingle();
+    load = data as Record<string, unknown> | null;
+    if (!load || load.org_id !== actor.organizationId) {
+      return { ok: false, message: "That load could not be found." };
+    }
+    if (load.status !== "dispatched" && load.status !== "loaded") {
+      return { ok: false, message: `${load.load_number} is ${load.status} and cannot take sales.` };
+    }
+  } else {
+    const { data: shop } = await admin
+      .from("warehouses").select("id, org_id, is_active")
+      .eq("id", input.warehouseId as string).maybeSingle();
+    if (!shop || shop.org_id !== actor.organizationId) {
+      return { ok: false, message: "That warehouse could not be found." };
+    }
+    if (!shop.is_active) {
+      return { ok: false, message: "That warehouse is not active." };
+    }
   }
 
   // The van has to be the caller's own.
@@ -348,7 +381,7 @@ export async function recordVanSaleAction(input: {
         message: "You are not crewed on a van. Ask the office to put you on one before selling.",
       };
     }
-    if (crewed.van_id !== load.van_id) {
+    if (crewed.van_id !== load!.van_id) {
       return {
         ok: false,
         message: "That load belongs to another van. You can only sell from the van you are on.",
@@ -356,13 +389,20 @@ export async function recordVanSaleAction(input: {
     }
   }
 
-  const { data: customer } = await admin
-    .from("customers").select("id, name, org_id, is_active")
-    .eq("id", input.customerId).maybeSingle();
-  if (!customer || customer.org_id !== actor.organizationId) {
-    return { ok: false, message: "That customer could not be found." };
+  // Only when there is one. A walk-in at the counter is nobody in
+  // particular, and the credit path has already insisted on a name.
+  type SaleCustomer = { id: string; name: string; org_id: string; is_active: boolean };
+  let customer: SaleCustomer | null = null;
+  if (input.customerId) {
+    const { data } = await admin
+      .from("customers").select("id, name, org_id, is_active")
+      .eq("id", input.customerId).maybeSingle();
+    customer = (data ?? null) as SaleCustomer | null;
+    if (!customer || customer.org_id !== actor.organizationId) {
+      return { ok: false, message: "That customer could not be found." };
+    }
+    if (!customer.is_active) return { ok: false, message: "That customer is no longer active." };
   }
-  if (!customer.is_active) return { ok: false, message: "That customer is no longer active." };
 
   // What the van is actually carrying decides what can be sold. Checked
   // here for a clear message; complete_van_sale() checks it again, and
@@ -383,12 +423,24 @@ export async function recordVanSaleAction(input: {
       return { ok: false, message: "Every line needs a quantity above zero." };
     }
 
-    const { data: held } = await admin
-      .from("van_inventory")
-      .select(capabilities.loosePieces
-        ? "qty_on_hand, qty_pieces, products(name)"
-        : "qty_on_hand, products(name)")
-      .eq("van_id", load.van_id).eq("product_id", line.product_id).maybeSingle();
+    // Whichever this sale draws on. complete_van_sale checks it again
+    // under a lock and that is the one that governs; this is here so the
+    // refusal names the product before anything is written.
+    const { data: held } = overTheCounter
+      ? await admin
+          .from("inventory")
+          .select(capabilities.loosePieces
+            ? "qty_on_hand:qty_available, qty_pieces, products(name)"
+            : "qty_on_hand:qty_available, products(name)")
+          .eq("warehouse_id", input.warehouseId as string)
+          .eq("product_id", line.product_id).maybeSingle()
+      : await admin
+          .from("van_inventory")
+          .select(capabilities.loosePieces
+            ? "qty_on_hand, qty_pieces, products(name)"
+            : "qty_on_hand, products(name)")
+          .eq("van_id", load!.van_id as string)
+          .eq("product_id", line.product_id).maybeSingle();
 
     const board = held as {
       qty_on_hand?: number; qty_pieces?: number; products?: { name?: string } | null;
@@ -429,15 +481,18 @@ export async function recordVanSaleAction(input: {
     .from("van_sales")
     .insert({
       org_id: actor.organizationId,
-      load_id: load.id,
-      van_id: load.van_id,
+      // One source. A counter sale has no round and no van; a round
+      // sale has no warehouse. The database enforces the same.
+      load_id: overTheCounter ? null : (load!.id as string),
+      van_id: overTheCounter ? null : (load!.van_id as string),
+      warehouse_id: overTheCounter ? (input.warehouseId as string) : null,
       // Two different people. The salesperson is whoever is recording
       // this; the driver comes from the load. Before the crew model
       // these were the same column, which put the driver's name on
       // every receipt whoever actually made the sale.
       salesperson_id: actor.id,
-      driver_id: load.driver_id,
-      customer_id: input.customerId,
+      driver_id: overTheCounter ? null : (load!.driver_id as string),
+      customer_id: input.customerId ?? null,
       sale_type: input.saleType,
       status: "draft",
       sold_at: new Date().toISOString(),
@@ -560,7 +615,7 @@ export async function recordVanSaleAction(input: {
     targetId: sale.id,
     targetLabel: finished?.sale_number ?? "",
     after: {
-      customer: customer.name,
+      customer: customer?.name ?? "Walk-in",
       sale_type: input.saleType,
       lines: input.lines.length,
       total: finished?.total,

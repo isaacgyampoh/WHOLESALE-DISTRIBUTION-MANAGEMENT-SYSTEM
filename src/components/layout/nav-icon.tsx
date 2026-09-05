@@ -2,7 +2,7 @@
 
 import {
   LayoutDashboard, Package, Tags, Warehouse, Boxes, ArrowLeftRight, Truck,
-  ClipboardList, Undo2, Scale, Store, Receipt, CreditCard, Banknote,
+  ClipboardList, Undo2, Scale, Store, Receipt, ShoppingCart, CreditCard, Banknote,
   BarChart3, Users, ShieldCheck, History, Settings, CalendarClock,
   FileText, FileOutput, Bell, Inbox, Building2, Circle, type LucideIcon,
 } from "lucide-react";
@@ -13,7 +13,7 @@ import {
  */
 const ICONS: Record<string, LucideIcon> = {
   LayoutDashboard, Package, Tags, Warehouse, Boxes, ArrowLeftRight, Truck,
-  ClipboardList, Undo2, Scale, Store, Receipt, CreditCard, Banknote,
+  ClipboardList, Undo2, Scale, Store, Receipt, ShoppingCart, CreditCard, Banknote,
   BarChart3, Users, ShieldCheck, History, Settings, CalendarClock,
   FileText, FileOutput, Bell, Inbox, Building2,
   // lucide has no dedicated van glyph; Truck reads correctly at this size.
