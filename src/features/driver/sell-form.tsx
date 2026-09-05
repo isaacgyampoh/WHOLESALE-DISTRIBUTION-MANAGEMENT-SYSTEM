@@ -595,7 +595,18 @@ export function SellForm({
       <div className="h-32" aria-hidden />
 
       {/* ---- the running total, always in reach -------------------- */}
-      <div className="fixed inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-20 border-t border-[var(--border-subtle)] bg-[var(--surface-raised)] px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] lg:bottom-0">
+      {/*
+        Pinned to the very bottom, with the navigation's height as inner
+        padding rather than as an offset.
+        
+        Offsetting it left a strip of the product list showing between
+        the bar and the navigation - fifteen pixels on the van till,
+        which is exactly the confusion the bar was moved to fix. This
+        way the background reaches the bottom of the screen whatever the
+        home-indicator inset turns out to be, and only the content sits
+        clear of the navigation.
+      */}
+      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-[var(--border-subtle)] bg-[var(--surface-raised)] px-4 pt-3 pb-[calc(0.75rem+3.5rem+env(safe-area-inset-bottom))] lg:pb-3">
         <div className="mx-auto max-w-2xl">
           <div className="flex items-baseline justify-between gap-3">
             <span className="text-sm text-[var(--text-secondary)]">

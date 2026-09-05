@@ -244,14 +244,14 @@ export function PosBar({
   const count = lines.length;
 
   return (
-    // Pinned to the screen, not to the flow. Sticky left it sitting in
-    // the middle of the list with products continuing behind and below
-    // it, which reads as the list ending there.
+    // Pinned to the very bottom, with the navigation's height as inner
+    // padding rather than as an offset.
     //
-    // The offset is the navigation bar's exact height - h-14 plus the
-    // home-indicator inset - because a round number left a strip of the
-    // page showing through between the two.
-    <div className="fixed inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-30 border-t border-[var(--border-strong)] bg-[var(--surface-raised)] px-5 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-[0_-8px_24px_-12px_rgb(0_0_0/0.25)] lg:bottom-0">
+    // Sticky left it floating mid-list; offsetting it left a strip of
+    // the list showing between the bar and the navigation. This way the
+    // background reaches the bottom of the screen whatever the
+    // home-indicator inset is, and only the content sits clear.
+    <div className="fixed inset-x-0 bottom-0 z-30 border-t border-[var(--border-strong)] bg-[var(--surface-raised)] px-5 pt-3 pb-[calc(0.75rem+3.5rem+env(safe-area-inset-bottom))] shadow-[0_-8px_24px_-12px_rgb(0_0_0/0.25)] lg:pb-3">
       <div className="mx-auto max-w-2xl">
       {open && count > 0 && (
         <ul className="mb-3 max-h-64 overflow-y-auto rounded-[var(--radius-panel)] border border-[var(--border-subtle)]">
