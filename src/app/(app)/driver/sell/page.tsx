@@ -18,11 +18,18 @@ export default async function DriverSellPage() {
 
   return (
     <>
-      <PageHeader
-        title="Sell from the van"
-        description="Works with or without a signal."
-        breadcrumbs={[{ label: "My round", href: "/driver" }, { label: "Sell" }]}
-      />
+      {/*
+        Hidden on a phone, which is the only place this screen is
+        actually used. It was two hundred pixels of title above a till
+        that could show one product.
+      */}
+      <div className="hidden sm:block">
+        <PageHeader
+          title="Sell from the van"
+          description="Works with or without a signal."
+          breadcrumbs={[{ label: "My round", href: "/driver" }, { label: "Sell" }]}
+        />
+      </div>
       <SellForm
         initial={round.ok ? round.data : null}
         canRecordMethods={capabilities.salePaymentMethods}

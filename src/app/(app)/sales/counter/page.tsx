@@ -79,12 +79,19 @@ export default async function CounterPage({
 
   return (
     <>
-      <PageHeader
-        title="Counter"
-        description={`Selling from ${depots.data.find((w) => w.id === chosen)?.name ?? "the shelf"}.`}
-        breadcrumbs={[{ label: "Commercial" }, { label: "Sales", href: "/sales" }, { label: "Counter" }]}
-      />
-      <div className="mt-6">
+      {/*
+        Hidden on a phone, where it was costing two hundred pixels of a
+        screen that has one job. The navigation already says which page
+        this is, and the till says which shelf it is selling from.
+      */}
+      <div className="hidden sm:block">
+        <PageHeader
+          title="Counter"
+          description={`Selling from ${depots.data.find((w) => w.id === chosen)?.name ?? "the shelf"}.`}
+          breadcrumbs={[{ label: "Commercial" }, { label: "Sales", href: "/sales" }, { label: "Counter" }]}
+        />
+      </div>
+      <div className="sm:mt-6">
         <CounterTill
           warehouses={depots.data.map((w) => ({ id: w.id, name: w.name }))}
           warehouseId={chosen}

@@ -16,13 +16,13 @@ import { Card, CardBody } from "@/components/ui/card";
 import { Alert, EmptyState } from "@/components/ui/states";
 import { Badge } from "@/components/ui/badge";
 import { formatMoney, formatQuantity } from "@/lib/utils/format";
-import { holdsPieces } from "@/lib/catalogue/quantity";
 import { MOMO_PROVIDERS } from "@/lib/commercial/momo";
+import { PosSearch, PosRow } from "@/features/commercial/pos";
 import { productImageUrl } from "@/lib/catalogue/image";
 import type { OfflineSnapshot } from "@/lib/offline/queue";
 import type { RoundBlocker } from "@/features/driver/queries";
 import {
-  Minus, Plus, PackageX, Search, Check, Banknote, CreditCard, ShoppingCart,
+  PackageX, Check, Banknote, CreditCard, ShoppingCart,
   Smartphone, Split,
 } from "lucide-react";
 
@@ -500,198 +500,48 @@ export function SellForm({
 
       {/* ---- what is on the van ----------------------------------- */}
       <section>
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <h2 className="text-[0.6875rem] font-medium tracking-wide text-[var(--text-muted)] uppercase">
-            On my van
-          </h2>
-          <span className="numeric text-xs text-[var(--text-muted)]">
-            {formatQuantity(stock.length)} products
-          </span>
-        </div>
+        {/*
+          The goods, and as many of them as the screen will hold.
+          
+          Each product used to be a card with a full-size stepper on it,
+          about a hundred and eighty pixels tall, so a phone showed one
+          and the salesperson scrolled past everything they wanted. A row
+          is sixty until it is in the sale; then it opens.
+        */}
+        <PosSearch
+          value={query} onChange={setQuery}
+          count={`${formatQuantity(stock.length)} products on the van`}
+          placeholder="Find a product"
+        />
 
-        <div className="relative mb-3">
-          <Search
-            className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-[var(--text-muted)]"
-            aria-hidden
-          />
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Find a product"
-            aria-label="Find a product on the van"
-            className="h-14 pl-9 text-base"
-          />
-        </div>
-
-        <ul className="space-y-2">
-          {visible.length === 0 ? (
-            <li className="rounded-[var(--radius-panel)] border border-[var(--border-subtle)] px-4 py-6 text-center text-sm text-[var(--text-secondary)]">
-              Nothing on the van matches that.
-            </li>
-          ) : (
-            visible.map((s) => {
-              const qty = quantities[s.product_id] ?? 0;
-              const pieceQty = pieceQuantities[s.product_id] ?? 0;
-              const price = priceBy.get(s.product_id)?.unit_price ?? 0;
-              const piecePrice = priceBy.get(s.product_id)?.piece_price ?? 0;
-              const soldOut = s.qty_on_hand <= 0;
-              // A product with a parent unit can hold singles, whether or
-              // not anyone has recorded how many come out of a box. Pack
-              // size governs opening one, which happens at the depot.
-              const splittable = holdsPieces(s.unit);
-              const noLoose = s.qty_pieces <= 0;
-              // Nobody has priced a single of this product, so there is
-              // no honest figure to charge for one. The row says so
-              // instead of offering a control that could only ever sell
-              // at the wrong price.
-              const noPiecePrice = splittable && piecePrice <= 0;
-              const lineTotal = price * qty + piecePrice * pieceQty;
-              return (
-                <li
-                  key={s.product_id}
-                  className={
-                    "rounded-[var(--radius-panel)] border p-3 " +
-                    (qty > 0 || pieceQty > 0
-                      ? "border-brand-600 bg-brand-50/60 dark:bg-brand-950/40"
-                      : "border-[var(--border-subtle)] bg-[var(--surface-raised)]")
-                  }
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    {/* A picture where there is one. Half a wholesale
-                        catalogue is "500ml", "1L", "Crate of 24" of
-                        things that read alike and look nothing alike on
-                        a shelf, and the wrong line picked in a hurry is
-                        an argument at the next delivery. */}
-                    {imageFor(s.product_id) && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={imageFor(s.product_id) as string}
-                        alt=""
-                        loading="lazy"
-                        className="size-12 shrink-0 rounded-[var(--radius-panel)] border border-[var(--border-subtle)] object-cover"
-                      />
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-[var(--text-primary)]">
-                        {s.name}
-                      </p>
-                      <p className="numeric mt-0.5 text-xs text-[var(--text-secondary)]">
-                        {formatMoney(price)} each · {formatQuantity(s.qty_on_hand)} left
-                      </p>
-                      {splittable && (
-                        <p className="numeric mt-0.5 text-xs text-[var(--text-secondary)]">
-                          {noPiecePrice
-                            ? "No price set for a single - ask the office"
-                            : `${formatMoney(piecePrice)} a piece`}
-                          {" · "}{formatQuantity(s.qty_pieces)} loose
-                        </p>
-                      )}
-                    </div>
-                    {lineTotal > 0 && (
-                      <span className="numeric shrink-0 text-sm font-semibold text-[var(--text-primary)]">
-                        {formatMoney(lineTotal)}
-                      </span>
-                    )}
-                  </div>
-
-                  {/*
-                    One stepper for whole units, and a second for loose
-                    pieces where the van is carrying any. Two rows rather
-                    than a unit toggle: at a counter, with one hand on
-                    the goods, a control that silently changes what the
-                    next tap means is the one that gets pressed wrong.
-                    Both are visible, both say what they are.
-                  */}
-                  {splittable && (
-                    <p className="mt-3 flex items-baseline justify-between text-xs font-medium text-[var(--text-secondary)]">
-                      <span className="uppercase tracking-wide">
-                        {s.unit}{qty === 1 ? "" : "s"}
-                      </span>
-                      <span className="numeric">{formatMoney(price)} each</span>
-                    </p>
-                  )}
-                  <div className={`flex items-center gap-2 ${splittable ? "mt-1" : "mt-3"}`}>
-                    <button
-                      type="button"
-                      aria-label={`One fewer ${s.unit} of ${s.name}`}
-                      onClick={() => setQty(s.product_id, qty - 1, s.qty_on_hand)}
-                      disabled={qty === 0}
-                      className="grid size-14 shrink-0 place-items-center rounded-[var(--radius-panel)] border border-[var(--border-strong)] text-[var(--text-primary)] disabled:opacity-40"
-                    >
-                      <Minus className="size-5" aria-hidden />
-                    </button>
-                    <Input
-                      aria-label={splittable ? `Whole ${s.unit}s of ${s.name}` : `Quantity of ${s.name}`}
-                      inputMode="numeric"
-                      value={qty === 0 ? "" : String(qty)}
-                      placeholder="0"
-                      onChange={(e) =>
-                        setQty(s.product_id, Number(e.target.value.replace(/\D/g, "") || 0), s.qty_on_hand)
-                      }
-                      disabled={soldOut}
-                      className="numeric h-14 flex-1 text-center text-lg"
-                    />
-                    <button
-                      type="button"
-                      aria-label={`One more ${s.unit} of ${s.name}`}
-                      onClick={() => setQty(s.product_id, qty + 1, s.qty_on_hand)}
-                      disabled={soldOut || qty >= s.qty_on_hand}
-                      className="grid size-14 shrink-0 place-items-center rounded-[var(--radius-panel)] border border-[var(--border-strong)] text-[var(--text-primary)] disabled:opacity-40"
-                    >
-                      <Plus className="size-5" aria-hidden />
-                    </button>
-                  </div>
-
-                  {splittable && !noPiecePrice && (
-                    <>
-                    <p className="mt-3 flex items-baseline justify-between text-xs font-medium text-[var(--text-secondary)]">
-                      <span className="uppercase tracking-wide">
-                        Piece{pieceQty === 1 ? "" : "s"}
-                      </span>
-                      <span className="numeric">{formatMoney(piecePrice)} each</span>
-                    </p>
-                    <div className="mt-1 flex items-center gap-2">
-                      <button
-                        type="button"
-                        aria-label={`One fewer loose piece of ${s.name}`}
-                        onClick={() => setPieceQty(s.product_id, pieceQty - 1, s.qty_pieces)}
-                        disabled={pieceQty === 0}
-                        className="grid size-14 shrink-0 place-items-center rounded-[var(--radius-panel)] border border-[var(--border-strong)] text-[var(--text-primary)] disabled:opacity-40"
-                      >
-                        <Minus className="size-5" aria-hidden />
-                      </button>
-                      <Input
-                        aria-label={`Loose pieces of ${s.name}`}
-                        inputMode="numeric"
-                        value={pieceQty === 0 ? "" : String(pieceQty)}
-                        placeholder={noLoose ? "none loose" : "pieces"}
-                        onChange={(e) =>
-                          setPieceQty(
-                            s.product_id,
-                            Number(e.target.value.replace(/\D/g, "") || 0),
-                            s.qty_pieces,
-                          )
-                        }
-                        disabled={noLoose}
-                        className="numeric h-14 flex-1 text-center text-lg"
-                      />
-                      <button
-                        type="button"
-                        aria-label={`One more loose piece of ${s.name}`}
-                        onClick={() => setPieceQty(s.product_id, pieceQty + 1, s.qty_pieces)}
-                        disabled={noLoose || pieceQty >= s.qty_pieces}
-                        className="grid size-14 shrink-0 place-items-center rounded-[var(--radius-panel)] border border-[var(--border-strong)] text-[var(--text-primary)] disabled:opacity-40"
-                      >
-                        <Plus className="size-5" aria-hidden />
-                      </button>
-                    </div>
-                    </>
-                  )}
-                </li>
-              );
-            })
-          )}
-        </ul>
+        {visible.length === 0 ? (
+          <p className="px-4 py-10 text-center text-sm text-[var(--text-secondary)]">
+            Nothing on the van matches that.
+          </p>
+        ) : (
+          <ul className="overflow-hidden rounded-[var(--radius-panel)] border border-[var(--border-subtle)]">
+            {visible.map((s) => (
+              <PosRow
+                key={s.product_id}
+                item={{
+                  id: s.product_id,
+                  name: s.name,
+                  sku: s.sku,
+                  unit: s.unit ?? "unit",
+                  unitPrice: priceBy.get(s.product_id)?.unit_price ?? 0,
+                  piecePrice: priceBy.get(s.product_id)?.piece_price ?? 0,
+                  onHand: s.qty_on_hand,
+                  onHandPieces: s.qty_pieces ?? 0,
+                  imageUrl: imageFor(s.product_id),
+                }}
+                units={quantities[s.product_id] ?? 0}
+                pieces={pieceQuantities[s.product_id] ?? 0}
+                onUnits={(n) => setQty(s.product_id, n, s.qty_on_hand)}
+                onPieces={(n) => setPieceQty(s.product_id, n, s.qty_pieces ?? 0)}
+              />
+            ))}
+          </ul>
+        )}
       </section>
 
       {lines.length > 0 && (
@@ -708,6 +558,14 @@ export function SellForm({
           />
         </section>
       )}
+
+      {/*
+        Room for the bar below.
+        
+        It is fixed, so without this it sat on top of the last product
+        and the list looked like it ended there.
+      */}
+      <div className="h-32" aria-hidden />
 
       {/* ---- the running total, always in reach -------------------- */}
       <div className="fixed inset-x-0 bottom-16 z-20 border-t border-[var(--border-subtle)] bg-[var(--surface-raised)] px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] lg:bottom-0">
