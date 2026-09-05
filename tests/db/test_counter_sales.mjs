@@ -307,6 +307,81 @@ head("the van path is exactly as it was");
      (byStranger.error ?? "").slice(0, 48));
 }
 
+head("the counter takes mobile money");
+{
+  const p = await product("Momo Goods", "carton", 24, 100, 12);
+  await stock(p, 10, 0);
+
+  // A completed counter sale, paid on a phone.
+  const sale = (await c.query(
+    `insert into van_sales (org_id, warehouse_id, salesperson_id, customer_id,
+                            sale_number, sale_type, status, subtotal, tax_total, total)
+     values ($1,$2,$3,null,'SC-MOMO','cash','draft',200,0,200) returning id`,
+    [org, warehouse, seller])).rows[0].id;
+  await c.query(
+    `insert into van_sale_items (org_id, sale_id, product_id, quantity, pieces,
+                                 unit_price, piece_price)
+     values ($1,$2,$3,2,0,100,12)`, [org, sale, p]);
+
+  const paid = await c.query(
+    `select public.record_sale_payments($1,$2::jsonb)`,
+    [sale, JSON.stringify([
+      { method: "mobile_money", amount: 200, provider: "mtn", reference: "0123456789" },
+    ])]);
+  ok("a mobile money payment is recorded", paid.rowCount === 1);
+
+  await c.query(`update van_sales set status='completed' where id=$1`, [sale]);
+
+  const row = (await c.query(
+    `select method, amount, provider, reference from van_sale_payments where sale_id=$1`,
+    [sale])).rows[0];
+  ok("as mobile money, at the full amount",
+     row?.method === "mobile_money" && Number(row?.amount) === 200,
+     `(${row?.method} ${row?.amount})`);
+  ok("carrying the network and the reference",
+     row?.provider === "mtn" && row?.reference === "0123456789",
+     `(${row?.provider} / ${row?.reference})`);
+
+  // The reconciliation has to see it, or shop takings never match the
+  // statement. The view left-joins vans, so a counter sale belongs.
+  const recon = (await c.query(
+    `select provider, payment_count, total_amount, van_id
+       from momo_reconciliation where provider='mtn' and van_id is null`)).rows[0];
+  // The view counts completed sales only - a draft has taken no money -
+  // and left-joins vans, so a counter sale belongs in it.
+  ok("and it reaches the mobile money reconciliation", recon !== undefined);
+  ok("counted against no van, because there was none",
+     recon?.van_id === null && Number(recon?.total_amount) >= 200,
+     `(${recon?.total_amount})`);
+
+  // Part cash, part phone: the split a counter actually takes.
+  const split = (await c.query(
+    `insert into van_sales (org_id, warehouse_id, salesperson_id, customer_id,
+                            sale_number, sale_type, status, subtotal, tax_total, total)
+     values ($1,$2,$3,null,'SC-SPLIT','cash','draft',100,0,100) returning id`,
+    [org, warehouse, seller])).rows[0].id;
+  await c.query(
+    `insert into van_sale_items (org_id, sale_id, product_id, quantity, pieces,
+                                 unit_price, piece_price)
+     values ($1,$2,$3,1,0,100,12)`, [org, split, p]);
+  await c.query(
+    `select public.record_sale_payments($1,$2::jsonb)`,
+    [split, JSON.stringify([
+      { method: "cash", amount: 40 },
+      { method: "mobile_money", amount: 60, provider: "telecel", reference: "TEL-9" },
+    ])]);
+
+  await c.query(`update van_sales set status='completed' where id=$1`, [split]);
+
+  const both = (await c.query(
+    `select method, amount from van_sale_payments where sale_id=$1 order by method`,
+    [split])).rows;
+  ok("a split is two payments against one sale", both.length === 2);
+  ok("adding up to the sale",
+     both.reduce((t, r) => t + Number(r.amount), 0) === 100,
+     `(${both.map((r) => r.amount).join(" + ")})`);
+}
+
 head("what each role can see in the catalogue");
 {
   const p = await product("Shelf Only", "carton", 24, 100, 12);

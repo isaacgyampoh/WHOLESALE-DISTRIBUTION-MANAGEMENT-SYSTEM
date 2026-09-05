@@ -11,6 +11,7 @@ import { Alert } from "@/components/ui/states";
 import { Search, Check, Minus, Plus, Receipt } from "lucide-react";
 import { formatMoney, formatQuantity } from "@/lib/utils/format";
 import { formatHolding, holdsPieces } from "@/lib/catalogue/quantity";
+import { MOMO_PROVIDERS } from "@/lib/commercial/momo";
 
 export interface CounterCustomer { id: string; name: string; creditAvailable: number }
 
@@ -39,7 +40,12 @@ export function CounterTill({
   const [units, setUnits] = useState<Record<string, number>>({});
   const [pieces, setPieces] = useState<Record<string, number>>({});
   const [customerId, setCustomerId] = useState("");
-  const [saleType, setSaleType] = useState<"cash" | "credit">("cash");
+  // How they are paying, which is a different question from whether
+  // this is a credit sale. Cash, mobile money, or some of each.
+  const [tender, setTender] = useState<"cash" | "momo" | "split" | "credit">("cash");
+  const [cashPart, setCashPart] = useState("");
+  const [momoProvider, setMomoProvider] = useState("");
+  const [momoRef, setMomoRef] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<{ saleNumber: string; total: number; saleId: string } | null>(null);
   const [pending, start] = useTransition();
@@ -65,11 +71,28 @@ export function CounterTill({
 
   const clamp = (n: number, max: number) => Math.max(0, Math.min(n, max));
 
+  const saleType: "cash" | "credit" = tender === "credit" ? "credit" : "cash";
+  const takesMomo = tender === "momo" || tender === "split";
+  const cashGiven = Number(cashPart || 0);
+
   const submit = () => {
     setError(null);
     if (!lines.length) { setError("Add something to the sale."); return; }
     if (saleType === "credit" && !customerId) {
       setError("A credit sale needs a customer. Choose one, or take cash.");
+      return;
+    }
+    // A reference nobody can match against a statement is not a record
+    // of anything, and the network is half of what makes it matchable:
+    // the three of them number their transactions independently.
+    if (takesMomo && !momoProvider) {
+      setError("Which network was the mobile money on?");
+      return;
+    }
+    if (tender === "split" && !(cashGiven > 0 && cashGiven < total)) {
+      setError(
+        `Enter how much of the ${formatMoney(total)} came in as cash - ` +
+        `the rest is taken as mobile money.`);
       return;
     }
     if (saleType === "credit" && customer && total > customer.creditAvailable) {
@@ -92,7 +115,12 @@ export function CounterTill({
           piece_price: l.product.piecePrice ?? 0,
           tax_rate: l.product.taxRate,
         })),
-        payment: { kind: saleType === "credit" ? "credit" : "cash" },
+        payment: {
+          kind: tender,
+          cashPart: tender === "split" ? cashGiven : undefined,
+          provider: takesMomo ? momoProvider : null,
+          reference: takesMomo ? (momoRef.trim() || null) : null,
+        },
       });
 
       if (!outcome.ok) { setError(outcome.message ?? "The sale could not be recorded."); return; }
@@ -101,7 +129,8 @@ export function CounterTill({
         total: outcome.total ?? total,
         saleId: outcome.saleId ?? "",
       });
-      setUnits({}); setPieces({}); setCustomerId(""); setSaleType("cash"); setQuery("");
+      setUnits({}); setPieces({}); setCustomerId(""); setQuery("");
+      setTender("cash"); setCashPart(""); setMomoProvider(""); setMomoRef("");
       router.refresh();
     });
   };
@@ -278,17 +307,71 @@ export function CounterTill({
                 </Select>
               </Field>
               <Field label="Paying" htmlFor="counterType">
-                <Select id="counterType" value={saleType}
-                        onChange={(e) => setSaleType(e.target.value as "cash" | "credit")}>
-                  <option value="cash">Cash now</option>
+                <Select id="counterType" value={tender}
+                        onChange={(e) => setTender(e.target.value as typeof tender)}>
+                  <option value="cash">Cash</option>
+                  <option value="momo">Mobile money</option>
+                  <option value="split">Part cash, part mobile money</option>
                   {canSellOnCredit && <option value="credit">On credit</option>}
                 </Select>
               </Field>
             </div>
 
+            {takesMomo && (
+              <div className="space-y-2">
+                {/*
+                  Which network. Buttons rather than a dropdown: this is
+                  tapped standing at a counter, and there are only ever a
+                  handful. The same three the van till offers, from the
+                  same list.
+                */}
+                <div className="grid grid-cols-3 gap-2">
+                  {MOMO_PROVIDERS.map((p) => (
+                    <button
+                      key={p.code}
+                      type="button"
+                      onClick={() => setMomoProvider(p.code === momoProvider ? "" : p.code)}
+                      aria-pressed={momoProvider === p.code}
+                      className={`h-14 rounded-[var(--radius-panel)] border px-2 text-sm font-medium ${
+                        momoProvider === p.code
+                          ? "border-brand-700 bg-brand-50 text-brand-700 dark:bg-brand-950 dark:text-brand-300"
+                          : "border-[var(--border-strong)] text-[var(--text-secondary)]"
+                      }`}
+                    >
+                      {p.short}
+                    </button>
+                  ))}
+                </div>
+
+                {tender === "split" && (
+                  <Field label="Of that, taken in cash" htmlFor="counterCash"
+                         hint={`The rest of ${formatMoney(total)} is the mobile money.`}>
+                    <Input
+                      id="counterCash" inputMode="decimal" value={cashPart}
+                      onChange={(e) => setCashPart(e.target.value.replace(/[^\d.]/g, ""))}
+                      placeholder="0.00" className="numeric h-14 text-lg"
+                    />
+                  </Field>
+                )}
+
+                <Field label="Transaction reference" htmlFor="counterRef"
+                       hint="Optional, but it is what matches this against the statement.">
+                  <Input
+                    id="counterRef" value={momoRef} autoComplete="off"
+                    onChange={(e) => setMomoRef(e.target.value)}
+                    placeholder="e.g. 0123456789"
+                  />
+                </Field>
+              </div>
+            )}
+
             <Button size="touch" className="w-full" onClick={submit}
                     loading={pending} disabled={lines.length === 0}>
-              {pending ? "Recording…" : `Take ${formatMoney(total)}`}
+              {pending
+                ? "Recording…"
+                : tender === "credit"
+                  ? `Put ${formatMoney(total)} on account`
+                  : `Take ${formatMoney(total)}`}
             </Button>
           </CardBody>
         </Card>

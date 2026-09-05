@@ -17,6 +17,7 @@ import { Alert, EmptyState } from "@/components/ui/states";
 import { Badge } from "@/components/ui/badge";
 import { formatMoney, formatQuantity } from "@/lib/utils/format";
 import { holdsPieces } from "@/lib/catalogue/quantity";
+import { MOMO_PROVIDERS } from "@/lib/commercial/momo";
 import { productImageUrl } from "@/lib/catalogue/image";
 import type { OfflineSnapshot } from "@/lib/offline/queue";
 import type { RoundBlocker } from "@/features/driver/queries";
@@ -41,19 +42,6 @@ import {
  * caches does not contain one.
  */
 
-/**
- * The mobile money networks, for the till.
- *
- * Held here rather than read from the database because the till has to
- * work with no signal, and this list changes about once a decade. The
- * database has the same list and refuses anything not on it, so the two
- * cannot silently disagree.
- */
-const MOMO_PROVIDERS = [
-  { code: "mtn", short: "MTN" },
-  { code: "telecel", short: "Telecel" },
-  { code: "airteltigo", short: "AirtelTigo" },
-] as const;
 
 type Stage = "cart" | "payment" | "done";
 type Tender = "cash" | "momo" | "split" | "credit";
