@@ -14,7 +14,6 @@ import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/field";
 import { Card, CardBody } from "@/components/ui/card";
 import { Alert, EmptyState } from "@/components/ui/states";
-import { Badge } from "@/components/ui/badge";
 import { formatMoney, formatQuantity } from "@/lib/utils/format";
 import { MOMO_PROVIDERS } from "@/lib/commercial/momo";
 import { PosSearch, PosRow } from "@/features/commercial/pos";
@@ -111,6 +110,7 @@ export function SellForm({
   const [momoProvider, setMomoProvider] = useState("");
   // Null until they have chosen how the customer is paying.
   const [tender, setTender] = useState<Exclude<Tender, "credit"> | null>(null);
+  const [pickingCustomer, setPickingCustomer] = useState(false);
   const [creatingCustomer, startCreate] = useTransition();
 
   const stock = useMemo(() => snapshot?.stock ?? [], [snapshot]);
@@ -477,24 +477,51 @@ export function SellForm({
       )}
 
       {/* ---- who is buying --------------------------------------- */}
+      {/*
+        One line until it is needed.
+        
+        The picker is a search box and a button, and it sat above the
+        goods taking a fifth of the screen for a choice made once per
+        sale. Collapsed it is a row; tapping it opens the picker, and
+        once somebody is chosen it goes back to a row showing what they
+        owe and what credit is left.
+      */}
       <section>
-        <h2 className="mb-2 text-[0.6875rem] font-medium tracking-wide text-[var(--text-muted)] uppercase">
-          Customer
-        </h2>
-        <CustomerPicker
-          customers={customers}
-          selectedId={customerId}
-          onSelect={(id) => { setCustomerId(id); setError(null); }}
-          onCreate={addCustomer}
-          creating={creatingCustomer}
-        />
-        {customer && (
-          <div className="mt-2 flex flex-wrap gap-2">
-            <Badge tone={customer.balance > 0 ? "caution" : "positive"}>
-              Owes {formatMoney(customer.balance)}
-            </Badge>
-            <Badge tone="info">{formatMoney(customer.credit_available)} credit left</Badge>
-          </div>
+        {pickingCustomer || !customer ? (
+          <>
+            <h2 className="mb-2 text-[0.6875rem] font-medium tracking-wide text-[var(--text-muted)] uppercase">
+              Customer
+            </h2>
+            <CustomerPicker
+              customers={customers}
+              selectedId={customerId}
+              onSelect={(id) => {
+                setCustomerId(id);
+                setError(null);
+                setPickingCustomer(false);
+              }}
+              onCreate={addCustomer}
+              creating={creatingCustomer}
+            />
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setPickingCustomer(true)}
+            className="flex w-full items-center gap-3 rounded-[var(--radius-panel)] border border-[var(--border-subtle)] bg-[var(--surface-raised)] px-3 py-2.5 text-left"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium text-[var(--text-primary)]">
+                {customer.name}
+              </span>
+              <span className="numeric block text-xs text-[var(--text-secondary)]">
+                Owes {formatMoney(customer.balance)} · {formatMoney(customer.credit_available)} credit left
+              </span>
+            </span>
+            <span className="shrink-0 text-xs font-medium text-brand-700 dark:text-brand-300">
+              Change
+            </span>
+          </button>
         )}
       </section>
 
@@ -568,7 +595,7 @@ export function SellForm({
       <div className="h-32" aria-hidden />
 
       {/* ---- the running total, always in reach -------------------- */}
-      <div className="fixed inset-x-0 bottom-16 z-20 border-t border-[var(--border-subtle)] bg-[var(--surface-raised)] px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] lg:bottom-0">
+      <div className="fixed inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-20 border-t border-[var(--border-subtle)] bg-[var(--surface-raised)] px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] lg:bottom-0">
         <div className="mx-auto max-w-2xl">
           <div className="flex items-baseline justify-between gap-3">
             <span className="text-sm text-[var(--text-secondary)]">
