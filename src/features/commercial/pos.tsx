@@ -244,7 +244,12 @@ export function PosBar({
   const count = lines.length;
 
   return (
-    <div className="sticky bottom-20 z-30 -mx-5 mt-4 border-t border-[var(--border-strong)] bg-[var(--surface-raised)] px-5 pt-3 pb-4 shadow-[0_-8px_24px_-12px_rgb(0_0_0/0.25)] lg:bottom-0">
+    // Pinned to the screen, not to the flow. Sticky left it sitting in
+    // the middle of the list with products continuing behind and below
+    // it, which reads as the list ending there. bottom-16 clears the
+    // mobile navigation bar; a wide screen has none.
+    <div className="fixed inset-x-0 bottom-16 z-30 border-t border-[var(--border-strong)] bg-[var(--surface-raised)] px-5 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-[0_-8px_24px_-12px_rgb(0_0_0/0.25)] lg:bottom-0">
+      <div className="mx-auto max-w-2xl">
       {open && count > 0 && (
         <ul className="mb-3 max-h-64 overflow-y-auto rounded-[var(--radius-panel)] border border-[var(--border-subtle)]">
           {lines.map((l) => (
@@ -297,8 +302,20 @@ export function PosBar({
           {pending ? "Working…" : action}
         </button>
       </div>
+      </div>
     </div>
   );
+}
+
+/**
+ * Room for the bar.
+ *
+ * PosBar is fixed, so without this the last product sits underneath it
+ * and the list looks like it stops early - which is what the old
+ * screens did.
+ */
+export function PosBarSpacer() {
+  return <div className="h-32" aria-hidden />;
 }
 
 /** Clears one line from the basket, from inside the basket. */

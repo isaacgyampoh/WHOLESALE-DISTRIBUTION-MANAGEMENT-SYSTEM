@@ -11,7 +11,7 @@ import { Alert } from "@/components/ui/states";
 import { Check, Receipt } from "lucide-react";
 import { formatMoney } from "@/lib/utils/format";
 import { Dialog } from "@/components/ui/dialog";
-import { PosSearch, PosRow, PosBar, PosRemove } from "./pos";
+import { PosSearch, PosRow, PosBar, PosBarSpacer, PosRemove } from "./pos";
 import { MOMO_PROVIDERS } from "@/lib/commercial/momo";
 
 export interface CounterCustomer { id: string; name: string; creditAvailable: number }
@@ -170,17 +170,21 @@ export function CounterTill({
     <div className="space-y-4">
       {error && <Alert tone="danger">{error}</Alert>}
 
+      {/* A once-a-day choice, sized like one. */}
       {warehouses.length > 1 && (
-        <Field label="Selling from" htmlFor="counterWarehouse">
-          <Select
-            id="counterWarehouse" value={warehouseId}
+        <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+          <span className="shrink-0">Selling from</span>
+          <select
+            aria-label="Selling from"
+            value={warehouseId}
             onChange={(e) => router.push(`/sales/counter?warehouse=${e.target.value}`)}
+            className="min-w-0 flex-1 rounded-[var(--radius-panel)] border border-[var(--border-subtle)] bg-transparent px-2 py-1 text-xs font-medium text-[var(--text-primary)]"
           >
             {warehouses.map((w) => (
               <option key={w.id} value={w.id}>{w.name}</option>
             ))}
-          </Select>
-        </Field>
+          </select>
+        </div>
       )}
 
       <Card className="p-0">
@@ -223,6 +227,8 @@ export function CounterTill({
         counter you build the sale first and settle it once, and the two
         were competing for the same screen.
       */}
+      <PosBarSpacer />
+
       <PosBar
         lines={lines.map((l) => ({
           id: l.product.id, name: l.product.name, unit: l.product.unit,
