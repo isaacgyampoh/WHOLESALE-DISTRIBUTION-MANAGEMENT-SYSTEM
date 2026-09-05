@@ -307,6 +307,45 @@ head("the van path is exactly as it was");
      (byStranger.error ?? "").slice(0, 48));
 }
 
+head("what each role can see in the catalogue");
+{
+  const p = await product("Shelf Only", "carton", 24, 100, 12);
+  await stock(p, 10, 0);
+
+  // A salesperson crewed on no van at all - the person at the counter.
+  const counterHand = await mkUser("Counter Only", "salesperson");
+  const seen = await asUserSteps(counterHand, [
+    [`select count(*)::int n from products_priced where id = $1`, [p]],
+  ]);
+  ok("a salesperson sees what is on the shelf", Number(seen.rows?.[0]?.n) === 1,
+     `(${seen.rows?.[0]?.n})`);
+
+  // A driver still sees only what their van carries, which is none of it.
+  const roundDriver = await mkUser("Shelf Driver", "driver");
+  const driverSees = await asUserSteps(roundDriver, [
+    [`select count(*)::int n from products_priced where id = $1`, [p]],
+  ]);
+  ok("a driver still sees only their van", Number(driverSees.rows?.[0]?.n) === 0,
+     `(${driverSees.rows?.[0]?.n})`);
+
+  // And cost stays masked for the person at the counter.
+  const cost = await asUserSteps(counterHand, [
+    [`select cost_price from products_priced where id = $1`, [p]],
+  ]);
+  ok("without seeing what it cost", cost.rows?.[0]?.cost_price === null,
+     JSON.stringify(cost.rows?.[0]?.cost_price));
+
+  // Another organization's shelf is still not theirs.
+  const otherOrg = (await c.query(
+    `insert into organizations (name, slug) values ('Far Shop','far-shop') returning id`)).rows[0].id;
+  const stranger = await mkUser("Far Seller", "salesperson", otherOrg);
+  const across = await asUserSteps(stranger, [
+    [`select count(*)::int n from products_priced where id = $1`, [p]],
+  ]);
+  ok("but not another organization's", Number(across.rows?.[0]?.n) === 0,
+     `(${across.rows?.[0]?.n})`);
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 await c.end();
 process.exit(fail ? 1 : 0);
