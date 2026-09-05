@@ -56,6 +56,8 @@ export interface DatabaseCapabilities {
   loosePieces: boolean;
   /** Migration 0064: a van already out can be sent more stock mid-week. */
   vanTopUps: boolean;
+  /** Migration 0065: stock can go back to a warehouse before Friday. */
+  vanMidweekReturns: boolean;
 }
 
 /**
@@ -69,7 +71,7 @@ const CAPABILITY_NAMES = [
   "maskedProductPricing", "batchesAndExpiry", "offlineSync", "salePaymentMethods",
   "documents", "warehouseTransfers", "notifications", "supplierDocuments",
   "supplierPortal", "supplierSubmissions", "vanCrew", "productImages",
-  "loosePieces", "vanTopUps",
+  "loosePieces", "vanTopUps", "vanMidweekReturns",
 ] as const satisfies readonly (keyof DatabaseCapabilities)[];
 
 const NONE_AVAILABLE: DatabaseCapabilities = Object.fromEntries(
@@ -91,7 +93,7 @@ async function probe(): Promise<DatabaseCapabilities> {
 
   const [priced, batches, sync, payments, documents, transfers, alerts,
          supplierDocs, portal, submissions, crew, images, pieces,
-         topUps] = await Promise.all([
+         topUps, sendBacks] = await Promise.all([
     admin.from("products_priced").select("id").limit(1),
     admin.from("products").select("track_expiry").limit(1),
     admin.from("sync_operations").select("id").limit(1),
@@ -106,6 +108,7 @@ async function probe(): Promise<DatabaseCapabilities> {
     admin.from("products").select("image_path").limit(1),
     admin.from("products_priced").select("piece_price").limit(1),
     admin.from("van_load_top_ups").select("id").limit(1),
+    admin.from("van_midweek_returns").select("id").limit(1),
   ]);
 
   const capabilities: DatabaseCapabilities = {
@@ -123,6 +126,7 @@ async function probe(): Promise<DatabaseCapabilities> {
     productImages: !images.error,
     loosePieces: !pieces.error,
     vanTopUps: !topUps.error,
+    vanMidweekReturns: !sendBacks.error,
   };
 
   const missing = Object.entries(capabilities)

@@ -682,6 +682,23 @@ export interface LoadTopUp {
   pieces: number;
 }
 
+/**
+ * Stock handed back to a warehouse during the round.
+ *
+ * Read from the movements it wrote, by its own reference - the ledger
+ * is the history, and a second copy of it could only ever disagree.
+ */
+export interface LoadStockReturn {
+  id: string;
+  createdAt: string;
+  byName: string | null;
+  warehouseName: string | null;
+  note: string | null;
+  lineCount: number;
+  units: number;
+  pieces: number;
+}
+
 export interface LoadDetail {
   id: string;
   loadNumber: string;
@@ -702,6 +719,11 @@ export interface LoadDetail {
    * ordinary case: most weeks a van goes out once.
    */
   topUps: LoadTopUp[];
+  /**
+   * Stock sent back mid-round, oldest first. Empty is the ordinary
+   * case: most weeks nothing comes back before Friday.
+   */
+  stockReturns: LoadStockReturn[];
 }
 
 /**
@@ -745,7 +767,7 @@ export async function getLoadDetail(loadId: string): Promise<Result<LoadDetail |
   const vanId = load.van_id as string;
 
   const [{ data: items }, { data: onVan }, { data: crew }, { data: sales },
-         { data: topUpRows }] = await Promise.all([
+         { data: topUpRows }, { data: returnRows }] = await Promise.all([
     supabase
       .from("van_load_items")
       .select(loadCapabilities.loosePieces
@@ -780,6 +802,16 @@ export async function getLoadDetail(loadId: string): Promise<Result<LoadDetail |
       ? supabase
           .from("van_load_top_ups")
           .select("id, created_at, note, profiles(full_name)")
+          .eq("load_id", loadId)
+          .order("created_at", { ascending: true })
+      : Promise.resolve({ data: [] as unknown[] }),
+
+    // Mid-round hand-backs. Absent before 0065, where a round simply had
+    // none - so an older database shows the page rather than an error.
+    loadCapabilities.vanMidweekReturns
+      ? supabase
+          .from("van_midweek_returns")
+          .select("id, created_at, note, warehouses(name), profiles(full_name)")
           .eq("load_id", loadId)
           .order("created_at", { ascending: true })
       : Promise.resolve({ data: [] as unknown[] }),
@@ -827,15 +859,26 @@ export async function getLoadDetail(loadId: string): Promise<Result<LoadDetail |
   // half arriving on the van, so nothing is counted twice.
   const topUpIds = ((topUpRows ?? []) as unknown as Record<string, unknown>[])
     .map((t) => t.id as string);
+  const returnIds = ((returnRows ?? []) as unknown as Record<string, unknown>[])
+    .map((t) => t.id as string);
 
   const contents = new Map<string, { lines: Set<string>; units: number; pieces: number }>();
-  if (topUpIds.length) {
+
+  /**
+   * What one delivery or hand-back contained.
+   *
+   * One query per kind rather than one per event, and only the half
+   * that names the direction being counted - the arriving half for a
+   * top-up, the leaving half for a return - so nothing is counted twice.
+   */
+  const readContents = async (kind: string, ids: string[], half: string) => {
+    if (!ids.length) return;
     const { data: moves } = await supabase
       .from("stock_movements")
       .select("reference_id, product_id, quantity, pieces")
-      .eq("reference_type", "van_top_up")
-      .eq("type", "transfer_in")
-      .in("reference_id", topUpIds);
+      .eq("reference_type", kind)
+      .eq("type", half)
+      .in("reference_id", ids);
 
     for (const row of (moves ?? []) as unknown as Record<string, unknown>[]) {
       const key = row.reference_id as string;
@@ -845,7 +888,12 @@ export async function getLoadDetail(loadId: string): Promise<Result<LoadDetail |
       entry.pieces += Number(row.pieces ?? 0);
       contents.set(key, entry);
     }
-  }
+  };
+
+  await Promise.all([
+    readContents("van_top_up", topUpIds, "transfer_in"),
+    readContents("van_midweek_return", returnIds, "transfer_out"),
+  ]);
 
   const topUps: LoadTopUp[] = ((topUpRows ?? []) as unknown as Record<string, unknown>[])
     .map((t) => {
@@ -854,6 +902,21 @@ export async function getLoadDetail(loadId: string): Promise<Result<LoadDetail |
         id: t.id as string,
         createdAt: t.created_at as string,
         byName: (t.profiles as { full_name?: string } | null)?.full_name ?? null,
+        note: (t.note as string | null) ?? null,
+        lineCount: held?.lines.size ?? 0,
+        units: held?.units ?? 0,
+        pieces: held?.pieces ?? 0,
+      };
+    });
+
+  const stockReturns: LoadStockReturn[] =
+    ((returnRows ?? []) as unknown as Record<string, unknown>[]).map((t) => {
+      const held = contents.get(t.id as string);
+      return {
+        id: t.id as string,
+        createdAt: t.created_at as string,
+        byName: (t.profiles as { full_name?: string } | null)?.full_name ?? null,
+        warehouseName: (t.warehouses as { name?: string } | null)?.name ?? null,
         note: (t.note as string | null) ?? null,
         lineCount: held?.lines.size ?? 0,
         units: held?.units ?? 0,
@@ -879,6 +942,7 @@ export async function getLoadDetail(loadId: string): Promise<Result<LoadDetail |
         .filter((n): n is string => Boolean(n)),
       lines,
       topUps,
+      stockReturns,
     },
   };
 }

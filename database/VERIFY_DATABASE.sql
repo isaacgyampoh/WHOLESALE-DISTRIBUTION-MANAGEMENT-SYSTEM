@@ -179,7 +179,9 @@ missing_tables as (
     'supplier_documents','supplier_portal_tokens','supplier_portal_attempts',
     'stock_returns','stock_return_items','receipt_tokens',
     -- 0064: mid-week deliveries to a van already out on its round.
-    'van_load_top_ups'
+    'van_load_top_ups',
+    -- 0065: stock handed back to a warehouse before the Friday return.
+    'van_midweek_returns'
   ]) as t
   where not exists (
     select 1 from information_schema.tables
@@ -205,8 +207,8 @@ missing_views as (
 ),
 report as (
   select  1 as ord, 'Tables' as check_name,
-          '46'::text as expected, c.tables::text as actual,
-          case when c.tables = 46 then 'OK' else 'CHECK' end as status,
+          '47'::text as expected, c.tables::text as actual,
+          case when c.tables = 47 then 'OK' else 'CHECK' end as status,
           ''::text as detail
   from counts c
   union all select  2, 'Expected tables all present', 'none missing',
@@ -225,21 +227,21 @@ report as (
           case when e.n = 20 then 'OK' else 'FAIL' end,
           (select names from enum_bad)
   from enum_match e
-  union all select  7, 'Functions', '86', c.functions::text,
-          case when c.functions = 86 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  7, 'Functions', '87', c.functions::text,
+          case when c.functions = 87 then 'OK' else 'CHECK' end, '' from counts c
   union all select  8, 'Triggers', '83', c.triggers::text,
           case when c.triggers = 83 then 'OK' else 'CHECK' end, '' from counts c
-  union all select  9, 'RLS policies', '91', c.policies::text,
-          case when c.policies = 91 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  9, 'RLS policies', '93', c.policies::text,
+          case when c.policies = 93 then 'OK' else 'CHECK' end, '' from counts c
   union all select 10, 'RLS enabled on every table',
           c.all_tables::text, c.rls_tables::text,
           case when c.rls_tables = c.all_tables then 'OK' else 'FAIL' end, '' from counts c
   union all select 11, 'Generated columns', '14', c.generated_cols::text,
           case when c.generated_cols = 14 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 12, 'Indexes', '180', c.indexes::text,
-          case when c.indexes = 180 then 'OK' else 'CHECK' end, '' from counts c
-  union all select 13, 'Constraints', '326', c.constraints::text,
-          case when c.constraints = 326 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 12, 'Indexes', '183', c.indexes::text,
+          case when c.indexes = 183 then 'OK' else 'CHECK' end, '' from counts c
+  union all select 13, 'Constraints', '331', c.constraints::text,
+          case when c.constraints = 331 then 'OK' else 'CHECK' end, '' from counts c
   union all select 14, 'Security functions present', '8', s.n::text,
           case when s.n = 8 then 'OK' else 'FAIL' end, '' from security_fns s
   union all select 15, 'Business functions present', '7', b.n::text,

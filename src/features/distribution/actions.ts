@@ -1321,3 +1321,96 @@ export async function topUpVanAction(input: {
 
   return { ok: true, lines: lines.length };
 }
+
+// ===================================================================
+// Handing stock back from a van, mid-week
+// ===================================================================
+//
+// The third way stock leaves a van. Loading and topping up send it out,
+// a sale takes it off, and the Friday return brings back what is left -
+// but until now there was no way to hand some of it back on Tuesday.
+//
+// The load manifest is not touched. A return is not an unsending: the
+// Tuesday top-up stays a Tuesday top-up, and this appears beside it as
+// its own transaction. The database function holds the rules, including
+// the lock that stops a sale and a hand-back spending the same units.
+
+export async function returnVanStockAction(input: {
+  loadId: string;
+  warehouseId: string;
+  note?: string;
+  lines: { productId: string; quantity?: number; pieces?: number }[];
+}): Promise<{ ok: boolean; message?: string; lines?: number }> {
+  // The same authority as sending stock out. Taking goods off a van is
+  // the depot's decision; a salesperson quietly handing back what they
+  // did not sell is how a round stops being answerable for anything.
+  const actor = await requirePermission("loads.dispatch");
+
+  if (!input.loadId) return { ok: false, message: "That load could not be found." };
+  if (!input.warehouseId) return { ok: false, message: "Choose where the stock is going." };
+
+  const lines = (input.lines ?? []).filter(
+    (l) => l.productId && ((l.quantity ?? 0) > 0 || (l.pieces ?? 0) > 0));
+  if (lines.length === 0) return { ok: false, message: "Nothing was selected to send back." };
+
+  for (const line of lines) {
+    const units = Number(line.quantity ?? 0);
+    const pieces = Number(line.pieces ?? 0);
+    if (!Number.isInteger(units) || units < 0 || !Number.isInteger(pieces) || pieces < 0) {
+      return { ok: false, message: "Quantities must be whole numbers, zero or more." };
+    }
+  }
+
+  const load = await owned(actor, "van_loads", input.loadId,
+    "id, load_number, org_id, van_id, status");
+  if (!load) return { ok: false, message: "That load could not be found." };
+
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase.rpc("return_van_stock_to_warehouse", {
+    p_load_id: input.loadId,
+    p_warehouse_id: input.warehouseId,
+    p_lines: lines.map((l) => ({
+      product_id: l.productId,
+      quantity: Number(l.quantity ?? 0),
+      pieces: Number(l.pieces ?? 0),
+    })),
+    p_note: input.note?.trim() || null,
+  });
+
+  if (error) {
+    console.error("[distribution] mid-week van return failed", error);
+    // The function names the product and what is actually on board, and
+    // says when a round is over. That sentence is more use at the depot
+    // than anything this layer could invent.
+    return { ok: false, message: error.message.replace(/^.*?:\s*/, "") };
+  }
+
+  const admin = createSupabaseAdminClient();
+  const [{ data: van }, { data: warehouse }] = await Promise.all([
+    admin.from("vans").select("code").eq("id", load.van_id as string).maybeSingle(),
+    admin.from("warehouses").select("name").eq("id", input.warehouseId).maybeSingle(),
+  ]);
+
+  await recordAudit(actor, {
+    action: "load.stock_returned",
+    targetType: "van_load",
+    targetId: input.loadId,
+    targetLabel: load.load_number as string,
+    after: {
+      van: (van?.code as string) ?? "",
+      warehouse: (warehouse?.name as string) ?? "",
+      lines: lines.length,
+      units: lines.reduce((s, l) => s + Number(l.quantity ?? 0), 0),
+      pieces: lines.reduce((s, l) => s + Number(l.pieces ?? 0), 0),
+      note: input.note?.trim() || null,
+    },
+  });
+
+  revalidatePath("/loads");
+  revalidatePath(`/loads/${input.loadId}`);
+  revalidatePath("/inventory");
+  revalidatePath("/vans");
+  revalidatePath("/driver");
+
+  return { ok: true, lines: lines.length };
+}

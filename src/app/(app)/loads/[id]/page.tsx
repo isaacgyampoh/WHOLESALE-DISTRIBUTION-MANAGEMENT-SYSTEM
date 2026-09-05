@@ -5,6 +5,8 @@ import { requireUser } from "@/lib/auth/session";
 import { can } from "@/types/permissions";
 import { getLoadDetail, listLoadableProducts } from "@/features/distribution/queries";
 import { TopUpVanButton } from "@/features/distribution/top-up-form";
+import { SendBackButton } from "@/features/distribution/send-back-form";
+import { listWarehouses } from "@/features/catalogue/queries";
 import { PageHeader } from "@/components/layout/page-header";
 import { Forbidden } from "@/components/layout/forbidden";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -70,8 +72,15 @@ export default async function LoadDetailPage({
   const roundIsOpen = load.status === "dispatched";
   const canTopUp = roundIsOpen && can(user.role, "loads.dispatch");
 
-  // Only fetched when there is a button to put it behind.
-  const pickable = canTopUp ? await listLoadableProducts() : null;
+  // Only fetched when there is a button to put them behind.
+  const [pickable, depots] = await Promise.all([
+    canTopUp ? listLoadableProducts() : Promise.resolve(null),
+    canTopUp ? listWarehouses() : Promise.resolve(null),
+  ]);
+
+  // Nothing on the van is nothing to send back, so the button is not
+  // offered at all in that case.
+  const anythingOnBoard = load.lines.some((l) => l.remaining > 0 || l.remainingPieces > 0);
 
   return (
     <>
@@ -85,6 +94,16 @@ export default async function LoadDetailPage({
         ]}
         actions={
           <div className="flex flex-wrap items-center gap-2">
+          {canTopUp && anythingOnBoard && depots?.ok && depots.data.length > 0 && (
+            <SendBackButton
+              loadId={load.id}
+              loadNumber={load.loadNumber}
+              vanCode={load.vanCode}
+              lines={load.lines}
+              warehouses={depots.data.map((w) => ({ id: w.id, name: w.name }))}
+              defaultWarehouseId={load.warehouseId}
+            />
+          )}
           {canTopUp && pickable?.ok && (
             <TopUpVanButton
               loadId={load.id}
@@ -118,6 +137,12 @@ export default async function LoadDetailPage({
             <Pair
               label="Top-ups"
               value={`${formatQuantity(load.topUps.length)} since dispatch`}
+            />
+          )}
+          {load.stockReturns.length > 0 && (
+            <Pair
+              label="Sent back"
+              value={`${formatQuantity(load.stockReturns.length)} before Friday`}
             />
           )}
           <Pair label="Date" value={formatDate(load.loadDate)} />
@@ -265,6 +290,61 @@ export default async function LoadDetailPage({
       )}
 
       {/*
+        Stock that went back to a warehouse before the Friday count.
+        
+        Kept apart from the top-up history above because they are
+        opposite events, and reading them in one table would make a busy
+        week harder to follow rather than easier. Both are read from the
+        movements they wrote.
+      */}
+      {load.stockReturns.length > 0 && (
+        <Card className="mt-6 p-0">
+          <CardHeader
+            title="Sent back during the round"
+            description={
+              `${formatQuantity(load.stockReturns.length)} ` +
+              `${load.stockReturns.length === 1 ? "hand-back" : "hand-backs"} to a warehouse ` +
+              `before the Friday return. Friday expects what is left, not what went out.`
+            }
+          />
+          <TableWrap>
+            <Table>
+              <thead>
+                <Tr>
+                  <Th>When</Th>
+                  <Th>Sent by</Th>
+                  <Th>To</Th>
+                  <Th numeric>Products</Th>
+                  <Th numeric>Units</Th>
+                  <Th numeric>Loose</Th>
+                  <Th>Why</Th>
+                </Tr>
+              </thead>
+              <tbody>
+                {load.stockReturns.map((r) => (
+                  <Tr key={r.id}>
+                    <Td>{formatDateTime(r.createdAt)}</Td>
+                    <Td>{r.byName ?? "-"}</Td>
+                    <Td>{r.warehouseName ?? "-"}</Td>
+                    <Td numeric>{formatQuantity(r.lineCount)}</Td>
+                    <Td numeric>{formatQuantity(r.units)}</Td>
+                    <Td numeric>
+                      {r.pieces > 0
+                        ? formatQuantity(r.pieces)
+                        : <span className="text-[var(--text-muted)]">-</span>}
+                    </Td>
+                    <Td className="text-[var(--text-secondary)]">
+                      {r.note ?? <span className="text-[var(--text-muted)]">-</span>}
+                    </Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </Table>
+          </TableWrap>
+        </Card>
+      )}
+
+      {/*
         A round with nothing sent to it yet, for somebody who came here
         looking for the button. Said once, quietly, and only while the
         van is actually out.
@@ -274,9 +354,12 @@ export default async function LoadDetailPage({
           <div className="flex items-start gap-3 px-5 py-4">
             <PackagePlus className="mt-0.5 size-4 shrink-0 text-[var(--text-muted)]" aria-hidden />
             <p className="text-sm text-[var(--text-secondary)]">
-              This van is out on its round. More stock can be sent to it at any
-              time until its return is approved - use <span className="font-medium
-              text-[var(--text-primary)]">Top up van</span> above.
+              This van is out on its round. Until its return is approved,
+              more stock can be sent to it with <span className="font-medium
+              text-[var(--text-primary)]">Top up van</span>, and anything it does
+              not need can go back to a warehouse with <span className="font-medium
+              text-[var(--text-primary)]">Send stock back</span>. Neither closes
+              the round.
             </p>
           </div>
         </Card>

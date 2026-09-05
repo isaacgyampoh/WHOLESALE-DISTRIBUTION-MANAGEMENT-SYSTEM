@@ -38,6 +38,8 @@ export type AuditAction =
   | "load.dispatched"
   // More stock sent to a van already out on its round, mid-week.
   | "load.topped_up"
+  // Stock handed back from a van to a warehouse before the Friday return.
+  | "load.stock_returned"
   | "load.cancelled"
   | "return.submitted"
   | "return.approved"
