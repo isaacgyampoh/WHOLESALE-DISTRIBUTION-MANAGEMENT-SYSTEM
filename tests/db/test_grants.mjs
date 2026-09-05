@@ -152,6 +152,64 @@ await pr.query('rollback');
 ok('is_trusted_context true for service_role', sr.t === true, `(trusted=${sr.t})`);
 await pr.end();
 
+/*
+ * Every column on a column-granted table is readable, unless it is cost.
+ *
+ * 0023 withdrew table-level SELECT on the tables carrying cost and
+ * granted the columns individually. A column added by a later migration
+ * inherits nothing, and the failure is silent in the worst way: a query
+ * naming only granted columns works, and the moment one names the new
+ * column the whole request is refused with "permission denied for table
+ * X" - naming the table, not the column, so the message points away
+ * from the cause.
+ *
+ * That is how van_load_items.qty_loaded_pieces went unnoticed from 0051
+ * until 0066, emptying the manifest on every van load page while the
+ * figures sat correct in the database.
+ */
+console.log('\n=== every non-cost column on a column-granted table is readable ===');
+{
+  // Withheld on purpose. Cost reaches people through product_cost() and
+  // van_load_value(); the attempt tables are not for reading at all.
+  const DELIBERATE = {
+    products: ['cost_price'],
+    van_load_items: ['unit_cost'],
+    purchase_order_items: ['unit_cost', 'piece_cost'],
+    auth_pin_attempts: null,          // the whole table
+    supplier_portal_attempts: null,   // the whole table
+  };
+
+  const tables = await c.query(`
+    select cl.relname
+      from pg_class cl join pg_namespace n on n.oid = cl.relnamespace
+     where n.nspname = 'public' and cl.relkind = 'r'
+       and not has_table_privilege('authenticated', cl.oid, 'SELECT')
+     order by cl.relname`);
+
+  for (const { relname } of tables.rows) {
+    if (!(relname in DELIBERATE)) {
+      ok(`${relname} is a known column-granted table`, false,
+         'it withholds table SELECT and nothing says why');
+      continue;
+    }
+    if (DELIBERATE[relname] === null) continue;   // withheld whole
+
+    const ungranted = await c.query(`
+      select a.attname
+        from pg_attribute a
+       where a.attrelid = ($1)::regclass and a.attnum > 0 and not a.attisdropped
+         and not has_column_privilege('authenticated', a.attrelid, a.attnum, 'SELECT')
+       order by a.attname`, ['public.' + relname]);
+
+    const unexpected = ungranted.rows
+      .map((x) => x.attname)
+      .filter((col) => !DELIBERATE[relname].includes(col));
+
+    ok(`${relname}: only cost is withheld`, unexpected.length === 0,
+       unexpected.length ? `also unreadable: ${unexpected.join(', ')}` : '');
+  }
+}
+
 console.log(`\n  FINAL: ${pass} passed, ${fail} failed`);
 
 await c.end();
