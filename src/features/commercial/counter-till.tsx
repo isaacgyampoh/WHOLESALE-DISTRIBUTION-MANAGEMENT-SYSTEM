@@ -208,6 +208,7 @@ export function CounterTill({
                 item={{
                   id: p.id, name: p.name, sku: p.sku, unit: p.unit,
                   unitPrice: p.listPrice, piecePrice: p.piecePrice,
+                  packSize: p.unitsPerCase,
                   onHand: p.onHand, onHandPieces: p.onHandPieces,
                 }}
                 units={units[p.id] ?? 0}

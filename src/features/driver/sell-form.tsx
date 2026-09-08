@@ -18,6 +18,7 @@ import { formatMoney, formatQuantity } from "@/lib/utils/format";
 import { MOMO_PROVIDERS } from "@/lib/commercial/momo";
 import { PosSearch, PosRow } from "@/features/commercial/pos";
 import { productImageUrl } from "@/lib/catalogue/image";
+import { unitsToOpen } from "@/lib/catalogue/quantity";
 import type { OfflineSnapshot } from "@/lib/offline/queue";
 import type { RoundBlocker } from "@/features/driver/queries";
 import {
@@ -167,9 +168,10 @@ export function SellForm({
       [productId]: Math.max(0, Math.min(next, available)),
     }));
 
-  // The loose half, clamped against the loose half of what is on board.
-  // Never against the cartons: a sealed one does not become singles
-  // because the till would like it to.
+  // The loose half. Its ceiling is worked out by the row, which knows
+  // the pack size and how many cartons the whole-unit half has already
+  // spoken for: since 0069 a sale opens a carton to fill an order for
+  // singles, so sealed stock does count towards them.
   const setPieceQty = (productId: string, next: number, available: number) =>
     setPieceQuantities((current) => ({
       ...current,
@@ -334,12 +336,29 @@ export function SellForm({
         setStage("cart");
         return;
       }
-      // Judged on its own. Sealed cartons on the van do not cover a
-      // request for singles - somebody has to open one first, and the
-      // depot is where that is recorded.
-      if (line.pieces > (held?.qty_pieces ?? 0)) {
+      // The singles, and the cartons that have to be opened for them.
+      //
+      // Sealed cartons do cover a request for singles now - the sale
+      // opens one and records it - so the two halves are checked
+      // together against one figure. complete_van_sale does the same
+      // sum under a lock and that is the one that governs; this is here
+      // so the refusal names the product before the customer is told
+      // yes.
+      const opening = unitsToOpen(
+        line.pieces, held?.qty_pieces ?? 0, held?.pieces_per_unit ?? 1);
+      if (opening === null) {
         setError(
-          `Only ${held?.qty_pieces ?? 0} loose pieces of ${line.name} left on the van.`,
+          `Nobody has recorded how many pieces are in one ${line.unit || "unit"} ` +
+          `of ${line.name}, so one cannot be opened. Ask the depot.`,
+        );
+        setStage("cart");
+        return;
+      }
+      if (line.quantity + opening > (held?.qty_on_hand ?? 0)) {
+        setError(
+          `${line.name}: ${held?.qty_on_hand ?? 0} on the van, and this needs ` +
+          `${line.quantity + opening} - ${line.quantity} sold whole ` +
+          `and ${opening} opened for singles.`,
         );
         setStage("cart");
         return;
@@ -559,12 +578,15 @@ export function SellForm({
                   piecePrice: priceBy.get(s.product_id)?.piece_price ?? 0,
                   onHand: s.qty_on_hand,
                   onHandPieces: s.qty_pieces ?? 0,
+                  packSize: s.pieces_per_unit ?? 1,
                   imageUrl: imageFor(s.product_id),
                 }}
                 units={quantities[s.product_id] ?? 0}
                 pieces={pieceQuantities[s.product_id] ?? 0}
-                onUnits={(n) => setQty(s.product_id, n, s.qty_on_hand)}
-                onPieces={(n) => setPieceQty(s.product_id, n, s.qty_pieces ?? 0)}
+                // Already clamped by the row against the shared ceiling
+                // the two halves draw on; these only floor at zero.
+                onUnits={(n) => setQty(s.product_id, n, n)}
+                onPieces={(n) => setPieceQty(s.product_id, n, n)}
               />
             ))}
           </ul>

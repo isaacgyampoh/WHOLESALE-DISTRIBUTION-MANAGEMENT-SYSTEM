@@ -204,7 +204,77 @@ export function readQuantity(
  * would come out of a carton, because until somebody opens that carton
  * the pieces do not exist. The caller is told what is actually there
  * and can offer to open one.
+ *
+ * This is the rule for moving stock about - a transfer, a return, a
+ * count - where nobody is standing over the carton with a knife. A
+ * till is the other case, and uses unitsToOpen below.
  */
 export function covers(held: Quantity, wanted: Quantity): boolean {
   return held.units >= wanted.units && held.pieces >= wanted.pieces;
+}
+
+/**
+ * How many full units have to be opened to fill a request for singles.
+ *
+ * The counterpart to `covers` for a sale. At a till the carton really
+ * is opened - the seller cuts the tape and hands over four sachets - so
+ * the question is not "are there loose pieces" but "how many cartons
+ * does this cost". Zero when the loose stock already covers it.
+ *
+ * Null means it cannot be answered: no pack size is recorded, so
+ * nothing here knows how many singles a carton yields, and guessing
+ * would put stock on the screen that is not on the shelf. A caller
+ * getting null must refuse and say what to record.
+ *
+ * The same arithmetic as units_to_open_for_pieces() in the database,
+ * which is the one that governs. This one exists so the till can say no
+ * before the customer is told yes.
+ */
+export function unitsToOpen(
+  wantedPieces: number,
+  loosePieces: number,
+  piecesPerUnit: number | null | undefined,
+): number | null {
+  const short = Math.max(0, Math.trunc(wantedPieces) - Math.trunc(loosePieces));
+  if (short === 0) return 0;
+  const size = packSize(piecesPerUnit);
+  if (size === null) return null;
+  return Math.ceil(short / size);
+}
+
+/**
+ * The most singles a holding can yield: the loose ones, plus everything
+ * inside the cartons that could be opened for them. Zero cartons' worth
+ * where there is no pack size, because those cartons cannot be opened
+ * into a known number of pieces.
+ *
+ * `reserved` is the units already being sold whole on the same line -
+ * they are spoken for, and offering their contents as singles too would
+ * promise the same carton twice.
+ */
+export function sellablePieces(
+  held: Quantity,
+  piecesPerUnit: number | null | undefined,
+  reserved = 0,
+): number {
+  const size = packSize(piecesPerUnit);
+  const spare = Math.max(0, held.units - Math.max(0, reserved));
+  return held.pieces + (size === null ? 0 : spare * size);
+}
+
+/**
+ * The most full units a holding can sell whole, once the singles on the
+ * same line have taken their cut. Selling two cartons and one single
+ * out of two cartons needs three, and this is the half of that sum the
+ * unit stepper has to respect.
+ */
+export function sellableUnits(
+  held: Quantity,
+  wantedPieces: number,
+  piecesPerUnit: number | null | undefined,
+): number {
+  const opening = unitsToOpen(wantedPieces, held.pieces, piecesPerUnit);
+  // Null means those singles cannot be filled at all. The piece stepper
+  // will not have offered them, so nothing is reserved against them.
+  return Math.max(0, held.units - (opening ?? 0));
 }

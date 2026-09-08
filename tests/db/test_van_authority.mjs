@@ -709,7 +709,17 @@ head("stock counts full units and loose pieces, independently");
   ok("and three pieces with them", afterSale.pieces === board.pieces - 3,
      `(${board.pieces} - 3 = ${afterSale.pieces})`);
 
-  // More pieces than are on board, judged on its own.
+  // More singles than the whole van can yield.
+  //
+  // Since 0069 sealed cartons DO cover a request for singles - the sale
+  // opens one and records the opening - so the refusal here is no longer
+  // about the loose half on its own. It is arithmetic: this asks for
+  // more pieces than every carton on board holds, and the message says
+  // what would have to be opened. test_selling_singles.mjs covers the
+  // opening itself; what matters here is that the ceiling still exists.
+  const pack = Number((await c.query(
+    `select units_per_case u from products where id=$1`, [product])).rows[0].u);
+  const beyond = (board.units + 1) * pack;
   const greedy = (await c.query(
     `insert into van_sales (org_id, van_id, load_id, salesperson_id, driver_id, customer_id,
                             sale_number, sale_type, status, subtotal, total)
@@ -718,13 +728,15 @@ head("stock counts full units and loose pieces, independently");
   await c.query(
     `insert into van_sale_items (org_id, sale_id, product_id, quantity, pieces,
                                  unit_price, piece_price)
-     values ($1,$2,$3,0,99,1,1)`,
-    [org, greedy, product]);
+     values ($1,$2,$3,0,$4,1,1)`,
+    [org, greedy, product, beyond]);
 
-  const refused = await asUser(sellerC, `select public.complete_van_sale($1,99)`, [greedy]);
-  ok("selling more loose pieces than are on board is refused", !refused.ok);
-  ok("and cartons on board do not cover it",
-     /loose pieces/.test(refused.error ?? ""), (refused.error ?? "").slice(0, 70));
+  const refused = await asUser(sellerC,
+    `select public.complete_van_sale($1,$2)`, [greedy, beyond]);
+  ok("selling more singles than every carton on board holds is refused", !refused.ok);
+  ok("and the refusal counts what would have to be opened",
+     /on board/.test(refused.error ?? "") && /opened/.test(refused.error ?? ""),
+     (refused.error ?? "").slice(0, 90));
 
   // What comes back at the end of the round.
   const ret = (await c.query(

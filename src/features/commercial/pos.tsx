@@ -4,7 +4,9 @@ import { useState } from "react";
 import { Input } from "@/components/ui/field";
 import { Minus, Plus, Search, ChevronUp, ChevronDown, Trash2 } from "lucide-react";
 import { formatMoney } from "@/lib/utils/format";
-import { formatHolding, holdsPieces } from "@/lib/catalogue/quantity";
+import {
+  formatHolding, holdsPieces, packSize, sellablePieces, sellableUnits, unitsToOpen,
+} from "@/lib/catalogue/quantity";
 
 /**
  * The parts both tills are built from.
@@ -31,6 +33,12 @@ export interface PosItem {
   piecePrice: number | null;
   onHand: number;
   onHandPieces: number;
+  /**
+   * How many singles come out of one full unit. 1 means nobody has
+   * recorded it, and a carton that has never been counted cannot be
+   * opened into a known number of pieces - so the till offers none.
+   */
+  packSize: number;
   /** Shown where the till has a picture, as the van one does. */
   imageUrl?: string | null;
 }
@@ -93,8 +101,29 @@ export function PosRow({
   onPieces: (n: number) => void;
 }) {
   const chosen = units > 0 || pieces > 0;
-  const splittable = holdsPieces(item.unit) && item.onHandPieces > 0;
+  const held = { units: item.onHand, pieces: item.onHandPieces };
+  const pack = packSize(item.packSize);
+
+  /*
+    What can be asked for.
+
+    Sealed cartons count towards the singles, because the sale opens one:
+    the seller cuts the tape and hands over four sachets, and the ledger
+    records the opening. The two steppers therefore share a ceiling -
+    two cartons and one single needs three cartons, not two - so each
+    max is worked out with the other half already taken out of it.
+  */
+  const maxPieces = sellablePieces(held, item.packSize, units);
+  const maxUnits = sellableUnits(held, pieces, item.packSize);
+  const opening = unitsToOpen(pieces, item.onHandPieces, item.packSize) ?? 0;
+
+  const splittable = holdsPieces(item.unit) && maxPieces > 0;
   const unpriced = splittable && (item.piecePrice ?? 0) <= 0;
+  // Cartons on the shelf, none of them loose, and no record of what is
+  // inside one. The stock is there and the till cannot offer it by the
+  // piece; saying so is more use than an absent row.
+  const unmeasured =
+    holdsPieces(item.unit) && item.onHandPieces <= 0 && item.onHand > 0 && pack === null;
   const soldOut = item.onHand <= 0 && item.onHandPieces <= 0;
   const lineTotal = units * item.unitPrice + pieces * (item.piecePrice ?? 0);
 
@@ -113,8 +142,8 @@ export function PosRow({
       */}
       <button
         type="button"
-        onClick={() => onUnits(clamp(units + 1, item.onHand))}
-        disabled={soldOut || units >= item.onHand}
+        onClick={() => onUnits(clamp(units + 1, maxUnits))}
+        disabled={soldOut || units >= maxUnits}
         className="flex w-full items-center gap-3 px-4 py-3 text-left disabled:opacity-55"
       >
         {item.imageUrl && (
@@ -156,23 +185,41 @@ export function PosRow({
           <Row
             label={`${item.unit}${units === 1 ? "" : "s"}`}
             rate={formatMoney(item.unitPrice)}
-            value={units} max={item.onHand}
-            onChange={(n) => onUnits(clamp(n, item.onHand))}
+            value={units} max={maxUnits}
+            onChange={(n) => onUnits(clamp(n, maxUnits))}
             name={`${item.unit}s of ${item.name}`}
           />
           {splittable && !unpriced && (
             <Row
               label={`Piece${pieces === 1 ? "" : "s"}`}
               rate={formatMoney(item.piecePrice ?? 0)}
-              value={pieces} max={item.onHandPieces}
-              onChange={(n) => onPieces(clamp(n, item.onHandPieces))}
+              value={pieces} max={maxPieces}
+              onChange={(n) => onPieces(clamp(n, maxPieces))}
               name={`loose pieces of ${item.name}`}
             />
           )}
+          {/*
+            Said plainly, because it changes what is on the shelf. The
+            seller is about to cut a carton open and the stock figures
+            will show it afterwards; nobody should have to work that out
+            from the numbers moving.
+          */}
+          {opening > 0 && (
+            <p className="text-xs text-[var(--text-secondary)]">
+              Opens {opening} {item.unit.toLowerCase()}{opening === 1 ? "" : "s"} - the
+              other {opening * (pack ?? 0) - (pieces - item.onHandPieces)} stay loose here.
+            </p>
+          )}
           {unpriced && (
             <p className="text-xs text-[var(--text-muted)]">
-              {item.onHandPieces} loose {item.onHandPieces === 1 ? "piece" : "pieces"} here,
-              but no price is set for one. Ask the office.
+              No price is set for a single. Ask the office to set one before
+              selling {item.name} by the piece.
+            </p>
+          )}
+          {unmeasured && !unpriced && (
+            <p className="text-xs text-[var(--text-muted)]">
+              Nobody has recorded how many pieces are in
+              a {item.unit.toLowerCase()}, so one cannot be opened. Ask the office.
             </p>
           )}
         </div>

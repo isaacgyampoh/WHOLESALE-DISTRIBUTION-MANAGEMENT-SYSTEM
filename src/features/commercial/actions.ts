@@ -7,6 +7,7 @@ import { recordAudit } from "@/lib/audit";
 import { PAYMENT_METHODS } from "@/types/domain";
 import { getCapabilities } from "@/lib/db/capabilities";
 import { formatMoney } from "@/lib/utils/format";
+import { unitsToOpen } from "@/lib/catalogue/quantity";
 import type { CommercialState } from "./state";
 
 /**
@@ -430,35 +431,57 @@ export async function recordVanSaleAction(input: {
       ? await admin
           .from("inventory")
           .select(capabilities.loosePieces
-            ? "qty_on_hand:qty_available, qty_pieces, products(name)"
+            ? "qty_on_hand:qty_available, qty_pieces, products(name, unit_of_measure, units_per_case)"
             : "qty_on_hand:qty_available, products(name)")
           .eq("warehouse_id", input.warehouseId as string)
           .eq("product_id", line.product_id).maybeSingle()
       : await admin
           .from("van_inventory")
           .select(capabilities.loosePieces
-            ? "qty_on_hand, qty_pieces, products(name)"
+            ? "qty_on_hand, qty_pieces, products(name, unit_of_measure, units_per_case)"
             : "qty_on_hand, products(name)")
           .eq("van_id", load!.van_id as string)
           .eq("product_id", line.product_id).maybeSingle();
 
     const board = held as {
-      qty_on_hand?: number; qty_pieces?: number; products?: { name?: string } | null;
+      qty_on_hand?: number; qty_pieces?: number;
+      products?: { name?: string; unit_of_measure?: string; units_per_case?: number } | null;
     } | null;
     const name = board?.products?.name ?? "that product";
+    const unitWord = (board?.products?.unit_of_measure ?? "unit").toLowerCase();
+    const where = overTheCounter ? "on the shelf" : "on the van";
 
     const available = Number(board?.qty_on_hand ?? 0);
-    if (units > available) {
-      return { ok: false, message: `Only ${available} of ${name} left on the van.` };
-    }
-
-    // Judged on its own: a sealed carton on the van is not three loose
-    // pieces until somebody opens it, and that happens at the depot.
     const looseAvailable = Number(board?.qty_pieces ?? 0);
-    if (pieces > looseAvailable) {
+
+    // Singles come out of a carton, and the sale opens it.
+    //
+    // Sealed stock counts towards a request for pieces because that is
+    // what happens at the counter: the seller cuts the tape. So the two
+    // halves are measured against one figure - selling two cartons and
+    // one single out of two cartons needs three, not two.
+    // complete_van_sale does this again under a lock and that is the
+    // one that governs; here it only buys a message naming the product.
+    const opening = capabilities.loosePieces
+      ? unitsToOpen(pieces, looseAvailable, Number(board?.products?.units_per_case ?? 1))
+      : 0;
+
+    if (opening === null) {
       return {
         ok: false,
-        message: `Only ${looseAvailable} loose pieces of ${name} left on the van.`,
+        message:
+          `Nobody has recorded how many pieces are in one ${unitWord} of ${name}, ` +
+          `so one cannot be opened. Ask the office to set the pack size.`,
+      };
+    }
+
+    if (units + opening > available) {
+      return {
+        ok: false,
+        message: opening > 0
+          ? `${name}: ${available} ${where}, and this needs ${units + opening} - ` +
+            `${units} sold whole and ${opening} opened for singles.`
+          : `Only ${available} of ${name} left ${where}.`,
       };
     }
 
