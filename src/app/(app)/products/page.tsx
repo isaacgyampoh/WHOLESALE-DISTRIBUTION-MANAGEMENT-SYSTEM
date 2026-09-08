@@ -38,6 +38,7 @@ export default async function ProductsPage({
       category: filters.category,
       status: filters.status,
       stock: filters.stock,
+      singles: filters.singles,
       page: Number(filters.page ?? 1),
     }),
     listCategories(),
@@ -53,7 +54,8 @@ export default async function ProductsPage({
     filters.search ||
     (filters.category && filters.category !== "all") ||
     (filters.status && filters.status !== "all") ||
-    (filters.stock && filters.stock !== "all"),
+    (filters.stock && filters.stock !== "all") ||
+    (filters.singles && filters.singles !== "all"),
   );
 
   return (
@@ -109,7 +111,7 @@ export default async function ProductsPage({
                 <EmptyState
                   icon={SearchX}
                   title="No products match those filters"
-                  description="Try a different search, category or stock level."
+                  description="Try a different search, category, stock level or piece setup."
                 />
               ) : sellsFromAVan ? (
                 /* A driver's catalogue is their van. can_access_product()

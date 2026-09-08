@@ -10,7 +10,7 @@ import { StockBadge } from "./stock-badge";
 import { ProductForm } from "./product-form";
 import { unitLabel } from "@/lib/catalogue/units";
 import { formatMoney, formatQuantity } from "@/lib/utils/format";
-import { holdsPieces } from "@/lib/catalogue/quantity";
+import { holdsPieces, singlesReadiness } from "@/lib/catalogue/quantity";
 import type { ProductRow, CategoryRow } from "./queries";
 import { Plus, ChevronRight } from "lucide-react";
 
@@ -24,6 +24,25 @@ import { Plus, ChevronRight } from "lucide-react";
  */
 function strandedPieces(p: ProductRow): boolean {
   return p.onHandPieces > 0 && p.piecePrice === null && holdsPieces(p.unit);
+}
+
+/**
+ * Why the till cannot sell one of these, in the fewest words that say
+ * what to do about it.
+ *
+ * Only for products actually being held. A discontinued line nobody
+ * stocks is not a job for anyone, and marking it would bury the ones
+ * that are. Null where there is nothing to say - which, once the office
+ * has been round the catalogue, should be most rows.
+ */
+function singlesGap(p: ProductRow): string | null {
+  if (p.onHand + p.onHandPieces <= 0) return null;
+  const readiness = singlesReadiness(p.unit, p.piecePrice, p.unitsPerCase);
+  if (readiness === "no_price") return "no piece price";
+  // The loose ones can still be sold; a sealed one cannot be opened for
+  // more, because nobody has said how many are inside it.
+  if (readiness === "loose_only") return "no pack size";
+  return null;
 }
 
 export function ProductList({ products }: { products: ProductRow[] }) {
@@ -85,6 +104,17 @@ export function ProductList({ products }: { products: ProductRow[] }) {
                       {formatQuantity(p.reserved)} reserved
                     </span>
                   )}
+                  {/*
+                    Stock that is here and cannot be sold one at a time.
+                    Not an alarm - plenty of lines are only ever sold by
+                    the carton - but the only place the office can see
+                    which ones a salesperson will be refused on.
+                  */}
+                  {!strandedPieces(p) && singlesGap(p) && (
+                    <span className="block text-xs font-normal whitespace-nowrap text-[var(--text-muted)]">
+                      {singlesGap(p)}
+                    </span>
+                  )}
                 </Td>
                 <Td><StockBadge state={p.state} /></Td>
                 <Td>
@@ -122,6 +152,11 @@ export function ProductList({ products }: { products: ProductRow[] }) {
                     </span>
                   )} {unitLabel(p.unit).toLowerCase()}
                   </span>
+                  {!strandedPieces(p) && singlesGap(p) && (
+                    <span className="text-xs text-[var(--text-muted)]">
+                      {singlesGap(p)}
+                    </span>
+                  )}
                   <span className="numeric text-xs font-medium text-[var(--text-primary)]">
                     {formatMoney(p.listPrice)}
                   </span>

@@ -2,6 +2,7 @@ import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { parseAmount } from "@/lib/utils/format";
 import { stockState, type StockState } from "@/lib/catalogue/units";
+import { singlesReadiness } from "@/lib/catalogue/quantity";
 import { getCapabilities } from "@/lib/db/capabilities";
 
 /**
@@ -68,6 +69,12 @@ export interface ProductFilters {
   category?: string;
   status?: string;
   stock?: string;
+  /**
+   * Whether the till can sell this product by the piece. Not a property
+   * of the stock but of two settings on the product, and the office has
+   * no other way to find the ones nobody has filled in.
+   */
+  singles?: string;
   page?: number;
 }
 
@@ -199,7 +206,12 @@ export async function listProducts(
   // Stock state is derived from quantities across warehouses, so it is
   // applied after the rows arrive. Everything cheaper to narrow has
   // already been narrowed by the database.
-  const narrowing = filters.stock && filters.stock !== "all";
+  // Singles readiness is the same shape of question: it depends on the
+  // piece price, the pack size and whether anything is held, so it is
+  // applied here beside the stock state rather than in the query.
+  const narrowing =
+    (filters.stock && filters.stock !== "all") ||
+    (filters.singles && filters.singles !== "all");
   if (!narrowing) {
     query = query.range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
   }
@@ -215,7 +227,49 @@ export async function listProducts(
   let total = count ?? products.length;
 
   if (narrowing) {
-    products = products.filter((p) => p.state === filters.stock);
+    if (filters.stock && filters.stock !== "all") {
+      products = products.filter((p) => p.state === filters.stock);
+    }
+    if (filters.singles && filters.singles !== "all") {
+      /*
+        Held anywhere, not just in a warehouse.
+
+        The Available column beside this counts warehouse stock, which
+        is what that column is for. This filter is answering a different
+        question - "where will a salesperson be refused" - and a van
+        carrying the last three cartons of something is exactly where
+        they will be. Key soap 1000g is in that position today: nothing
+        in the building, three on a round, and no piece price.
+
+        One aggregate, only when the filter is on. Empty under a role
+        that may not read van stock, which leaves the warehouse answer
+        rather than an error.
+      */
+      const onVan = new Map<string, number>();
+      if (filters.singles !== "ready") {
+        const { data: van } = await supabase
+          .from("van_inventory")
+          .select(capabilities.loosePieces
+            ? "product_id, qty_on_hand, qty_pieces"
+            : "product_id, qty_on_hand");
+        for (const row of (van ?? []) as unknown as Record<string, unknown>[]) {
+          const id = row.product_id as string;
+          onVan.set(id, (onVan.get(id) ?? 0)
+            + Number(row.qty_on_hand ?? 0) + Number(row.qty_pieces ?? 0));
+        }
+      }
+
+      products = products.filter((p) => {
+        const readiness = singlesReadiness(p.unit, p.piecePrice, p.unitsPerCase);
+        if (readiness === "not_applicable") return false;
+        if (filters.singles === "ready") return readiness === "ready";
+        // Only what is actually held. A discontinued line nobody stocks
+        // is not a job for anyone, and listing it buries the ones that
+        // are.
+        const holding = p.onHand + p.onHandPieces + (onVan.get(p.id) ?? 0);
+        return holding > 0 && readiness !== "ready";
+      });
+    }
     total = products.length;
     products = products.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   }

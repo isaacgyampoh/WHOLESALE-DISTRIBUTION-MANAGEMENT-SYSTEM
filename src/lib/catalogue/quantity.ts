@@ -263,6 +263,37 @@ export function sellablePieces(
 }
 
 /**
+ * Whether this product can be sold by the piece, and what is missing.
+ *
+ * Two separate settings decide it, and they fail differently:
+ *
+ *   the piece price says what one single costs. Without it nothing can
+ *   be sold by the piece at all - not even singles already sitting
+ *   loose on the shelf - because the price is never derived from the
+ *   carton.
+ *
+ *   the pack size says how many singles come out of one full unit.
+ *   Without it a sealed carton cannot be opened into a known quantity,
+ *   so only the pieces somebody has already opened can be sold.
+ *
+ * A product sold by the piece already has no second quantity and is not
+ * applicable. Reported rather than fixed: both settings are somebody's
+ * decision about this business, and guessing either is how a wrong
+ * number ends up on a customer's receipt.
+ */
+export type SinglesReadiness = "not_applicable" | "ready" | "loose_only" | "no_price";
+
+export function singlesReadiness(
+  unit: string | null | undefined,
+  piecePrice: number | null | undefined,
+  piecesPerUnit: number | null | undefined,
+): SinglesReadiness {
+  if (!holdsPieces(unit)) return "not_applicable";
+  if (piecePrice === null || piecePrice === undefined || piecePrice <= 0) return "no_price";
+  return packSize(piecesPerUnit) === null ? "loose_only" : "ready";
+}
+
+/**
  * The most full units a holding can sell whole, once the singles on the
  * same line have taken their cut. Selling two cartons and one single
  * out of two cartons needs three, and this is the half of that sum the

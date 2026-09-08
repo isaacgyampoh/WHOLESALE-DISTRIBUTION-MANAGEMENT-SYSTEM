@@ -85,6 +85,26 @@ export function CatalogueFilters({
         </Select>
       )}
 
+      {/*
+        Which products the till can sell one of.
+
+        Not a stock question - it is two settings on the product, and
+        until now the only way to find the ones nobody had filled in was
+        for a salesperson to be refused at a customer's counter.
+      */}
+      {showStock && (
+        <Select
+          aria-label="Filter by piece selling"
+          value={params.get("singles") ?? "all"}
+          onChange={(e) => setParam("singles", e.target.value)}
+          className="lg:w-52"
+        >
+          <option value="all">Any piece setup</option>
+          <option value="blocked">Cannot sell singles</option>
+          <option value="ready">Ready to sell singles</option>
+        </Select>
+      )}
+
       <Select
         aria-label="Filter by status"
         value={params.get("status") ?? "all"}
