@@ -12,6 +12,7 @@ const require = createRequire(new URL("../visual/", import.meta.url));
 const { chromium } = require("playwright");
 const { createClient } = require("@supabase/supabase-js");
 import { readFileSync } from "node:fs";
+import { openSessionByPassword, serverSawAttempt, testPassword } from "./session.mjs";
 import { createHmac } from "node:crypto";
 
 const R = new URL("../../", import.meta.url).pathname;
@@ -32,6 +33,11 @@ const head = (t) => console.log(`\n=== ${t} ===`);
 const stamp = Date.now().toString(36).slice(-6);
 const PIN = "4813";
 const USERNAME = `zz.count.${stamp}`;
+const EMAIL = `${USERNAME}@count.invalid`;
+// See session.mjs: PIN_PEPPER cannot be read back from Vercel, so the
+// PIN form is driven for what it proves and the session is opened this
+// way for everything behind it.
+const PASSWORD = testPassword(stamp);
 
 const { data: org } = await db.from("organizations").select("id").eq("slug", "default").single();
 
@@ -51,7 +57,7 @@ await db.from("auth_pin_attempts")
   .delete().gte("attempted_at", new Date(Date.now() - 86_400_000).toISOString());
 
 const { data: created, error: userError } = await db.auth.admin.createUser({
-  email: `${USERNAME}@count.invalid`, email_confirm: true,
+  email: EMAIL, password: PASSWORD, email_confirm: true,
   user_metadata: { full_name: "ZZ Stock Counter", role: "admin", org_id: org.id, username: USERNAME },
 });
 if (userError) { console.error(userError.message); process.exit(1); }
@@ -62,6 +68,26 @@ await db.from("profiles").update({
   pin_hash: createHmac("sha256", env.PIN_PEPPER).update(PIN).digest("hex"),
   pin_set_at: new Date().toISOString(),
 }).eq("id", created.user.id);
+
+/** The box that takes the loose-piece count, where the sheet offers one. */
+const looseBox = (page, name) =>
+  page.getByLabel(new RegExp(
+    `^loose pieces counted for ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i")).first();
+
+/**
+ * The box that takes the whole-unit count for a product.
+ *
+ * Two labels, because the sheet has two shapes. A product that can hold
+ * loose pieces gets a box per half - "Whole Cartons counted for X" and
+ * "Loose pieces counted for X" - and one that cannot gets a single
+ * "Counted quantity for X". This test looked only for the second, so it
+ * stopped dead on the first splittable product it met, which since the
+ * mixed-units work is nearly all of them.
+ */
+const unitBox = (page, name) =>
+  page.getByLabel(new RegExp(
+    `^(whole .* counted for|counted quantity for) ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+    "i")).first();
 
 const browser = await chromium.launch();
 const consoleErrors = [], networkErrors = [];
@@ -80,8 +106,23 @@ try {
   await page.waitForTimeout(900);
   await page.getByLabel(/digit 1 of 4/i).first().click();
   for (const d of PIN) await page.keyboard.type(d, { delay: 60 });
+  const submittedAt = new Date().toISOString();
   await page.waitForURL((u) => !u.pathname.includes("sign-in"), { timeout: 45000 }).catch(() => {});
-  ok("signed in", !page.url().includes("sign-in"), page.url().replace(BASE, ""));
+  let signedIn = !page.url().includes("sign-in");
+
+  // The PIN form reaching the server is what is checkable here; the
+  // digest cannot match, because the pepper it was written with is not
+  // production's.
+  ok("the sign-in form reaches the server",
+     signedIn || await serverSawAttempt(db, submittedAt),
+     signedIn ? "signed in" : "attempt recorded, digest refused");
+
+  if (!signedIn) {
+    const opened = await openSessionByPassword({
+      env, base: BASE, ctx, page, email: EMAIL, password: PASSWORD });
+    signedIn = opened.ok;
+  }
+  ok("signed in", signedIn, page.url().replace(BASE, ""));
 
   head("the count sheet is reachable");
   await page.goto(`${BASE}/inventory`, { waitUntil: "domcontentloaded", timeout: 60000 });
@@ -121,7 +162,7 @@ try {
   for (const t of targets) {
     await page.getByLabel(/find a product/i).fill(t.name);
     await page.waitForTimeout(350);
-    const box = page.getByLabel(`Counted quantity for ${t.name}`).first();
+    const box = unitBox(page, t.name);
     await box.waitFor({ state: "visible", timeout: 15000 });
     await box.fill(String(t.target));
   }
@@ -157,13 +198,77 @@ try {
      `(${(movements ?? []).length})`);
   ok("each carries the reason given",
      (movements ?? []).every((m) => String(m.reason).includes(stamp)));
-  ok("each is an adjustment, not a sale or a receipt",
-     (movements ?? []).every((m) => m.type === "adjustment_in" || m.type === "adjustment_out"));
+  // Its own kind of movement, not the general adjustment it used to
+  // share a type with: "somebody counted the shelf and it disagreed" and
+  // "somebody corrected a figure" are different events, and the ledger
+  // is where the difference has to survive.
+  ok("each is a stocktake, not a sale or a receipt",
+     (movements ?? []).every((m) => m.type === "stocktake_in" || m.type === "stocktake_out"),
+     [...new Set((movements ?? []).map((m) => m.type))].join(", "));
   ok("the quantities are the differences, not the counts",
      (movements ?? []).every((m) => {
        const t = targets.find((x) => x.productId === m.product_id);
        return Number(m.quantity) === Math.abs(t.target - t.before);
      }));
+
+  // ================================================================
+  head("a column left blank is not a count of zero");
+  // ================================================================
+  //
+  // The sheet promises that a blank is left alone, and it has to be
+  // true of each column on its own. Typing the loose pieces and leaving
+  // the cartons blank used to mean "zero cartons", which wrote off every
+  // carton of that product - the counter's three loose singles cost the
+  // business forty-five boxes, silently, in the ledger.
+  {
+    const subject = targets[0];
+    const { data: before } = await db.from("inventory")
+      .select("qty_on_hand, qty_pieces")
+      .eq("product_id", subject.productId).eq("warehouse_id", warehouseId).maybeSingle();
+
+    await page.goto(`${BASE}/inventory/count`, { waitUntil: "domcontentloaded", timeout: 60000 });
+    await page.getByLabel(/find a product/i).waitFor({ state: "visible", timeout: 30000 });
+    await page.getByLabel("Why").fill(`ZZ loose only ${stamp}`);
+    await page.getByLabel(/find a product/i).fill(subject.name);
+    await page.waitForTimeout(400);
+
+    const loose = looseBox(page, subject.name);
+    if (await loose.count()) {
+      const wanted = Number(before?.qty_pieces ?? 0) + 2;
+      await loose.fill(String(wanted));
+      await page.getByRole("button", { name: /save the count/i }).click();
+      await page.waitForTimeout(6000);
+
+      const { data: after } = await db.from("inventory")
+        .select("qty_on_hand, qty_pieces")
+        .eq("product_id", subject.productId).eq("warehouse_id", warehouseId).maybeSingle();
+
+      ok("the loose pieces are recorded",
+         Number(after?.qty_pieces ?? -1) === wanted,
+         `(${before?.qty_pieces} -> ${after?.qty_pieces})`);
+      ok("and the cartons nobody counted are untouched",
+         Number(after?.qty_on_hand) === Number(before?.qty_on_hand),
+         `(${before?.qty_on_hand} -> ${after?.qty_on_hand})`);
+
+      // Put the loose half back the way it was found.
+      const { data: undo } = await db.from("stock_movements")
+        .select("id").eq("reason", `ZZ loose only ${stamp}`);
+      movementIds.push(...(undo ?? []).map((m) => m.id));
+      await db.from("stock_movements").insert({
+        org_id: (await db.from("warehouses").select("org_id").eq("id", warehouseId).single()).data.org_id,
+        product_id: subject.productId, warehouse_id: warehouseId,
+        type: wanted > Number(before?.qty_pieces ?? 0) ? "stocktake_out" : "stocktake_in",
+        quantity: 0, pieces: Math.abs(wanted - Number(before?.qty_pieces ?? 0)),
+        reason: `ZZ loose only ${stamp} undo`, reference_type: "stock_count",
+      });
+      const { data: undo2 } = await db.from("stock_movements")
+        .select("id").eq("reason", `ZZ loose only ${stamp} undo`);
+      movementIds.push(...(undo2 ?? []).map((m) => m.id));
+    } else {
+      ok("the sheet offers a loose column for a splittable product", false,
+         `no loose box for ${subject.name}`);
+    }
+  }
 
   head("counting the same figure again changes nothing");
   await page.goto(`${BASE}/inventory/count`, { waitUntil: "domcontentloaded", timeout: 60000 });
@@ -172,7 +277,7 @@ try {
   const first = targets[0];
   await page.getByLabel(/find a product/i).fill(first.name);
   await page.waitForTimeout(350);
-  await page.getByLabel(`Counted quantity for ${first.name}`).first().fill(String(first.target));
+  await unitBox(page, first.name).fill(String(first.target));
   await page.getByRole("button", { name: /save the count/i }).click();
   await page.waitForTimeout(6000);
   const repeat = await page.locator("body").innerText().catch(() => "");

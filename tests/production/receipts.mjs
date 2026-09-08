@@ -49,11 +49,31 @@ async function issue(kind, subjectId, phone) {
 
 const browser = await chromium.launch();
 const consoleErrors = [], networkErrors = [];
+/** Set while a check is deliberately asking for a refusal. */
+let expectingRefusal = false;
+
 const newPage = async (viewport = { width: 390, height: 844 }) => {
   const ctx = await browser.newContext({ viewport });
   const p = await ctx.newPage();
-  p.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text().slice(0, 140)); });
-  p.on("response", (r) => { if (r.status() >= 400) networkErrors.push(`${r.status()} ${r.url().replace(BASE, "").slice(0, 70)}`); });
+  p.on("console", (m) => {
+    // Same reason as the response listener below: the browser logs the
+    // refusals this test went looking for.
+    if (m.type() === "error" && !expectingRefusal) consoleErrors.push(m.text().slice(0, 140));
+  });
+  /*
+    A refusal this test asked for is not a fault.
+
+    Several checks here exist precisely to provoke a 404 - a revoked
+    link, a token nobody issued - and counting those alongside genuine
+    failures meant the summary always ended "network errors: 1". A run
+    that always reports one error is a run whose second error nobody
+    notices.
+  */
+  p.on("response", (r) => {
+    if (r.status() >= 400 && !expectingRefusal) {
+      networkErrors.push(`${r.status()} ${r.url().replace(BASE, "").slice(0, 70)}`);
+    }
+  });
   return p;
 };
 
@@ -213,6 +233,7 @@ try {
 
   // Revoking has to work, because a receipt sent to a wrong number is
   // the reason it exists.
+  expectingRefusal = true;
   await db.from("receipt_tokens").update({ revoked_at: new Date().toISOString() })
     .eq("token_hash", digest(token));
   await bad.goto(`${BASE}/receipt/${token}`, { waitUntil: "domcontentloaded", timeout: 60000 });
@@ -221,6 +242,7 @@ try {
   const revokedPdf = await bad.request.get(`${url}/pdf`);
   ok("and its PDF stops with it", revokedPdf.status() === 404, `status=${revokedPdf.status()}`);
   await bad.context().close();
+  expectingRefusal = false;
 
   head("the receipt on a phone");
   await db.from("receipt_tokens").update({ revoked_at: null }).eq("token_hash", digest(token));

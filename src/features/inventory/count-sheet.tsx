@@ -47,10 +47,22 @@ export interface CountWarehouse {
  * One line of the sheet, as it will be submitted - or null when nobody
  * has counted it.
  *
- * A line counts when either half has been typed. The other half is then
- * taken as zero, which is what a count means: the person walked up to
- * the shelf and this is what was on it. Leaving both blank leaves the
- * product alone entirely.
+ * Each half is counted only if it was typed. A blank one is left
+ * exactly as it was.
+ *
+ * This used to take the other half as zero once either was filled in,
+ * which read well - the person walked up to the shelf, and this is what
+ * was on it - and was dangerous in one direction. Typing three into the
+ * loose column and leaving the cartons blank meant "zero cartons", and
+ * wrote off every carton of that product. It also contradicted the rule
+ * printed at the top of this file and on the sheet itself: blank means
+ * not counted.
+ *
+ * The two mistakes are not equal. Reading a blank as zero destroys a
+ * record; reading it as "not counted" leaves a discrepancy for the next
+ * count to find. So a blank half is left alone, and a counter who means
+ * "there are none" types the 0 - which is one keystroke, and is the
+ * claim they are actually making.
  *
  * Used by both the running preview and the submit, so what the counter
  * is promised and what is written can never drift apart.
@@ -58,21 +70,29 @@ export interface CountWarehouse {
 function readLine(
   entry: { units: string; pieces: string } | undefined,
   product: CountableProduct,
-): { productId: string; counted: number; countedPieces?: number } | null {
+): { productId: string; counted?: number; countedPieces?: number } | null {
   if (!entry) return null;
 
   const units = entry.units.trim();
   const pieces = entry.pieces.trim();
   if (units === "" && pieces === "") return null;
 
-  const splittable = holdsPieces(product.unit);
-  const counted = units === "" ? 0 : Number(units);
-  if (!Number.isInteger(counted) || counted < 0) return null;
+  const whole = (text: string) => {
+    if (text === "") return undefined;
+    const n = Number(text);
+    return Number.isInteger(n) && n >= 0 ? n : null;
+  };
 
-  if (!splittable) return { productId: product.id, counted };
+  const counted = whole(units);
+  if (counted === null) return null;
 
-  const countedPieces = pieces === "" ? 0 : Number(pieces);
-  if (!Number.isInteger(countedPieces) || countedPieces < 0) return null;
+  // A product with no parent unit has no loose half to count.
+  if (!holdsPieces(product.unit)) {
+    return counted === undefined ? null : { productId: product.id, counted };
+  }
+
+  const countedPieces = whole(pieces);
+  if (countedPieces === null) return null;
 
   return { productId: product.id, counted, countedPieces };
 }
@@ -112,7 +132,10 @@ export function CountSheet({
     for (const product of products) {
       const line = readLine(counts[product.id], product);
       if (!line) continue;
-      const unitDelta = line.counted - product.onHand;
+      // A half left blank is not a change, the same rule the submit and
+      // the badges beside each row use.
+      const unitDelta = line.counted === undefined
+        ? 0 : line.counted - product.onHand;
       const pieceDelta = line.countedPieces === undefined
         ? 0 : line.countedPieces - product.onHandPieces;
       if (unitDelta === 0 && pieceDelta === 0) continue;
@@ -247,7 +270,8 @@ export function CountSheet({
                 const splittable = holdsPieces(product.unit);
                 const line = readLine(entry, product);
 
-                const unitDelta = line ? line.counted - product.onHand : 0;
+                const unitDelta = line && line.counted !== undefined
+                  ? line.counted - product.onHand : 0;
                 const pieceDelta = line && line.countedPieces !== undefined
                   ? line.countedPieces - product.onHandPieces
                   : 0;
@@ -319,9 +343,13 @@ export function CountSheet({
                     />
 
                     {/*
-                      Only for products somebody has given a pack size.
-                      A second box on a bag of rice would be a question
-                      with no possible answer.
+                      Only for products that have a full unit to be
+                      loose from - a carton, a box, a bag. Not a
+                      question about pack size: a shelf can hold loose
+                      pieces of something nobody has counted the
+                      contents of, and those pieces still have to be
+                      countable. A product sold by the piece has no
+                      second half and gets no second box.
                     */}
                     {splittable && (
                       <Input

@@ -187,6 +187,15 @@ export interface InventoryValueRow {
   units: number;
   /** Loose pieces, never added to the units - only to the value. */
   pieces: number;
+  /**
+   * Of those, the ones that could not be valued.
+   *
+   * A loose piece is worth its share of what the case cost, and that
+   * share cannot be worked out without a pack size. Counted here rather
+   * than folded into the total at zero, because a total that is quietly
+   * short is worse than one that says what it left out.
+   */
+  unvaluedPieces: number;
   value: number;
 }
 
@@ -221,7 +230,8 @@ export async function inventoryValueReport(): Promise<Result<InventoryValueRow[]
     const pieces = held.reduce((s, i) => s + Number(i.qty_pieces ?? 0), 0);
 
     const entry = by.get(name)
-      ?? { categoryName: name, productLines: 0, units: 0, pieces: 0, value: 0 };
+      ?? { categoryName: name, productLines: 0, units: 0, pieces: 0,
+           unvaluedPieces: 0, value: 0 };
     entry.productLines += 1;
     entry.units += units;
     entry.pieces += pieces;
@@ -232,6 +242,11 @@ export async function inventoryValueReport(): Promise<Result<InventoryValueRow[]
     const cost = parseAmount(row.cost_price as string);
     const pack = Number(row.units_per_case ?? 1);
     entry.value += units * cost + (pack > 1 ? (pieces * cost) / pack : 0);
+    // Nothing here divides by a pack size nobody entered, so these
+    // pieces contribute nothing to the figure above. They are real
+    // stock, and the report now says how many of them went uncounted
+    // rather than leaving the shortfall to be discovered at stocktake.
+    if (pack <= 1) entry.unvaluedPieces += pieces;
     by.set(name, entry);
   }
 

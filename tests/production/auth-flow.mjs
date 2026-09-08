@@ -15,6 +15,7 @@ const { chromium } = require("playwright");
 const { createClient } = require("@supabase/supabase-js");
 import { readFileSync } from "node:fs";
 import { createHmac } from "node:crypto";
+import { openSessionByPassword, serverSawAttempt, testPassword } from "./session.mjs";
 
 const R = new URL("../../", import.meta.url).pathname;
 const env = Object.fromEntries(
@@ -98,10 +99,26 @@ await removeStrays();
 
 console.log("sign-in attempt history cleared for this run\n");
 
-/** A temporary account holding a PIN somebody else chose. */
+/*
+ * A temporary account holding a PIN somebody else chose - and a password.
+ *
+ *
+ * See session.mjs. PIN_PEPPER is Sensitive on Vercel and cannot be read
+ * back, so a digest written here is one the deployed site will rightly
+ * refuse - and this whole suite used to stop at its first sign-in and
+ * check nothing else. The PIN form is still driven, because whether it
+ * submits and is judged is worth knowing; the password is how a session
+ * is opened for everything behind it. Only ever on zz.* accounts this
+ * run created and removes.
+ */
+const passwords = new Map();   // pin -> { email, password }
+
 async function makeAccount(username, name, role, pin, provisional = true) {
+  const email = `zz-${username}@flow.invalid`;
+  const password = testPassword(`${stamp}${pin}`);
+  passwords.set(pin, { email, password });
   const { data, error } = await db.auth.admin.createUser({
-    email: `zz-${username}@flow.invalid`, email_confirm: true,
+    email, password, email_confirm: true,
     user_metadata: { full_name: name, role, org_id: org.id, username },
   });
   if (error) throw new Error(`${username}: ${error.message}`);
@@ -116,8 +133,20 @@ async function makeAccount(username, name, role, pin, provisional = true) {
 }
 
 let lastSignInError = "";
+/** Set once the pepper has been shown not to match, for the summary. */
+let usedPasswordFallback = false;
 
-async function signIn(page, pin) {
+/**
+ * Drive the real sign-in form.
+ *
+ * `viaPassword` is for the places that only need to BE signed in so the
+ * screens behind it can be checked. It is off by default, and must stay
+ * off everywhere a refusal is the thing being asserted - a wrong PIN, a
+ * retired one, a locked account - or the fallback would open a session
+ * and turn "this was correctly refused" into a pass.
+ */
+async function signIn(page, pin, { viaPassword = false } = {}) {
+  const attemptedAt = new Date().toISOString();
   await page.goto(`${BASE}/sign-in`, { waitUntil: "domcontentloaded", timeout: 60000 });
   const firstBox = page.getByLabel(/digit 1 of 4/i).first();
   await firstBox.waitFor({ state: "visible", timeout: 30000 });
@@ -137,6 +166,29 @@ async function signIn(page, pin) {
     await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
     const why = await page.getByRole("alert").first().innerText().catch(() => "");
     lastSignInError = why.replace(/\s+/g, " ").trim() || "(no message shown)";
+
+    /*
+     * A refusal that is the pepper, not the application.
+     *
+     * The server recording an attempt means it read this PIN and
+     * disagreed with the digest - which is the only thing it can do with
+     * a digest written under a different pepper. Where this run knows a
+     * password for the account, the session is opened that way so the
+     * assertions after this point still run. A refusal with no recorded
+     * attempt is a real failure and is returned as one.
+     */
+    const known = viaPassword ? passwords.get(pin) : undefined;
+    if (known && await serverSawAttempt(db, attemptedAt)) {
+      const opened = await openSessionByPassword({
+        env, base: BASE, ctx: page.context(), page,
+        email: known.email, password: known.password });
+      if (opened.ok) {
+        lastSignInError = "";
+        usedPasswordFallback = true;
+        await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
+        return true;
+      }
+    }
     return false;
   }
 
@@ -263,7 +315,8 @@ try {
   bossId = await makeAccount(bossUser, "ZZ Flow Administrator", "admin", "7315");
   {
     const page = await newPage();
-    ok("a provisional account signs in", await signIn(page, "7315"), lastSignInError);
+    ok("a provisional account signs in", await signIn(page, "7315", { viaPassword: true }),
+       lastSignInError);
     ok("and is trapped on set-pin", page.url().includes("/set-pin"));
 
     // Refuses to keep the PIN it was given.
@@ -296,8 +349,11 @@ try {
     // third sign-in inside a few seconds can be refused for a reason
     // that has nothing to do with the PIN. Give it room.
     await breathe(page);
-    let backIn = await signIn(page, "6482");
-    if (!backIn) { await page.waitForTimeout(8000); backIn = await signIn(page, "6482"); }
+    let backIn = await signIn(page, "6482", { viaPassword: true });
+    if (!backIn) {
+      await page.waitForTimeout(8000);
+      backIn = await signIn(page, "6482", { viaPassword: true });
+    }
     ok("the new PIN does", backIn, lastSignInError);
     await page.context().close();
   }
@@ -309,7 +365,7 @@ try {
   const drvUser = `zz.drv.${stamp}`;
   {
     const page = await newPage();
-    await signIn(page, "6482");
+    await signIn(page, "6482", { viaPassword: true });
 
     for (const [username, name, role, pin] of [
       [mgrUser, "ZZ Flow Manager", "Manager", "5127"],
@@ -385,8 +441,17 @@ try {
     tempProductId = prod?.id ?? null;
 
     const page = await newPage();
-    await signIn(page, "6482");
-    await page.goto(`${BASE}/products`, { waitUntil: "domcontentloaded", timeout: 60000 });
+    await signIn(page, "6482", { viaPassword: true });
+    /*
+      Found by searching, not by scrolling.
+
+      The catalogue is paginated at 25 and now holds 76 products, and
+      "ZZ Flow Test Item" sorts last of all of them - so a plain visit
+      to /products has not shown it since the business loaded its real
+      catalogue. The screen's own search is what a person would use.
+    */
+    await page.goto(`${BASE}/products?search=${encodeURIComponent("ZZ Flow Test Item")}`,
+                    { waitUntil: "domcontentloaded", timeout: 60000 });
     await page.getByText("ZZ Flow Test Item").first().waitFor({ state: "visible", timeout: 30000 }).catch(() => {});
     const adminBody = await page.locator("body").innerText().catch(() => "");
     ok("an administrator sees the product", adminBody.includes("ZZ Flow Test Item"));
@@ -404,7 +469,8 @@ try {
     ok("the manager is made to set their own PIN", mgrPage.url().includes("/set-pin"));
     await setPin(mgrPage, "8264");
     ok("the manager reaches the application", !mgrPage.url().includes("/set-pin"));
-    await mgrPage.goto(`${BASE}/products`, { waitUntil: "domcontentloaded", timeout: 60000 });
+    await mgrPage.goto(`${BASE}/products?search=${encodeURIComponent("ZZ Flow Test Item")}`,
+                       { waitUntil: "domcontentloaded", timeout: 60000 });
     await mgrPage.getByText("ZZ Flow Test Item").first().waitFor({ state: "visible", timeout: 30000 }).catch(() => {});
     const mgrBody = await mgrPage.locator("body").innerText().catch(() => "");
     ok("a scoped manager sees the product", mgrBody.includes("ZZ Flow Test Item"));
@@ -691,7 +757,7 @@ try {
     // And the administrator handing one out is told, in words, without
     // learning whose it is.
     const page = await newPage();
-    await signIn(page, "6482");
+    await signIn(page, "6482", { viaPassword: true });
     await openCreateStaff(page);
     await page.getByLabel("Full name").fill("ZZ Clash");
     await page.getByLabel("Username").fill(`zz.clash.${stamp}`);
@@ -786,5 +852,15 @@ console.log(`\nconsole errors: ${consoleErrors.length}`);
 for (const e of [...new Set(consoleErrors)].slice(0, 6)) console.log(`  ${e}`);
 console.log(`network errors: ${networkErrors.length}`);
 for (const e of [...new Set(networkErrors)].slice(0, 8)) console.log(`  ${e}`);
+if (usedPasswordFallback) {
+  // Said plainly, so nobody reads the passes above as "the PIN worked".
+  console.log(
+    "\nNOTE  the deployed site refused the PINs written here, which is correct:" +
+    "\n      PIN_PEPPER is Sensitive on Vercel and the local copy is not the one" +
+    "\n      production hashes with. The refusals below were still driven through" +
+    "\n      the real form; the sessions behind them were opened with a password on" +
+    "\n      the same temporary accounts. Never set a real user's PIN from here.");
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

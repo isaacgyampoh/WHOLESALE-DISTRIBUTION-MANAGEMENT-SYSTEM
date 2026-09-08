@@ -375,8 +375,24 @@ export default async function ReportsPage({
               cell: (r) => formatQuantity(r.productLines),
             },
             { header: "Units", numeric: true, cell: (r) => formatQuantity(r.units) },
-            { header: "Loose", numeric: true,
-              cell: (r) => r.pieces > 0 ? formatQuantity(r.pieces) : "-" },
+            {
+              header: "Loose", numeric: true,
+              // Loose pieces on a product with no pack size are worth
+              // something and count for nothing in the figure beside
+              // them, because their share of the case cost cannot be
+              // worked out. Said here rather than left as a quiet
+              // shortfall in the total.
+              cell: (r) => r.pieces === 0 ? "-" : (
+                <>
+                  {formatQuantity(r.pieces)}
+                  {r.unvaluedPieces > 0 && (
+                    <span className="block text-xs font-normal text-caution">
+                      {formatQuantity(r.unvaluedPieces)} not valued
+                    </span>
+                  )}
+                </>
+              ),
+            },
             { header: "Value at cost", numeric: true, cell: (r) => formatMoney(r.value) },
           ]}
         />

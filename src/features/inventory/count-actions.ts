@@ -24,12 +24,20 @@ import { getCapabilities } from "@/lib/db/capabilities";
 
 export interface CountLine {
   productId: string;
-  /** Whole units physically there - sealed cartons, boxes, bags. */
-  counted: number;
+  /**
+   * Whole units physically there - sealed cartons, boxes, bags.
+   *
+   * Absent when nobody counted that half. A blank and a zero are
+   * opposite claims: one says "I did not get to this", the other says
+   * "there are none", and treating the first as the second writes off
+   * stock nobody looked at. At least one of the two halves must be
+   * present or the line is not a count at all.
+   */
+  counted?: number;
   /**
    * Loose pieces physically there, counted separately because they are
-   * separate. Absent for a product with no pack size, where there is no
-   * such thing as a loose piece.
+   * separate. Absent for a product that cannot hold loose pieces, and
+   * absent when that half was left blank.
    */
   countedPieces?: number;
 }
@@ -64,12 +72,16 @@ export async function applyStockCountAction(input: {
   }
 
   for (const line of input.lines) {
-    if (!Number.isInteger(line.counted) || line.counted < 0) {
-      return { ok: false, message: "Counted quantities must be whole numbers, zero or more." };
+    // A line with neither half filled in is not a count of anything.
+    // Left through, it would read as "zero units and zero pieces" and
+    // write the product off.
+    if (line.counted === undefined && line.countedPieces === undefined) {
+      return { ok: false, message: "Every counted line needs a figure in at least one column." };
     }
-    if (line.countedPieces !== undefined &&
-        (!Number.isInteger(line.countedPieces) || line.countedPieces < 0)) {
-      return { ok: false, message: "Counted quantities must be whole numbers, zero or more." };
+    for (const half of [line.counted, line.countedPieces]) {
+      if (half !== undefined && (!Number.isInteger(half) || half < 0)) {
+        return { ok: false, message: "Counted quantities must be whole numbers, zero or more." };
+      }
     }
   }
 
@@ -122,7 +134,11 @@ export async function applyStockCountAction(input: {
   let increased = 0, decreased = 0, unchanged = 0;
 
   for (const line of input.lines) {
-    const unitDelta = line.counted - (onHand.get(line.productId) ?? 0);
+    // A half nobody counted does not move. Counting the loose pieces on
+    // a shelf and leaving the cartons blank must not zero the cartons.
+    const unitDelta = line.counted !== undefined
+      ? line.counted - (onHand.get(line.productId) ?? 0)
+      : 0;
     const pieceDelta = capabilities.loosePieces && line.countedPieces !== undefined
       ? line.countedPieces - (onHandPieces.get(line.productId) ?? 0)
       : 0;

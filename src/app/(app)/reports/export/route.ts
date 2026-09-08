@@ -123,6 +123,9 @@ const REPORTS: Record<string, Report> = {
       { header: "Product lines", value: (r) => r.productLines },
       { header: "Units", value: (r) => r.units },
       { header: "Loose pieces", value: (r) => r.pieces },
+      // Real stock that the figure beside it does not include: no pack
+      // size, so no share of the case cost to give it.
+      { header: "Loose pieces not valued", value: (r) => r.unvaluedPieces },
       { header: "Value at cost (GHS)", value: (r) => r.value },
     ],
     true,

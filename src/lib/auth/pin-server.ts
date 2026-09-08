@@ -155,8 +155,19 @@ async function cooldownRemaining(context: AttemptContext): Promise<number> {
   const { failures, newest } = await recentFailures(context);
   if (failures < MAX_FAILED_ATTEMPTS || !newest) return 0;
 
+  /*
+   * Two clocks, and never more than the policy.
+   *
+   * `newest` is stamped by the database and `Date.now()` is this
+   * server's, so a few hundred milliseconds of skew makes `elapsed`
+   * negative and the remainder longer than the cooldown itself. Rounded
+   * up, that told somebody locked out for fifteen minutes to come back
+   * in sixteen - a promise the system does not keep and cannot need to
+   * make. Capped here rather than in the wording, so the countdown the
+   * screen runs on is right too.
+   */
   const elapsed = Date.now() - new Date(newest).getTime();
-  const remaining = COOLDOWN_MINUTES * 60_000 - elapsed;
+  const remaining = Math.min(COOLDOWN_MINUTES * 60_000, COOLDOWN_MINUTES * 60_000 - elapsed);
   return remaining > 0 ? Math.ceil(remaining / 1000) : 0;
 }
 

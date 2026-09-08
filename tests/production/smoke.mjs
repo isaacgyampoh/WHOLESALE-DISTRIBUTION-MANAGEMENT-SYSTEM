@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 const require = createRequire(new URL("../visual/", import.meta.url));
 const { chromium } = require("playwright");
 const { createClient } = require("@supabase/supabase-js");
+import { openSessionByPassword, serverSawAttempt, testPassword } from "./session.mjs";
 import { readFileSync } from "node:fs";
 import { createHmac } from "node:crypto";
 
@@ -27,6 +28,19 @@ const stamp = Date.now().toString(36);
 const PIN = "8317";
 const USERNAME = `zz.smoke.${stamp}`;
 const EMAIL = `zz-smoke-${stamp}@smoke.invalid`;
+/*
+ * A password as well as a PIN.
+ *
+ * Staff sign in with a PIN and nothing else; this account is not a
+ * member of staff, it is a way to open the deployed screens. The PIN is
+ * still driven through the real form below - that is the only way to
+ * check the sign-in path is live - but its digest is peppered with the
+ * local PIN_PEPPER, which is not production's and cannot be, so the
+ * server will rightly refuse it. The password is what gets a session
+ * afterwards, so the sixteen screens behind sign-in are still walked
+ * against the real database instead of being skipped every run.
+ */
+const PASSWORD = testPassword(stamp);
 
 let pass = 0, fail = 0;
 const ok = (n, c, x = "") => { c ? (pass++, console.log(`  PASS  ${n} ${x}`)) : (fail++, console.log(`  FAIL  ${n} ${x}`)); };
@@ -34,7 +48,7 @@ const ok = (n, c, x = "") => { c ? (pass++, console.log(`  PASS  ${n} ${x}`)) : 
 // ---- a temporary administrator ------------------------------------
 const { data: org } = await admin.from("organizations").select("id,name").eq("slug", "default").single();
 const { data: created, error: cErr } = await admin.auth.admin.createUser({
-  email: EMAIL, email_confirm: true,
+  email: EMAIL, password: PASSWORD, email_confirm: true,
   user_metadata: { full_name: "ZZ Smoke Test", role: "admin", org_id: org.id, username: USERNAME },
 });
 if (cErr) { console.error("could not create the temporary admin: " + cErr.message); process.exit(1); }
@@ -174,9 +188,41 @@ try {
     ]) console.log("  " + line);
   }
 
-  ok("administrator can sign in", signedIn, page.url().replace(URL_BASE, ""));
+  /*
+   * What can actually be asserted about the PIN.
+   *
+   * Not "the PIN was accepted" - it cannot be, from here. What this
+   * proves is that the deployed form submits, reaches the server, and
+   * the server judges it: a recorded attempt is the server saying "I
+   * saw this PIN and disagreed with the digest". A form that silently
+   * fails to submit records nothing, and that is the failure worth
+   * catching.
+   */
+  const reachedServer = signedIn || await serverSawAttempt(admin, submittedAt);
+  ok("the sign-in form reaches the server", reachedServer,
+     signedIn ? "signed in" : "attempt recorded, digest refused");
 
-  if (signedIn) {
+  /*
+   * A session, the other way.
+   *
+   * Sixteen screens used to go unchecked on every run because the PIN
+   * could not be driven. They are the point of a smoke test - whether
+   * the deployed site can render the real database - and that question
+   * does not depend on how the session was opened. So it is opened with
+   * the password on this same temporary account and encoded the way
+   * @supabase/ssr stores it, which is exactly what the browser would be
+   * holding after a real sign-in.
+   */
+  let inSession = signedIn;
+  if (!inSession) {
+    const opened = await openSessionByPassword({
+      env, base: URL_BASE, ctx, page, email: EMAIL, password: PASSWORD });
+    inSession = opened.ok;
+    ok("a session opens the application", inSession,
+       opened.error ?? (opened.url ?? "").replace(URL_BASE, ""));
+  }
+
+  if (inSession) {
     // Let the redirect settle before reading the document, or the read
     // races the navigation it was waiting for.
     await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
