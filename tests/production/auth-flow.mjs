@@ -33,6 +33,18 @@ const digest = (pin) => createHmac("sha256", env.PIN_PEPPER).update(pin).digest(
 let pass = 0, fail = 0;
 const ok = (n, c, x = "") => { c ? (pass++, console.log(`  PASS  ${n} ${x}`)) : (fail++, console.log(`  FAIL  ${n} ${x}`)); };
 const head = (t) => console.log(`\n=== ${t} ===`);
+/**
+ * Not checked here, and why.
+ *
+ * Counts as neither a pass nor a failure. A handful of assertions
+ * compare a digest this file computes against one the deployed site
+ * wrote, and those two are peppered differently by design - see
+ * session.mjs. Reporting them as failures blames the application for a
+ * secret working exactly as it should; reporting them as passes would
+ * be a lie. They are named, with the reason, and left out of the count.
+ */
+const skip = (n, why) => console.log(`  SKIP  ${n}  (${why})`);
+const PEPPER_DIFFERS = "the deployed site peppers PINs with a secret this run cannot read";
 
 const stamp = Date.now().toString(36).slice(-5);
 const PIN_BOXES = 4;
@@ -298,8 +310,11 @@ try {
     // rather than insisting on the state the installer left behind.
     const stillIssued = boot?.must_change_pin === true;
     if (stillIssued) {
-      ok("still holding the bootstrap PIN, waiting for its owner",
-         boot?.pin_hash === digest("1024"));
+      // Its digest was written by the installer, under production's
+      // pepper, so it can only be recognised where this run shares it.
+      if (usedPasswordFallback) skip("still holding the bootstrap PIN", PEPPER_DIFFERS);
+      else ok("still holding the bootstrap PIN, waiting for its owner",
+              boot?.pin_hash === digest("1024"));
       console.log("        (first sign-in not yet done - PIN 1024 still opens it)");
     } else {
       ok("the bootstrap PIN has been replaced by one only its owner knows",
@@ -320,10 +335,21 @@ try {
     ok("and is trapped on set-pin", page.url().includes("/set-pin"));
 
     // Refuses to keep the PIN it was given.
-    await setPin(page, "7315");
-    let body = await page.locator("body").innerText().catch(() => "");
-    ok("keeping the issued PIN is refused",
-       page.url().includes("/set-pin") && /different from the one you were given/i.test(body));
+    //
+    // The screen decides this by hashing what was typed and comparing it
+    // with the digest on the account. That digest was written here under
+    // a different pepper, so the two cannot match and the site correctly
+    // sees a different PIN. Nothing about the rule is testable from
+    // outside production's secret.
+    let body;
+    if (usedPasswordFallback) {
+      skip("keeping the issued PIN is refused", PEPPER_DIFFERS);
+    } else {
+      await setPin(page, "7315");
+      body = await page.locator("body").innerText().catch(() => "");
+      ok("keeping the issued PIN is refused",
+         page.url().includes("/set-pin") && /different from the one you were given/i.test(body));
+    }
 
     // Refuses a documented/guessable one.
     await setPin(page, "1024");
@@ -340,8 +366,13 @@ try {
     const { data: after } = await db.from("profiles")
       .select("must_change_pin, pin_hash").eq("username", bossUser).single();
     ok("the account is no longer provisional", after.must_change_pin === false);
-    ok("and the new PIN is stored as a digest",
-       after.pin_hash === digest("6482") && after.pin_hash.length === 64);
+    // The shape of what was stored is checkable either way; that it is
+    // the digest of this particular PIN is not, when the peppers differ.
+    ok("and the new PIN is stored as a digest, never in the clear",
+       typeof after.pin_hash === "string" && after.pin_hash.length === 64
+       && !/^\d{4}$/.test(after.pin_hash));
+    if (usedPasswordFallback) skip("and it is the digest of the PIN chosen", PEPPER_DIFFERS);
+    else ok("and it is the digest of the PIN chosen", after.pin_hash === digest("6482"));
 
     await signOut(page);
     ok("the old PIN no longer works", !(await signIn(page, "7315")), lastSignInError);
@@ -398,8 +429,15 @@ try {
       ok(`the ${role.toLowerCase()} is stored correctly`,
          !!row && row.role === role.toLowerCase() && row.org_id === org.id);
       ok(`the ${role.toLowerCase()}'s PIN is a digest, and provisional`,
-         !!row && row.pin_hash === digest(pin) && row.pin_hash.length === 64
-         && row.must_change_pin === true);
+         !!row && typeof row.pin_hash === "string" && row.pin_hash.length === 64
+         && !/^\d{4}$/.test(row.pin_hash) && row.must_change_pin === true);
+      // Written by the deployed site, under its own pepper.
+      if (usedPasswordFallback) {
+        skip(`the ${role.toLowerCase()}'s PIN is the one that was set`, PEPPER_DIFFERS);
+      } else {
+        ok(`the ${role.toLowerCase()}'s PIN is the one that was set`,
+           !!row && row.pin_hash === digest(pin));
+      }
 
       await page.getByRole("button", { name: /^done$/i }).click().catch(() => {});
     }
@@ -737,22 +775,38 @@ try {
   // This is what makes PIN-only sign-in possible at all: the digest has
   // to name exactly one account, or four digits would be ambiguous.
   {
-    const { data: boss } = await db.from("profiles").select("id").eq("username", bossUser).single();
+    /*
+      Straight at the database, past the application: a unique index
+      stands behind the check rather than only the check.
 
-    // Straight at the database, past the application: a unique index
-    // stands behind the check rather than only the check.
+      Between two accounts this block makes for itself, both peppered
+      here. It used to aim a locally-computed digest at an account whose
+      PIN had been set through the deployed site - two different peppers,
+      so no collision, so the index was never actually asked the
+      question. Worse, the write that should have been refused went
+      through and changed the manager's PIN, which broke the check
+      below it as well. What is under test is a database rule, and a
+      database rule can be tested without production's secret.
+    */
+    const uniqA = await makeAccount(`zz.uniq.a.${stamp}`, "ZZ Uniq A", "driver", "3719", false);
+    const uniqB = await makeAccount(`zz.uniq.b.${stamp}`, "ZZ Uniq B", "driver", "3728", false);
+
     const clash = await db.from("profiles")
-      .update({ pin_hash: digest("6482") }).eq("username", mgrUser).select("id");
+      .update({ pin_hash: digest("3719") }).eq("id", uniqB).select("id");
     ok("the database refuses a duplicate PIN outright",
        Boolean(clash.error), clash.error?.message?.slice(0, 60) ?? "UPDATE SUCCEEDED");
     ok("and refuses it as a uniqueness violation, not by accident",
        /duplicate key|unique/i.test(clash.error?.message ?? ""),
        clash.error?.message?.slice(0, 60) ?? "");
 
-    // The manager's PIN is untouched by the refusal.
-    const { data: mgrStill } = await db.from("profiles")
-      .select("pin_hash").eq("username", mgrUser).single();
-    ok("the refused write changed nothing", mgrStill.pin_hash === digest("8264"));
+    // The account aimed at is untouched by the refusal.
+    const { data: stillB } = await db.from("profiles")
+      .select("pin_hash").eq("id", uniqB).single();
+    ok("the refused write changed nothing", stillB.pin_hash === digest("3728"),
+       `(${stillB.pin_hash === digest("3719") ? "it took the duplicate" : "unchanged"})`);
+    // uniqA exists to hold the digest uniqB was pointed at; nothing else
+    // reads it.
+    void uniqA;
 
     // And the administrator handing one out is told, in words, without
     // learning whose it is.
@@ -784,7 +838,6 @@ try {
     if (notMade) made.push(notMade.id);
 
     await page.context().close();
-    void boss;
   }
 
 } catch (e) {
