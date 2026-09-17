@@ -236,6 +236,8 @@ export interface AdminView {
    * surfaces at a customer's counter unless somebody is told first.
    */
   unsellablePieces: number;
+  /** Product/warehouse pairs where inventory and the ledger disagree. */
+  ledgerVariances: number;
   auditEntriesToday: number;
   failedSignInsToday: number;
   /** Set when the database is behind the application. */
@@ -260,7 +262,7 @@ export async function getAdminView(periodDays = 30): Promise<AdminView> {
 
   const [active, inactive, pending, audit, failures,
          soldLines, recons, returns, transfers, supplierInvoices,
-         strandedPieces] = await Promise.all([
+         strandedPieces, ledgerDrift] = await Promise.all([
     supabase.from("profiles").select("id", { count: "exact", head: true }).eq("is_active", true),
     supabase.from("profiles").select("id", { count: "exact", head: true }).eq("is_active", false),
     // Not "pending": every profile has a role. Somebody who has been
@@ -306,6 +308,17 @@ export async function getAdminView(periodDays = 30): Promise<AdminView> {
     capabilities.loosePieces
       ? supabase.from("unsellable_pieces").select("product_id", { count: "exact", head: true })
       : Promise.resolve({ count: 0, error: null }),
+
+    // Where the stock on hand and the sum of its movements disagree.
+    // inventory is the running total of stock_movements, so a row here
+    // means one of the two is wrong - and until 0071 nothing compared
+    // them, so the one product this is true of went unnoticed for
+    // weeks. Gated on the capability, so a database without the view
+    // reads as nothing adrift rather than taking the dashboard down.
+    capabilities.ledgerVariances
+      ? supabase.from("stock_ledger_variances")
+          .select("product_id", { count: "exact", head: true })
+      : Promise.resolve({ count: 0, error: null }),
   ]);
 
   let revenue = 0;
@@ -337,6 +350,10 @@ export async function getAdminView(periodDays = 30): Promise<AdminView> {
     // fixed. Absent against a database without the view, which reads as
     // nothing stuck rather than as an error on the dashboard.
     unsellablePieces: strandedPieces.count ?? 0,
+    // Counted, not listed. What belongs on a dashboard is that the
+    // books have stopped adding up; which product, and by how much, is
+    // a question for the count sheet.
+    ledgerVariances: ledgerDrift.count ?? 0,
     auditEntriesToday: audit.count ?? 0,
     // Counted rather than listed: the detail is on the audit screen, and
     // what belongs on a dashboard is whether it is happening at all.

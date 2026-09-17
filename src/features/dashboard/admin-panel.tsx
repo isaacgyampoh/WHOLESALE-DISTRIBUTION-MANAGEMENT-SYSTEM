@@ -144,6 +144,34 @@ export function AdminPanel({ view }: { view: AdminView }) {
         </div>
       )}
 
+      {/*
+        The books have stopped adding up.
+
+        inventory is the running total of stock_movements - the same
+        fact seen twice - so a disagreement means one of them is wrong
+        and nothing can say which from the inside. Deliberately not
+        offered as something to correct here: the shelf gets counted,
+        and the count writes the difference as a stocktake with a reason
+        and a name against it.
+      */}
+      {view.ledgerVariances > 0 && (
+        <div className="mb-5">
+          <Alert tone="warning" title="Stock the ledger cannot explain">
+            {formatQuantity(view.ledgerVariances)}{" "}
+            {view.ledgerVariances === 1 ? "product does" : "products do"} not match
+            the movements recorded for {view.ledgerVariances === 1 ? "it" : "them"}.
+            Count the shelf and the difference is recorded properly; nothing
+            should be corrected by hand.
+            <Link
+              href="/inventory/count"
+              className="mt-1 inline-flex min-h-11 items-center font-medium underline underline-offset-2 pointer-fine:mt-0 pointer-fine:min-h-0"
+            >
+              Count the stock
+            </Link>
+          </Alert>
+        </div>
+      )}
+
       <Card>
         <CardHeader
           title="The system itself"

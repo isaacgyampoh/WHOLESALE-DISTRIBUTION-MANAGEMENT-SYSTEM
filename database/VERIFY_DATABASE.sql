@@ -198,7 +198,11 @@ missing_views as (
     'invoice_detail','receipt_detail','van_crew',
     'salesperson_performance','momo_reconciliation',
     'stock_transfer_summary','stock_in_transit','supplier_document_detail',
-    'supplier_payables','stock_return_summary'
+    'supplier_payables','stock_return_summary',
+    -- 0063 and 0071: two conditions nobody could see until a view named
+    -- them. Absent from this list until now, so a database missing them
+    -- verified clean.
+    'unsellable_pieces','stock_ledger_variances'
   ]) as v
   where not exists (
     select 1 from information_schema.views
@@ -215,8 +219,8 @@ report as (
           case when m.names = '' then 'none missing' else 'MISSING' end,
           case when m.names = '' then 'OK' else 'FAIL' end, m.names
   from missing_tables m
-  union all select  3, 'Views', '23', c.views::text,
-          case when c.views = 23 then 'OK' else 'CHECK' end, '' from counts c
+  union all select  3, 'Views', '24', c.views::text,
+          case when c.views = 24 then 'OK' else 'CHECK' end, '' from counts c
   union all select  4, 'Expected views all present', 'none missing',
           case when v.names = '' then 'none missing' else 'MISSING' end,
           case when v.names = '' then 'OK' else 'FAIL' end, v.names
