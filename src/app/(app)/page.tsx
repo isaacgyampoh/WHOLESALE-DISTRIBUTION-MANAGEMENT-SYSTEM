@@ -13,6 +13,7 @@ import { WarehouseDashboard } from "@/features/dashboard/warehouse-dashboard";
 import { AdminPanel } from "@/features/dashboard/admin-panel";
 import { DriverDashboard } from "@/features/dashboard/driver-dashboard";
 import { StatTile } from "@/components/ui/stat-tile";
+import { HeroCard, HeroProgress } from "@/components/ui/hero-card";
 import { getExpirySummary } from "@/features/warehouses/queries";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -157,35 +158,89 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      <section aria-label="Today" className="mb-6">
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      {/*
+        The day, led by the day.
+
+        This was eight tiles of identical weight - the same size, box and
+        border for the takings, the receivables and the van count - so
+        the screen ranked nothing and the reader had to. On a phone, where
+        the row becomes a column, it was eight boxes deep before anything
+        was said.
+
+        Now the state of the day leads, the money sits beside the thing
+        that needs a decision, and the rest goes quiet underneath. Only
+        the decision card is painted, and only while there is a decision
+        to make: a screen where everything shouts says nothing.
+      */}
+      <section aria-label="Today" className="mb-6 space-y-3">
+        <HeroCard
+          eyebrow="Today"
+          headline={
+            metrics.activeVans === 0
+              ? "No vans are out today"
+              : `${formatQuantity(metrics.activeVans)} ${metrics.activeVans === 1 ? "van is" : "vans are"} out on the road`
+          }
+          detail={
+            metrics.todaysSaleCount === 0
+              ? `${formatQuantity(metrics.activeDrivers)} driver${metrics.activeDrivers === 1 ? "" : "s"} assigned · nothing sold yet`
+              : `${formatQuantity(metrics.todaysSaleCount)} sale${metrics.todaysSaleCount === 1 ? "" : "s"} so far · ${formatQuantity(metrics.activeDrivers)} driver${metrics.activeDrivers === 1 ? "" : "s"} assigned`
+          }
+          href="/vans"
+          hrefLabel="See the vans"
+          footer={
+            metrics.activeVans > 0 && (
+              <HeroProgress
+                label={`${Math.max(0, metrics.activeVans - metrics.pendingReconciliations)} of ${metrics.activeVans} vans reckoned up`}
+                segments={Array.from({ length: metrics.activeVans }, (_, i) => ({
+                  // A van whose end-of-day is in has finished. Clamped,
+                  // because reconciliations waiting from earlier days
+                  // would otherwise outnumber the vans out today and
+                  // paint a strip that is all problem.
+                  tone: i < Math.max(0, metrics.activeVans - metrics.pendingReconciliations)
+                    ? "done" as const
+                    : "waiting" as const,
+                }))}
+              />
+            )
+          }
+        />
+
+        <div className="grid gap-3 sm:grid-cols-3">
           <StatTile
-            label="Cash sales today"
-            value={formatMoney(metrics.todaysCashSales)}
-            sub={`${metrics.todaysSaleCount} van sale${metrics.todaysSaleCount === 1 ? "" : "s"} recorded`}
+            label="Taken today"
+            value={formatMoney(metrics.todaysCashSales + metrics.todaysCreditSales)}
+            sub={`${formatMoney(metrics.todaysCashSales)} cash · ${formatMoney(metrics.todaysCreditSales)} on credit`}
+            // Painted only once there is something to be pleased about.
+            // A bright card celebrating nought is a screen congratulating
+            // somebody for a morning that has not started.
+            emphasis={metrics.todaysCashSales + metrics.todaysCreditSales > 0 ? "money" : "plain"}
+            href="/sales"
           />
           <StatTile
-            label="Credit sales today"
-            value={formatMoney(metrics.todaysCreditSales)}
-            sub="Extended against customer limits"
+            label={metrics.pendingReconciliations > 0 ? "Needs a decision" : "Nothing waiting"}
+            value={
+              metrics.pendingReconciliations > 0
+                ? `${formatQuantity(metrics.pendingReconciliations)} to review`
+                : "All clear"
+            }
+            sub={
+              metrics.openVariances > 0
+                ? `${formatQuantity(metrics.openVariances)} with a variance to explain`
+                : "Every end-of-day has been reviewed"
+            }
+            emphasis={metrics.pendingReconciliations > 0 ? "attention" : "plain"}
+            href="/reconciliation"
           />
+          {/* Money and a problem at once, which is why it sits with these
+              two and not among the stock figures - but left plain, with
+              the amber on the number alone. Three painted cards in one
+              row would be three things shouting. */}
           <StatTile
             label="Outstanding receivables"
             value={formatMoney(metrics.outstandingReceivables)}
             sub={`${metrics.overdueCustomers} customer${metrics.overdueCustomers === 1 ? "" : "s"} past due`}
             tone={metrics.overdueCustomers > 0 ? "caution" : "neutral"}
             href="/credit"
-          />
-          <StatTile
-            label="Pending reconciliations"
-            value={formatQuantity(metrics.pendingReconciliations)}
-            sub={
-              metrics.openVariances > 0
-                ? `${metrics.openVariances} with a variance`
-                : "Awaiting manager review"
-            }
-            tone={metrics.pendingReconciliations > 0 ? "caution" : "neutral"}
-            href="/reconciliation"
           />
         </div>
       </section>
