@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { TableWrap, Table, Th, Td, Tr } from "@/components/ui/table";
 import { StatusBadge, Badge } from "@/components/ui/badge";
 import { formatQuantity, formatDateTime } from "@/lib/utils/format";
@@ -61,7 +62,15 @@ export function ReturnList({
             {returns.map((r) => (
               <Tr key={r.id}>
                 <Td>
-                  <span className="numeric block font-medium">{r.returnNumber}</span>
+                  {/* The way in. "161 missing" is not a number anybody
+                      can act on until they can see which products it is
+                      made of, and until now there was nowhere to go. */}
+                  <Link
+                    href={`/returns/${r.id}`}
+                    className="numeric block font-medium text-[var(--text-primary)] hover:text-brand-700 hover:underline dark:hover:text-brand-300"
+                  >
+                    {r.returnNumber}
+                  </Link>
                   <span className="text-xs text-[var(--text-muted)]">
                     {r.lineCount} {r.lineCount === 1 ? "line" : "lines"}
                   </span>
@@ -79,7 +88,11 @@ export function ReturnList({
                   {formatQuantity(r.qtyDamaged)}
                 </Td>
                 <Td numeric className={r.qtyMissing > 0 ? "text-critical" : ""}>
-                  {formatQuantity(r.qtyMissing)}
+                  {r.qtyMissing > 0 ? (
+                    <Link href={`/returns/${r.id}`} className="font-medium underline underline-offset-2">
+                      {formatQuantity(r.qtyMissing)}
+                    </Link>
+                  ) : formatQuantity(r.qtyMissing)}
                 </Td>
                 <Td><StatusBadge status={r.status} /></Td>
                 {canApprove && (
@@ -96,9 +109,12 @@ export function ReturnList({
           <li key={r.id} className="px-5 py-3.5">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="numeric text-sm font-medium text-[var(--text-primary)]">
+                <Link
+                  href={`/returns/${r.id}`}
+                  className="numeric text-sm font-medium text-[var(--text-primary)] underline-offset-2 hover:underline"
+                >
                   {r.returnNumber}
-                </p>
+                </Link>
                 <p className="mt-0.5 truncate text-xs text-[var(--text-secondary)]">
                   {r.driverName} · {r.vanCode}
                 </p>

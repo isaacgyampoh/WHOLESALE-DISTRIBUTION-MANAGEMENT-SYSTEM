@@ -97,9 +97,18 @@ export function loosePacksInto(q: Quantity, piecesPerUnit: number | null | undef
   return Math.floor(q.pieces / size);
 }
 
+/**
+ * Units are spelled by the business, so the plural has to cope with
+ * whatever they typed. A box becomes boxes, not "boxs" - which is what
+ * a bare "s" produced, on a screen listing what had gone missing off a
+ * van, where looking careless is the last thing it should do.
+ */
 function plural(n: number, word: string): string {
-  const label = n === 1 ? word : `${word}s`;
-  return `${n.toLocaleString()} ${label}`;
+  const plurals = /(s|x|z|ch|sh)$/i.test(word) ? `${word}es`
+    // "Tray" -> "Trays", but "Jerry" -> "Jerries".
+    : /[^aeiou]y$/i.test(word) ? `${word.slice(0, -1)}ies`
+    : `${word}s`;
+  return `${n.toLocaleString()} ${n === 1 ? word : plurals}`;
 }
 
 /** "Carton" from "carton", for use mid-sentence. */

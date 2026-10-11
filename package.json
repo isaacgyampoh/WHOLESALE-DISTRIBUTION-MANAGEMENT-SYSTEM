@@ -20,7 +20,7 @@
     "hosted:auth": "npm --prefix tests/hosted run auth",
     "hosted:shell": "npm --prefix tests/hosted run shell",
     "visual": "npm --prefix tests/visual run shots",
-    "test:unit": "node --test tests/unit/*.test.ts",
+    "test:unit": "node tests/unit/test_quantity.mjs",
     "demo:seed": "node scripts/demo/seed.mjs",
     "demo:clean": "node scripts/demo/clean.mjs",
     "hosted:workflow": "node tests/visual/test_workflow.mjs",

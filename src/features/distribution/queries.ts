@@ -1102,3 +1102,177 @@ export async function listLoadableProducts(): Promise<Result<LoadableProduct[]>>
     })),
   };
 }
+
+// ===================================================================
+// What came back, and what did not
+// ===================================================================
+
+export interface VanReturnLine {
+  productId: string;
+  sku: string;
+  name: string;
+  unit: string;
+  expected: number;
+  returnedGood: number;
+  damaged: number;
+  missing: number;
+  expectedPieces: number;
+  returnedGoodPieces: number;
+  damagedPieces: number;
+  missingPieces: number;
+  /** Null where the caller may not see cost. Not zero - zero is a price. */
+  unitCost: number | null;
+  /** What the shortfall is worth at cost. Null for the same reason. */
+  missingValue: number | null;
+}
+
+export interface VanReturnDetail {
+  id: string;
+  returnNumber: string;
+  loadNumber: string;
+  vanCode: string;
+  driverName: string;
+  warehouseName: string;
+  status: string;
+  returnedAt: string;
+  approvedAt: string | null;
+  notes: string | null;
+  lines: VanReturnLine[];
+  totals: {
+    expected: number;
+    good: number;
+    damaged: number;
+    missing: number;
+    missingPieces: number;
+    /** Null where any missing line's cost is hidden - a partial total
+        would read as the whole loss and understate it. */
+    missingValue: number | null;
+  };
+}
+
+/**
+ * One van return, line by line.
+ *
+ * The list could only say "161 missing". That is a number nobody can
+ * act on: it does not say which products, so the warehouse cannot go
+ * and look for them, and it does not say what it is worth, so nobody
+ * can tell whether it is a bad afternoon or a serious loss. Both facts
+ * were already in the table; nothing had ever read them out.
+ *
+ * Cost comes through products_priced, which masks it per caller. A
+ * driver with returns.view sees the quantities and no money at all,
+ * which is the rule everywhere else and is not relaxed here just
+ * because the money is a loss rather than a margin.
+ */
+export async function getVanReturn(id: string): Promise<Result<VanReturnDetail | null>> {
+  const supabase = await createSupabaseServerClient();
+  const capabilities = await getCapabilities();
+
+  const pieceColumns = capabilities.loosePieces
+    ? ", qty_expected_pieces, qty_returned_good_pieces, qty_damaged_pieces, qty_missing_pieces"
+    : "";
+
+  const { data, error } = await supabase
+    .from("van_returns")
+    .select(
+      "id, return_number, status, returned_at, approved_at, notes, " +
+      "van_loads(load_number), vans(code), " +
+      "profiles!van_returns_driver_id_fkey(full_name), warehouses(name), " +
+      "van_return_items(product_id, qty_expected, qty_returned_good, qty_damaged, qty_missing" +
+      pieceColumns + ")",
+    )
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) return failed("returns", error, "That return could not be loaded.");
+  if (!data) return { ok: true, data: null };
+
+  const row = data as unknown as Record<string, unknown>;
+  const items = (row.van_return_items as Array<Record<string, unknown>> | null) ?? [];
+
+  // One request for every product on the return rather than one each.
+  const ids = [...new Set(items.map((i) => i.product_id as string))];
+  const { data: products } = ids.length
+    ? await supabase
+        .from("products_priced")
+        .select("id, sku, name, unit_of_measure, cost_price")
+        .in("id", ids)
+    : { data: [] as unknown[] };
+
+  const priced = new Map(
+    ((products ?? []) as unknown as Record<string, unknown>[]).map((p) => [
+      p.id as string,
+      {
+        sku: (p.sku as string) ?? "",
+        name: (p.name as string) ?? "Unknown product",
+        unit: (p.unit_of_measure as string) ?? "unit",
+        // Null and zero are different answers: one is "you may not see
+        // this", the other is "it cost nothing".
+        cost: p.cost_price === null || p.cost_price === undefined
+          ? null : parseAmount(p.cost_price as string),
+      },
+    ]),
+  );
+
+  const lines: VanReturnLine[] = items.map((i) => {
+    const product = priced.get(i.product_id as string);
+    const missing = Number(i.qty_missing ?? 0);
+    const cost = product?.cost ?? null;
+    return {
+      productId: i.product_id as string,
+      sku: product?.sku ?? "",
+      name: product?.name ?? "Unknown product",
+      unit: product?.unit ?? "unit",
+      expected: Number(i.qty_expected ?? 0),
+      returnedGood: Number(i.qty_returned_good ?? 0),
+      damaged: Number(i.qty_damaged ?? 0),
+      missing,
+      expectedPieces: Number(i.qty_expected_pieces ?? 0),
+      returnedGoodPieces: Number(i.qty_returned_good_pieces ?? 0),
+      damagedPieces: Number(i.qty_damaged_pieces ?? 0),
+      missingPieces: Number(i.qty_missing_pieces ?? 0),
+      unitCost: cost,
+      // Full units only. A loose piece is worth a share of what the
+      // case cost and that share needs a pack size; rather than guess
+      // one, the pieces are counted and left out of the money, and the
+      // screen says so.
+      missingValue: cost === null ? null : missing * cost,
+    };
+  });
+
+  // Sorted by what it costs, then by how many. The product worth
+  // chasing is rarely the one with the biggest count.
+  lines.sort((a, b) =>
+    (b.missingValue ?? 0) - (a.missingValue ?? 0) || b.missing - a.missing
+    || a.name.localeCompare(b.name));
+
+  const missingLines = lines.filter((l) => l.missing > 0);
+  const anyHidden = missingLines.some((l) => l.unitCost === null);
+
+  return {
+    ok: true,
+    data: {
+      id: row.id as string,
+      returnNumber: row.return_number as string,
+      loadNumber: (row.van_loads as { load_number?: string } | null)?.load_number ?? "-",
+      vanCode: (row.vans as { code?: string } | null)?.code ?? "-",
+      driverName: (row.profiles as { full_name?: string } | null)?.full_name ?? "Unknown driver",
+      warehouseName: (row.warehouses as { name?: string } | null)?.name ?? "-",
+      status: row.status as string,
+      returnedAt: row.returned_at as string,
+      approvedAt: (row.approved_at as string | null) ?? null,
+      notes: (row.notes as string | null) ?? null,
+      lines,
+      totals: {
+        expected: lines.reduce((s, l) => s + l.expected, 0),
+        good: lines.reduce((s, l) => s + l.returnedGood, 0),
+        damaged: lines.reduce((s, l) => s + l.damaged, 0),
+        missing: lines.reduce((s, l) => s + l.missing, 0),
+        missingPieces: lines.reduce((s, l) => s + l.missingPieces, 0),
+        missingValue: anyHidden
+          ? null
+          : missingLines.reduce((s, l) => s + (l.missingValue ?? 0), 0),
+      },
+    },
+  };
+}
