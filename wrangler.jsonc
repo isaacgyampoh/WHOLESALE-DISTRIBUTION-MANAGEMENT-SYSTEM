@@ -1,0 +1,54 @@
+/**
+ * Cloudflare Workers, via the OpenNext adapter.
+ *
+ * WHY WORKERS AND NOT PAGES
+ *
+ * Pages serves static files. This application is server-rendered almost
+ * end to end: every screen behind sign-in is a dynamic route, there is
+ * a proxy (src/proxy.ts) that refreshes the Supabase session on every
+ * request, three route handlers, and server actions behind every form.
+ * Put on static hosting it would be a sign-in page and nothing else.
+ *
+ * WHY nodejs_compat IS NOT OPTIONAL
+ *
+ * PINs are verified with an HMAC from node:crypto, and so are the
+ * supplier portal tokens and the receipt links. Without this flag those
+ * imports fail at runtime and nobody can sign in - which is the kind of
+ * fault that shows up only once real people try, so it is written down
+ * here rather than discovered.
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gab-premium-ent",
+  "main": ".open-next/worker.js",
+
+  // The date gates which runtime behaviours are switched on. Kept at or
+  // after the adapter's floor; moving it backwards silently changes how
+  // the Node compatibility layer behaves.
+  "compatibility_date": "2025-09-23",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+
+  // Everything in public/ - icons, the manifest, the service worker -
+  // served from the edge rather than through the worker.
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+
+  "observability": {
+    "enabled": true
+  },
+
+  /*
+   * Public configuration only.
+   *
+   * NEXT_PUBLIC_* values are compiled into the browser bundle at build
+   * time, so they are public by definition and there is nothing gained
+   * by hiding them here. Everything privileged - the service role key,
+   * the PIN pepper, the database URL - is a Worker secret set with
+   * `wrangler secret put`, never a var and never in this file.
+   */
+  "vars": {
+    "NEXT_PUBLIC_SIGNIN_PHOTO": ""
+  }
+}

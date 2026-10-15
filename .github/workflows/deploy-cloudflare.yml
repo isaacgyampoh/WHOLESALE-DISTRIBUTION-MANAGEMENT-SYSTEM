@@ -1,0 +1,55 @@
+# Deploy to Cloudflare Workers on every push to main.
+#
+# WHY THE BUILD NEEDS THE SUPABASE VALUES
+#
+# Next inlines NEXT_PUBLIC_* into the browser bundle at build time, so
+# they have to be present when the build runs, not only at runtime.
+# They are public by definition - they ship to every visitor - but they
+# are kept in repository secrets anyway so they do not appear in build
+# logs.
+#
+# WHAT IS DELIBERATELY NOT HERE
+#
+# SUPABASE_SERVICE_ROLE_KEY and PIN_PEPPER. Those are Worker secrets,
+# set once with `wrangler secret put` and left alone; `wrangler deploy`
+# does not disturb them. Putting them here would copy two of the most
+# privileged values in the system into a second place for no gain.
+name: Deploy to Cloudflare
+
+on:
+  push:
+    branches: [main]
+  # So a deploy can be re-run without an empty commit.
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # One deploy at a time: two pushes in quick succession should queue
+    # rather than race to publish different versions.
+    concurrency:
+      group: deploy-cloudflare
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # The same gates that run locally. A deploy that type-checks and
+      # lints on a laptop and not in CI is a deploy nobody checked.
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test:unit
+
+      - name: Build and deploy
+        run: npx opennextjs-cloudflare build && npx opennextjs-cloudflare deploy
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

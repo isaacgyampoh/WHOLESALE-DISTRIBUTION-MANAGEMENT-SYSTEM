@@ -1,13 +1,29 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { BRAND } from "@/lib/brand";
 import { RegisterServiceWorker } from "@/components/pwa/register";
 
-const inter = Inter({
-  subsets: ["latin"],
+/**
+ * Inter, served from here rather than fetched from Google.
+ *
+ * next/font/google downloads the file at build time, which makes every
+ * build depend on fonts.googleapis.com being reachable from whatever
+ * machine is doing the building. That was fine on one host and is a
+ * needless way for a deploy to fail on another; a build should not go
+ * red because a third party is having a bad morning.
+ *
+ * Byte-for-byte the same typeface: the latin variable cut Google serves
+ * for Inter, taken from @fontsource-variable/inter and committed. The
+ * weight axis covers 100-900, so every weight the interface uses is the
+ * real one rather than a synthesised oblique.
+ */
+const inter = localFont({
+  src: "./fonts/inter-latin-wght-normal.woff2",
   variable: "--font-inter",
   display: "swap",
+  weight: "100 900",
+  style: "normal",
 });
 
 export const metadata: Metadata = {

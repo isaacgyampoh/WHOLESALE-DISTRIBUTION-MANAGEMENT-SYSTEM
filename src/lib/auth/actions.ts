@@ -2,6 +2,7 @@
 
 import { headers, cookies } from "next/headers";
 import { randomBytes } from "node:crypto";
+import { clientIp } from "@/lib/http/client-ip";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient, createSupabaseAdminClient } from "@/lib/supabase/server";
 import { checkPin, assignPin, digestPin, INCORRECT_PIN } from "./pin-server";
@@ -63,12 +64,8 @@ async function deviceId(): Promise<string> {
 
 async function callerContext() {
   const h = await headers();
-  // First entry of X-Forwarded-For is the client as the edge saw it.
-  // Behind an untrusted proxy this can be spoofed, so it informs rate
-  // limiting and never authorization.
-  const forwarded = h.get("x-forwarded-for");
   return {
-    ip: forwarded?.split(",")[0]?.trim() ?? null,
+    ip: clientIp(h),
     userAgent: h.get("user-agent"),
     deviceId: await deviceId(),
   };

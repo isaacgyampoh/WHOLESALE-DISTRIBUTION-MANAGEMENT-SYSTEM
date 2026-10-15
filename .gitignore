@@ -32,3 +32,10 @@ next-env.d.ts
 
 # The template must stay tracked; real env files must not.
 !.env.example
+
+# Cloudflare
+.open-next/
+.wrangler/
+# Local Worker secrets. Not matched by the .env* rules above, and it
+# holds the service role key - so it is named explicitly.
+.dev.vars

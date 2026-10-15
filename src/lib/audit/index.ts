@@ -1,4 +1,5 @@
 import "server-only";
+import { clientIp } from "@/lib/http/client-ip";
 import { headers } from "next/headers";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import type { AuthenticatedUser } from "@/types/domain";
@@ -127,7 +128,6 @@ function scrub(input?: Record<string, unknown>): Record<string, unknown> | null 
 export async function recordAudit(actor: AuthenticatedUser, entry: AuditEntry): Promise<void> {
   try {
     const h = await headers();
-    const forwarded = h.get("x-forwarded-for");
 
     const admin = createSupabaseAdminClient();
     const { error } = await admin.from("audit_log").insert({
@@ -141,7 +141,7 @@ export async function recordAudit(actor: AuthenticatedUser, entry: AuditEntry): 
       target_label: entry.targetLabel ?? null,
       before: scrub(entry.before),
       after: scrub(entry.after),
-      request_ip: forwarded?.split(",")[0]?.trim() ?? null,
+      request_ip: clientIp(h),
       user_agent: h.get("user-agent"),
     });
 

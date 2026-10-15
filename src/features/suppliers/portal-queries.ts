@@ -1,4 +1,5 @@
 import "server-only";
+import { clientIp } from "@/lib/http/client-ip";
 import { headers } from "next/headers";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { parseAmount } from "@/lib/utils/format";
@@ -42,13 +43,12 @@ export async function resolvePortalSession(token: string): Promise<PortalSession
 
   const hash = createHash("sha256").update(token).digest("hex");
 
-  // The address is passed for the rate limit. Behind a proxy the first
-  // entry of the forwarded chain is the client; a missing header means
-  // the limit simply does not apply to this request rather than the
-  // request being refused.
+  // The address is passed for the rate limit. Read through clientIp so
+  // it is found whichever header this host sets; a missing one means the
+  // limit simply does not apply to this request rather than the request
+  // being refused.
   const head = await headers();
-  const forwarded = head.get("x-forwarded-for");
-  const ip = forwarded?.split(",")[0]?.trim() || null;
+  const ip = clientIp(head);
 
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin.rpc("resolve_supplier_token", {
